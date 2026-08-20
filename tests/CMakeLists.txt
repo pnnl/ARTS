@@ -605,6 +605,27 @@ foreach(t ${SYNC_MPSC_TESTS})
     register_pure_unit_test(${t})
 endforeach()
 
+# --- Route-table slot reclamation (route_table.c) ---
+# Standalone like the SYNC_* tests: the test TU includes route_table.c, guid.c
+# and shared.c and supplies libc-backed allocator stubs, so no ARTS library
+# link is needed.  route_table.c carries no protocol conditionals, so any one
+# valid coherence combination satisfies ooo.h's arm check and the test covers
+# every arm.  Drives concurrent duplicate destroy against install to assert
+# the slot-return is single-flight: a caller that did not win must not free,
+# drain or unbind a slot that another GUID now owns.  Also drives late
+# re-reservations of destroyed GUIDs against racing lookups — the state in
+# which a freed slot's key word can repeat a key it no longer answers for —
+# pinning that a lookup verifies the object it pinned, not the word.
+add_executable(route_table_reclaim_dupdestroy
+    unit/route_table_reclaim_dupdestroy.c)
+target_compile_definitions(route_table_reclaim_dupdestroy PRIVATE
+    ARTS_WRITE_POLICY_WB=1)
+target_include_directories(route_table_reclaim_dupdestroy PRIVATE
+    ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR}
+    ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
+target_link_libraries(route_table_reclaim_dupdestroy PRIVATE Threads::Threads)
+register_pure_unit_test(route_table_reclaim_dupdestroy TIMEOUT 120)
+
 # --- Work-stealing deque (deque.c) + array_list (array_list.c) ---
 # Standalone like the SYNC_* tests above: each compiles the target source TU
 # directly and provides its own libc-backed arts_calloc_align/arts_free

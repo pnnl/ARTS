@@ -179,6 +179,14 @@ struct arts_ooo_payload_s {
   arts_lf_link_t link; /* MUST be first */
   ooo_kind_t kind;
   uint32_t args_size;
+  /* The GUID this payload was deferred for.  A slot is returned to the table
+   * on destroy, so the slot a thread resolved before that destroy may belong
+   * to a different GUID by the time it pushes — the slot alone is no longer
+   * proof of identity, and a dispatch against the wrong object would be
+   * silent corruption rather than a miss.  Checked in dispatch; a mismatch
+   * drops the payload, which is correct because an ordinary GUID is minted
+   * from a monotonic sequence and never comes back. */
+  arts_guid_t guid;
   /* args blob follows here */
 };
 
@@ -356,8 +364,8 @@ typedef void (*arts_ooo_handler_fn_t)(void *item, void *args);
  */
 void arts_ooo_dispatch_or_defer(struct arts_route_item_s *slot,
                                 struct arts_ooo_payload_s *payload,
-                                ooo_kind_t kind, const void *args,
-                                uint32_t args_size);
+                                ooo_kind_t kind, arts_guid_t guid,
+                                const void *args, uint32_t args_size);
 
 /* Convenience fresh entry: reserve/lookup the slot for `guid`, then
  * dispatch_or_defer with payload == NULL. */
@@ -385,6 +393,11 @@ void arts_ooo_drain_guid(arts_guid_t guid);
  * route-table teardown only (the chain is otherwise preserved across
  * destroy/reinstall). */
 void arts_ooo_free_all(struct arts_route_item_s *slot);
+
+/* Re-resolve every parked node against its own GUID and defer it again.  A
+ * teardown calls this after returning the slot, so a node that raced the
+ * return is moved to the slot its GUID now maps to instead of being stranded. */
+void arts_ooo_redrive_all(struct arts_route_item_s *slot);
 
 #ifdef __cplusplus
 }

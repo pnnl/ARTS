@@ -55,6 +55,7 @@ void arts_free(void *p) { free(p); }
 
 struct arts_route_item_s;
 void arts_ooo_drain(struct arts_route_item_s *s) { (void)s; }
+void arts_ooo_redrive_all(struct arts_route_item_s *s) { (void)s; }
 void arts_ooo_free_all(struct arts_route_item_s *s) { (void)s; }
 
 /* Wait-free counter primitives for the DB seq allocator (libc-free unit

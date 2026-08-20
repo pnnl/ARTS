@@ -118,7 +118,7 @@ static void *producer_fn(void *vp) {
   /* Fresh-entry dispatch_or_defer: HIT dispatches inline, MISS pushes +
    * post-push rescue.  Either way the op must be dispatched exactly once. */
   uint64_t dummy_args = 0;
-  arts_ooo_dispatch_or_defer(&g_slot, NULL, c->kind, &dummy_args,
+  arts_ooo_dispatch_or_defer(&g_slot, NULL, c->kind, g_slot.key, &dummy_args,
                              sizeof(dummy_args));
   return NULL;
 }
@@ -132,8 +132,11 @@ static void *installer_fn(void *vp) {
   while (atomic_load_explicit(c->gate, memory_order_acquire) == 0) {
     /* spin */
   }
-  /* Publish value (the install) then drain — the create-handler protocol. */
+  /* Publish value (the install) then drain — the create-handler protocol.
+   * Stamped like a real install: dispatch verifies the pinned value by its
+   * tag, so an unstamped cb is treated as a stranger's and never dispatched. */
   arts_shared_ptr_t cb = arts_shared_make(&g_obj, noop_deleter);
+  arts_shared_set_tag(cb, 0x1234u);
   arts_atomic_shared_store(&g_slot.value, cb);
   arts_ooo_drain(&g_slot);
   return NULL;
@@ -148,7 +151,9 @@ int main(void) {
     atomic_store_explicit(&g_slot.value, (arts_shared_slot_t){0},
                           memory_order_relaxed);
     arts_lf_stack_init(&g_slot.ooo_list);
-    __atomic_store_n(&g_slot.gen, 0, __ATOMIC_RELAXED);
+    /* The slot must carry the key the payloads are deferred for: the dispatch
+     * compares them, since a returned slot may belong to another GUID. */
+    __atomic_store_n(&g_slot.key, (arts_guid_t)0x1234u, __ATOMIC_RELAXED);
     atomic_store_explicit(&g_dispatched, 0, memory_order_relaxed);
 
     atomic_int gate;

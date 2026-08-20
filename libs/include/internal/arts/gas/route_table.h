@@ -51,6 +51,18 @@ extern "C" {
  * (lookup_* / _acquire → handle; release required). No raw no-ref peeks. */
 
 #define COLLISION_RESOLVES 8
+
+/* Key values that name no object.  0 = FREE (claimable).  RETIRING is the key
+ * a teardown parks in the slot while it detaches the value.  It is the KEY
+ * word, not a lock beside it: one CAS from the GUID to this sentinel carries
+ * both halves of what a teardown needs — proof the slot still names that
+ * GUID, and sole ownership of the teardown — so there is nothing to hold and
+ * nothing to wait on, and a loser is simply not the destroyer.  No observer
+ * ever waits on it either: it is not 0, so a claim CAS skips the slot, and it
+ * carries kind ARTS_GUID_RESERVED (never a valid object), so it equals no
+ * real GUID and a key search stops matching at once — a request arriving
+ * mid-teardown resolves to a fresh reservation instead of waiting. */
+#define ARTS_ROUTE_KEY_RETIRING ((arts_guid_t)1)
 /* Number of independent shards for the remote_route_table.  Must be a
  * power of 2 so (key & (N-1)) is the shard selector. */
 #define ARTS_REMOTE_ROUTE_SHARDS 8
@@ -72,19 +84,14 @@ struct arts_route_item_s {
    * "never created" from "destroyed".  The OoO defer path treats both
    * uniformly; create-vs-destroy semantics are resolved by handler category
    * (Cat B request/publish defers + drains on the next install or shutdown;
-   * Cat C response/ack silent-drops on absent), not by a per-slot state bit. */
+   * Cat C response/ack silent-drops on absent), not by a per-slot state bit.
+   *
+   * key == 0 means the slot is FREE.  A destroy returns the slot by zeroing
+   * the key, so occupancy tracks live objects rather than every object the
+   * run ever made; a claim stays the single key-CAS below because a returned
+   * slot is indistinguishable from a never-used one. */
   arts_atomic_shared_ptr_t value; /* cb: event/db/edt (NULL = absent) */
-  arts_lf_stack_t
-      ooo_list; /* OoO defer chain (Treiber; preserved across free) */
-  /* Install-epoch generation.  Bumped ONLY by set_destroyed when it ends a real
-   * generation (exchanges out a non-NULL value), NEVER on install.  A deferred
-   * OoO payload snapshots this at defer time; on drain-replay a kind that must
-   * not cross a generation boundary (a stale ownership INVALIDATE re-applied
-   * against a fresh labeled-GUID re-create) is dropped when the snapshot no
-   * longer matches.  Plain uint64_t accessed via __atomic_* (route_item carries
-   * no _Atomic — ooo.h / route_table.h are pulled by nvcc TUs where _Atomic
-   * does not parse). */
-  uint64_t gen;
+  arts_lf_stack_t ooo_list; /* OoO defer chain (Treiber) */
 } ARTS_ALIGNED_MAX;
 
 typedef struct arts_route_item_s arts_route_item_t;
@@ -157,17 +164,12 @@ int arts_route_table_lookup_rank(arts_guid_t key);
 /* Destroy: atomically detach the cb from `key`'s slot and drop the install
  * ref.  Single-flight (only the caller whose exchange observes a non-NULL cb
  * "wins"); idempotent.  The object's deleter runs once the last outstanding
- * reader ref is released.  Returns true if this call detached the cb. */
+ * reader ref is released.  Returns true if this call detached the cb.
+ *
+ * Also RETURNS the slot: the deferred payloads are drained and the key is
+ * zeroed, so the slot is claimable again by the ordinary key-CAS.  Occupancy
+ * therefore tracks live objects, not every object the run ever made. */
 bool arts_route_table_set_destroyed(arts_guid_t key);
-
-/* True iff `key`'s slot is currently absent (value == NULL) AND a prior
- * generation was destroyed (the install-epoch gen has been bumped, which only
- * set_destroyed does).  Lets an acquire-request handler tell a post-destroy
- * absent slot (fail the pending acquire — the DB is gone) from a pre-create
- * absent slot (keep deferring — the create has not landed yet).  Acquire-
- * ordered load of gen, so a true result carries the destroyer's
- * synchronizes-with edge. */
-bool arts_route_table_was_destroyed(arts_guid_t key);
 
 /* Type-aware safe lookups: return a caller-owned cb handle (strong ref held)
  * or NULL if the slot is absent / destroyed / a kind mismatch.  Use

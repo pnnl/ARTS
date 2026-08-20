@@ -124,7 +124,8 @@ static int part1_save_next(void) {
 
   /* Defer M payloads (all MISS — value NULL — so they push, no dispatch). */
   for (uint32_t id = 0; id < (uint32_t)M; id++) {
-    arts_ooo_dispatch_or_defer(&g_slot, NULL, OOO_EVENT_SATISFY_SLOT, &id,
+    arts_ooo_dispatch_or_defer(&g_slot, NULL, OOO_EVENT_SATISFY_SLOT, g_slot.key,
+                             &id,
                                sizeof(id));
   }
   if (atomic_load_explicit(&g_dispatched, memory_order_relaxed) != 0) {
@@ -225,7 +226,8 @@ static void *p2_producer_fn(void *vp) {
   }
   for (int k = 0; k < c->count; k++) {
     uint32_t id = c->base + (uint32_t)k;
-    arts_ooo_dispatch_or_defer(&g_slot, NULL, OOO_EVENT_SATISFY_SLOT, &id,
+    arts_ooo_dispatch_or_defer(&g_slot, NULL, OOO_EVENT_SATISFY_SLOT, g_slot.key,
+                             &id,
                                sizeof(id));
   }
   atomic_fetch_add_explicit(&g_p2_producers_done, 1, memory_order_release);

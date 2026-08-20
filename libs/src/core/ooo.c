@@ -178,10 +178,12 @@ static const arts_ooo_handler_fn_t g_ooo_table[OOO_KIND_COUNT] = {
 /* ===== payload alloc ====================================================== */
 
 static struct arts_ooo_payload_s *
-arts_ooo_payload_alloc(ooo_kind_t kind, const void *args, uint32_t args_size) {
+arts_ooo_payload_alloc(ooo_kind_t kind, arts_guid_t guid, const void *args,
+                       uint32_t args_size) {
   struct arts_ooo_payload_s *p = (struct arts_ooo_payload_s *)arts_malloc(
       sizeof(struct arts_ooo_payload_s) + args_size);
   p->kind = kind;
+  p->guid = guid;
   p->args_size = args_size;
   if (args_size > 0 && args != NULL) {
     memcpy(arts_ooo_payload_args(p), args, args_size);
@@ -193,11 +195,43 @@ arts_ooo_payload_alloc(ooo_kind_t kind, const void *args, uint32_t args_size) {
 
 void arts_ooo_dispatch_or_defer(struct arts_route_item_s *slot,
                                 struct arts_ooo_payload_s *payload,
-                                ooo_kind_t kind, const void *args,
-                                uint32_t args_size) {
+                                ooo_kind_t kind, arts_guid_t guid,
+                                const void *args, uint32_t args_size) {
+  /* Identity check before anything else: destroy returns the slot, so this
+   * slot may already belong to a different GUID.  Dispatching then would run
+   * the handler against the wrong object — silent corruption, not a miss —
+   * and re-deferring would strand the payload on a stranger's list.  Drop it:
+   * the GUID it was deferred for is gone, and an ordinary GUID never
+   * returns.  (A zero key means the slot is free; the payload still cannot be
+   * dispatched, and holding it would only wait for an install of a different
+   * GUID.) */
+  if (__atomic_load_n(&slot->key, __ATOMIC_ACQUIRE) != guid) {
+    if (payload != NULL) {
+      arts_free(payload);
+    }
+    return;
+  }
   /* Per-call acquire: (re)load the slot value every entry so a destroy that
    * NULLed it earlier in the same drain walk is observed here. */
   arts_shared_ptr_t h = arts_atomic_shared_load(&slot->value);
+  /* Verify the VALUE, not the slot.  The check above only proves the slot was
+   * ours BEFORE the load; a reclaim between the two would hand us the next
+   * owner's object, and dispatching this payload against it would run a
+   * handler over storage of a different kind.  Re-reading the slot's key is
+   * not a proof — the word is not monotone, and a late message for a
+   * destroyed GUID legally re-reserves the same key into a freed slot, so it
+   * can match again around a stranger's value.  The pinned cb's tag is: it
+   * names the key the object was published under, and the ref from the load
+   * keeps that cb from being recycled underneath the comparison.  A mismatch
+   * means the object this payload was deferred for is gone (an ordinary GUID
+   * never returns), so the payload is dropped, not re-parked. */
+  if (h != NULL && arts_shared_tag(h) != (uint64_t)guid) {
+    arts_shared_release(&h);
+    if (payload != NULL) {
+      arts_free(payload);
+    }
+    return;
+  }
   if (h) {
     void *item = arts_shared_get(h);
     /* Ref pinned across the whole handler call — a concurrent destroy's
@@ -213,7 +247,8 @@ void arts_ooo_dispatch_or_defer(struct arts_route_item_s *slot,
 
   /* Miss — defer. */
   if (payload == NULL) {
-    payload = arts_ooo_payload_alloc(kind, args, args_size); /* fresh entry */
+    payload =
+        arts_ooo_payload_alloc(kind, guid, args, args_size); /* fresh entry */
   }
   /* else: drain re-entry — reuse the same payload (no alloc/free).
    *
@@ -238,6 +273,18 @@ void arts_ooo_dispatch_or_defer(struct arts_route_item_s *slot,
   if (h) {
     arts_shared_release(&h);
     arts_ooo_drain(slot);
+    return;
+  }
+  /* Second half of the same rescue, against a teardown rather than an install:
+   * the slot may have been returned between our resolution and the push above,
+   * in which case this node is parked on a slot that no longer answers for our
+   * GUID.  The teardown stores the key before it reads the chain and we push
+   * before we read the key, so at most one of us can miss the other — and if
+   * it was the teardown, we are the one that must move.  Re-resolve and defer
+   * again; the node we leave behind is inert (the dispatch-side GUID check
+   * drops it) rather than lost. */
+  if (__atomic_load_n(&slot->key, __ATOMIC_ACQUIRE) != guid) {
+    arts_ooo_dispatch_or_defer_guid(guid, kind, args, args_size);
   }
 }
 
@@ -245,7 +292,7 @@ void arts_ooo_dispatch_or_defer_guid(arts_guid_t guid, ooo_kind_t kind,
                                      const void *args, uint32_t args_size) {
   arts_route_item_t *slot;
   arts_route_table_reserve_or_lookup(guid, &slot);
-  arts_ooo_dispatch_or_defer(slot, NULL, kind, args, args_size);
+  arts_ooo_dispatch_or_defer(slot, NULL, kind, guid, args, args_size);
 }
 
 void arts_ooo_push_guid(arts_guid_t guid, ooo_kind_t kind, const void *args,
@@ -253,7 +300,7 @@ void arts_ooo_push_guid(arts_guid_t guid, ooo_kind_t kind, const void *args,
   arts_route_item_t *slot;
   arts_route_table_reserve_or_lookup(guid, &slot);
   struct arts_ooo_payload_s *payload =
-      arts_ooo_payload_alloc(kind, args, args_size);
+      arts_ooo_payload_alloc(kind, guid, args, args_size);
   INCREMENT_NUM_OO_ENQUEUE_BY(1);
   arts_lf_stack_push(&slot->ooo_list, &payload->link);
 }
@@ -270,7 +317,7 @@ void arts_ooo_drain(struct arts_route_item_s *slot) {
     arts_lf_link_t *next =
         atomic_load_explicit(&head->next, memory_order_relaxed);
     struct arts_ooo_payload_s *payload = (struct arts_ooo_payload_s *)head;
-    arts_ooo_dispatch_or_defer(slot, payload, payload->kind,
+    arts_ooo_dispatch_or_defer(slot, payload, payload->kind, payload->guid,
                                arts_ooo_payload_args(payload),
                                payload->args_size);
     head = next;
@@ -281,6 +328,28 @@ void arts_ooo_drain_guid(arts_guid_t guid) {
   arts_route_item_t *slot;
   arts_route_table_reserve_or_lookup(guid, &slot);
   arts_ooo_drain(slot);
+}
+
+/* Take the whole chain off a slot that is no longer bound to the GUIDs on it,
+ * and send each node back through resolution so it lands wherever its own GUID
+ * lives now.  Used by a teardown after it returns the slot: a node parked an
+ * instant too late must not be stranded on a slot another identity is about to
+ * claim.  A node whose GUID is simply gone re-defers on a fresh reservation and
+ * is reaped at shutdown, the same as any request for an object that never
+ * arrives. */
+void arts_ooo_redrive_all(struct arts_route_item_s *slot) {
+  arts_lf_link_t *head = arts_lf_stack_reverse_drain(&slot->ooo_list);
+  while (head != NULL) {
+    arts_lf_link_t *next =
+        atomic_load_explicit(&head->next, memory_order_relaxed);
+    struct arts_ooo_payload_s *payload = (struct arts_ooo_payload_s *)head;
+    arts_route_item_t *target;
+    arts_route_table_reserve_or_lookup(payload->guid, &target);
+    arts_ooo_dispatch_or_defer(target, payload, payload->kind, payload->guid,
+                               arts_ooo_payload_args(payload),
+                               payload->args_size);
+    head = next;
+  }
 }
 
 void arts_ooo_free_all(struct arts_route_item_s *slot) {

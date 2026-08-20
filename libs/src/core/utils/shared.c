@@ -53,6 +53,7 @@ struct arts_shared_s {
                              0 (both fields zero) frees. */
   void *object;
   void (*deleter)(void *);
+  _Atomic(uint64_t) tag; /* identity stamp — see shared.h */
 };
 
 /* ext = (generation << 16) | claims. */
@@ -123,6 +124,18 @@ void arts_shared_abandon(arts_shared_ptr_t *p) {
 }
 
 void *arts_shared_get(arts_shared_ptr_t p) { return p ? p->object : NULL; }
+
+/* Relaxed on both sides: publication order rides the slot.  The stamp is
+ * sequenced before the release-CAS that publishes the cb into a slot, and a
+ * reader's tag load is sequenced after the acquire load that pinned the cb
+ * out of that slot, so the pairing on the slot carries the stamp across. */
+void arts_shared_set_tag(arts_shared_ptr_t p, uint64_t tag) {
+  atomic_store_explicit(&p->tag, tag, memory_order_relaxed);
+}
+
+uint64_t arts_shared_tag(arts_shared_ptr_t p) {
+  return atomic_load_explicit(&p->tag, memory_order_relaxed);
+}
 
 /* ── Atomic slot API (multi-thread shared) ─────────────────────────────── */
 

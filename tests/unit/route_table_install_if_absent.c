@@ -1,14 +1,14 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
  * route_table_install_if_absent — CAS-install win/loss + set_destroyed
- * single-flight + gen-bump ordering (census 18-gas GAPs 2 & 3).
+ * single-flight + slot return (census 18-gas GAPs 2 & 3).
  *
  * arts_route_table_install_if_absent CASes a fresh cb into an empty slot:
  * exactly ONE caller wins per generation; losers arts_shared_abandon their cb
  * (the abandon must NOT run the deleter — the loser keeps owning its object).
- * arts_route_table_set_destroyed is single-flight (only the caller whose
- * exchange observes a non-NULL cb returns true) and bumps `gen` (acq_rel)
- * BEFORE releasing the old cb.
+ * arts_route_table_set_destroyed is single-flight (only the caller that wins
+ * the key claim returns true) and RETURNS the slot: the key is zeroed after
+ * the cb is released, so the slot is claimable again.
  *
  * Scenarios:
  *
@@ -18,12 +18,12 @@
  *
  *   B. set_destroyed single-flight: N threads race set_destroyed on a populated
  *      slot — exactly one returns true; the object's deleter runs exactly once;
- *      gen is bumped exactly once (was_destroyed true, gen observed > 0).
+ *      the slot's key is returned to 0.
  *
  *   C. install_if_absent racing set_destroyed across rounds: repeated
  *      create→destroy on the same GUID; every round has exactly one creator and
- *      at most one destroyer; no double-free / no leak (ASan); gen is
- *      monotone-increasing across destroyed rounds.
+ *      at most one destroyer; no double-free / no leak (ASan); the slot comes
+ *      back every round.
  *
  * No runtime: route_table.c + guid.c + shared.c #include'd; OoO drain is a
  * no-op (no OoO payloads pushed).
@@ -54,6 +54,7 @@ void arts_free(void *p) { free(p); }
 
 struct arts_route_item_s;
 void arts_ooo_drain(struct arts_route_item_s *s) { (void)s; }
+void arts_ooo_redrive_all(struct arts_route_item_s *s) { (void)s; }
 void arts_ooo_free_all(struct arts_route_item_s *s) { (void)s; }
 
 /* Wait-free counter primitives for the DB seq allocator (libc-free unit
@@ -230,6 +231,11 @@ int main(void) {
     int *obj = (int *)malloc(sizeof(int));
     *obj = 0x77;
     arts_route_table_install_if_absent(obj, g, 0, false);
+    /* Hold the slot pointer: after the destroy the key is zeroed, so a fresh
+     * lookup would reserve a new slot rather than find this one.  Slots are
+     * never freed, only re-keyed, so the pointer stays valid. */
+    arts_route_item_t *b_item = NULL;
+    arts_route_table_reserve_or_lookup(g, &b_item);
     atomic_store(&g_deletes, 0);
 
     pthread_t tids[B_THREADS];
@@ -257,17 +263,16 @@ int main(void) {
       FAIL("B: object freed %d times, want exactly 1\n",
            atomic_load(&g_deletes));
     }
-    if (!arts_route_table_was_destroyed(g)) {
-      FAIL("B: was_destroyed false after a destroyed generation\n");
+    if (__atomic_load_n(&b_item->key, __ATOMIC_ACQUIRE) != 0) {
+      FAIL("B: destroy did not return the slot (key still claimed)\n");
     }
   }
 
-  /* ---- Scenario C: create/destroy churn, gen monotone, no double-free ---- */
+  /* ---- Scenario C: create/destroy churn returns the slot every round ---- */
   {
     arts_guid_t g = arts_guid_reserve(ARTS_GUID_DB, 0);
-    arts_route_item_t *item = NULL;
-    arts_route_table_reserve_or_lookup(g, &item);
-    uint64_t last_gen = 0;
+    arts_route_item_t *c_item = NULL;
+    arts_route_table_reserve_or_lookup(g, &c_item);
     atomic_store(&g_deletes, 0);
     const int ROUNDS = 2000;
     for (int r = 0; r < ROUNDS; r++) {
@@ -282,12 +287,11 @@ int main(void) {
         FAIL("C round %d: set_destroyed on a known-live slot returned false\n",
              r);
       }
-      uint64_t gen = __atomic_load_n(&item->gen, __ATOMIC_ACQUIRE);
-      if (gen <= last_gen) {
-        FAIL("C round %d: gen not monotone (%lu <= %lu)\n", r,
-             (unsigned long)gen, (unsigned long)last_gen);
+      /* The slot must come back every round; churn that leaked a slot per
+       * round is exactly the growth this reclamation exists to stop. */
+      if (__atomic_load_n(&c_item->key, __ATOMIC_ACQUIRE) != 0) {
+        FAIL("C round %d: slot still claimed after destroy\n", r);
       }
-      last_gen = gen;
     }
     if (atomic_load(&g_deletes) != ROUNDS) {
       FAIL("C: %d frees over %d rounds (double-free or leak)\n",

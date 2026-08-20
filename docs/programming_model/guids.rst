@@ -77,3 +77,52 @@ GUID.  Always check against it before dereferencing:
    if (guid != NULL_GUID) {
        /* safe to use */
    }
+
+.. _labeled-guid-reuse:
+
+Reusing a labeled GUID: create replaces, and that is a deviation
+----------------------------------------------------------------
+
+A create that finds its labeled GUID already occupied **replaces** the
+object in that slot; the displaced one is released.  ARTS implements
+neither of the OCR standard's checked variants:
+
+``GUID_PROP_CHECK``
+    the standard returns an error code when the GUID already exists.
+
+``GUID_PROP_BLOCK``
+    the standard blocks the create until the GUID can be re-created.
+
+Both properties are accepted and both behave as the standard's
+*unchecked* default, whose outcome the standard itself declares
+undefined ("potentially create the same object multiple times leading
+to undefined behavior").
+
+The consequence worth knowing is narrower than "replace is unsafe".
+Creating the same label from several ranks at once, where one creator
+wins and the others go on to use the winner's object, works: every
+creator installs an equivalent object and the last one stands.  What
+does **not** work is *reusing* a label across a lifetime boundary:
+
+.. code-block:: c
+
+   arts_db_destroy(g);                  /* generation A */
+   arts_db_create_with_guid(g, ...);    /* generation B, same label */
+
+The destroy and the create are independent messages and ARTS gives no
+ordering contract between them, so the destroy can be applied after the
+create.  Nothing distinguishes the two generations — the route table
+carries no per-slot generation stamp — so the destroy meant for A tears
+down B, and any protocol operation still in flight for A is applied to
+B.
+
+Programs that need a label per unit of work should therefore derive a
+**distinct index per unit** (``ocrGuidFromIndex`` over a range sized to
+the work) rather than cycling a small range with an index that wraps.
+Every application in the benchmark suite already does this; the pattern
+that does not is ``prodcon``, which is marked ``unsupported`` in the
+driver's catalog for exactly this reason.
+
+``tests/ocr/ooo_gen_crossgen_drop.c`` drives the reuse pattern and is
+deliberately left unregistered: it is the executable statement of this
+limitation, ready to run if the semantics are ever implemented.

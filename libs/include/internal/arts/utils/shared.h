@@ -85,6 +85,19 @@ void arts_shared_abandon(arts_shared_ptr_t *p);
 /* Raw managed-object pointer; valid while the caller holds a ref. */
 void *arts_shared_get(arts_shared_ptr_t p);
 
+/* Identity tag: the key a cb is published under, stamped by the publisher
+ * BEFORE the cb first enters any slot (re-stamped only while the cb is
+ * detached from every slot).  A reader that pinned a cb out of a keyed slot
+ * can verify the value it HOLDS against the key it ASKED for by comparing
+ * this field: the pinned cb cannot be recycled beneath the reader, so the
+ * comparison cannot suffer the ABA that re-reading the table's own key word
+ * can — a freed and re-claimed slot may return to a previously observed key
+ * while holding a different object.  Atomic because stale handles may still
+ * be read across a re-stamp; a racing reader observes one of the two
+ * identities, each of which it must treat correctly.  0 = untagged. */
+void arts_shared_set_tag(arts_shared_ptr_t p, uint64_t tag);
+uint64_t arts_shared_tag(arts_shared_ptr_t p);
+
 /* ── Atomic slot API (multi-thread shared) ─────────────────────────────── */
 #ifndef __cplusplus
 

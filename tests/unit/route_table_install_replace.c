@@ -14,7 +14,7 @@
  *      is still outstanding, A's deleter has NOT run yet (deferred free).
  *   3. Release the stale reader handle → A's deleter runs exactly once.
  *   4. A fresh lookup now returns B; install does NOT bump gen (only destroy
- *      does), so was_destroyed stays false across the REPLACE.
+ *      does), so the slot stays claimed across the REPLACE.
  *   5. A concurrent storm of installers + lookups + releases on one slot:
  *      every lookup handle is either NULL or a live, readable object; no UAF
  *      / double-free (ASan); deleter invocation count == #displaced cbs.
@@ -48,6 +48,7 @@ void arts_free(void *p) { free(p); }
 
 struct arts_route_item_s;
 void arts_ooo_drain(struct arts_route_item_s *s) { (void)s; }
+void arts_ooo_redrive_all(struct arts_route_item_s *s) { (void)s; }
 void arts_ooo_free_all(struct arts_route_item_s *s) { (void)s; }
 
 /* Wait-free counter primitives for the DB seq allocator (libc-free unit
@@ -199,14 +200,19 @@ int main(void) {
     FAIL("A deleter ran %d times, want 1\n", atomic_load(&g_deletes));
   }
 
-  /* fresh lookup returns B; REPLACE did not bump gen. */
+  /* fresh lookup returns B; a REPLACE installs over a live slot and must not
+   * return it — only a destroy does that. */
   arts_shared_ptr_t hB = arts_route_table_lookup(g);
   if (!hB || arts_shared_get(hB) != B) {
     FAIL("lookup after install(B) did not return B\n");
   }
   arts_shared_release(&hB);
-  if (arts_route_table_was_destroyed(g)) {
-    FAIL("REPLACE wrongly registered as a destroyed generation\n");
+  {
+    arts_route_item_t *item = NULL;
+    arts_route_table_reserve_or_lookup(g, &item);
+    if (__atomic_load_n(&item->key, __ATOMIC_ACQUIRE) != g) {
+      FAIL("REPLACE wrongly returned the slot\n");
+    }
   }
 
   /* ---- 5: concurrent storm. ---- */

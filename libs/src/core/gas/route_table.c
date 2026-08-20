@@ -45,7 +45,7 @@
 
 #include "arts.h"
 #include "arts/gas/guid.h"
-#include "arts/ooo.h"           /* arts_ooo_drain / arts_ooo_free_all */
+#include "arts/ooo.h"           /* arts_ooo_drain / arts_ooo_redrive_all */
 #include "arts/runtime_state.h" /* arts_node_info */
 #include "arts/system/print.h"
 #include "arts/utils/lockfree_lifo.h"
@@ -273,6 +273,13 @@ arts_route_table_search_for_empty(arts_route_table_t *route_table,
 /* Reserve a slot for `key` (or look it up if already present).  Strictly
  * lock-free: no per-GUID spinlock.  On return, *out points to the canonical
  * slot for `key`.  The cb (value) may be NULL. */
+/* One slot per key used to follow from monotone occupancy: a bucket only ever
+ * filled, so the first free slot in the probe order was a stable choice.  Slots
+ * are returned now, so a thread stalled in a later segment can claim a second
+ * slot for a key another thread just claimed a freed slot for.  Uniqueness
+ * therefore rests on the re-search below, not on the probe order: the loser's
+ * slot is an orphan holding the key with no value, invisible to lookups, and
+ * its parked payloads are re-driven when it is torn down. */
 void arts_route_table_reserve_or_lookup(arts_guid_t key,
                                         arts_route_item_t **out) {
   arts_route_table_t *route_table = arts_get_route_table(key);
@@ -298,6 +305,10 @@ int arts_route_table_lookup_rank(arts_guid_t key) {
   return (int)arts_guid_get_rank(key);
 }
 
+/* Unbracketed on purpose: this takes a slot the CALLER located, in a mirror
+ * table (the GPU per-device tables) that no destroy returns.  Its slots are
+ * bound to their key for the table's life, so there is no identity to lose.  Do
+ * not point it at the global table, whose slots are reclaimed. */
 arts_shared_ptr_t arts_route_item_acquire(arts_route_item_t *item) {
   return item ? arts_atomic_shared_load(&item->value) : NULL;
 }
@@ -334,6 +345,7 @@ void *arts_route_table_install(void *obj, arts_guid_t key, unsigned int rank,
   arts_route_table_reserve_or_lookup(key, &item);
   arts_shared_ptr_t cb =
       arts_shared_make(obj, deleter_for_kind(arts_guid_get_kind(key)));
+  arts_shared_set_tag(cb, (uint64_t)key);
   arts_shared_ptr_t old = arts_atomic_shared_exchange(&item->value, cb);
   if (old) {
     arts_shared_release(&old);
@@ -347,6 +359,7 @@ void *arts_route_table_install_with_deleter(void *obj, arts_guid_t key,
   arts_route_item_t *item;
   arts_route_table_reserve_or_lookup(key, &item);
   arts_shared_ptr_t cb = arts_shared_make(obj, deleter);
+  arts_shared_set_tag(cb, (uint64_t)key);
   arts_shared_ptr_t old = arts_atomic_shared_exchange(&item->value, cb);
   if (old) {
     arts_shared_release(&old);
@@ -364,6 +377,7 @@ bool arts_route_table_install_if_absent(void *obj, arts_guid_t key,
   arts_route_table_reserve_or_lookup(key, &item);
   arts_shared_ptr_t cb =
       arts_shared_make(obj, deleter_for_kind(arts_guid_get_kind(key)));
+  arts_shared_set_tag(cb, (uint64_t)key);
   if (arts_atomic_shared_compare_exchange(&item->value, NULL, cb)) {
     arts_ooo_drain(item);
     return true;
@@ -384,45 +398,66 @@ bool arts_route_table_set_destroyed(arts_guid_t key) {
   if (item == NULL) {
     return false;
   }
-  /* Tombstone order: bump the install-epoch BEFORE detaching the value.  A
-   * reader distinguishes post-destroy from pre-create as "value absent AND
-   * gen > 0"; detaching first opens a window where it reads {absent, gen 0}
-   * and mis-defers a post-destroy message forever.  The bump stands even
-   * when the slot was never installed here (the exchange finds NULL): a
-   * destroy notice for this GUID still ends a generation — later arrivals
-   * for it are stale until a fresh create installs, and install never
-   * consults gen.  Bumping only on destroy (never on install) encodes
-   * "install of the same round = gen unchanged -> replay" vs "destroy =
-   * new generation -> drop a stale cross-generation payload". */
-  __atomic_fetch_add(&item->gen, 1, __ATOMIC_ACQ_REL);
+  /* A slot holding no value is a RESERVATION — somebody claimed the key and
+   * parked deferred payloads on it waiting for a create that has not landed.
+   * It is not destroyable. */
+  arts_shared_ptr_t peek = arts_atomic_shared_load(&item->value);
+  if (peek == NULL) {
+    return false;
+  }
+  arts_shared_release(&peek);
+  /* One CAS, carrying both halves.  It can only succeed while the slot still
+   * names this GUID, so the identity is proven by the transition rather than
+   * checked beside it; and only one caller can win it, so the teardown is
+   * single-flight without anything being held.  A loser is not the destroyer
+   * and says so — no retry, because there is no state to wait for. */
+  arts_guid_t expect = key;
+  if (!__atomic_compare_exchange_n(&item->key, &expect,
+                                   ARTS_ROUTE_KEY_RETIRING, false,
+                                   __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+    return false;
+  }
   arts_shared_ptr_t old = arts_atomic_shared_exchange(&item->value, NULL);
+  bool detached = (old != NULL);
   if (old) {
     arts_shared_release(&old);
-    return true;
   }
-  return false;
+  /* Return the slot, THEN look for stragglers.  A deferring thread pushes its
+   * node and then, behind a full fence, re-reads this key; a teardown publishes
+   * the return and then, behind a full fence, re-reads the chain.  Each stores
+   * its word before loading the other's, so they cannot both miss — and
+   * whatever the teardown finds it re-drives onto whichever slot owns that GUID
+   * now. */
+  __atomic_store_n(&item->key, (arts_guid_t)0, __ATOMIC_RELEASE);
+  atomic_thread_fence(memory_order_seq_cst);
+  arts_ooo_redrive_all(item);
+  return detached;
 }
 
-/* True iff `key`'s slot currently holds no object AND a prior generation was
- * destroyed (gen > 0).  Distinguishes a post-destroy absent slot from a
- * pre-create absent slot (never installed, gen == 0): the former must fail a
- * pending acquire (the DB is gone), the latter must keep deferring (the create
- * is still coming).  gen is bumped acq_rel only by set_destroyed; the load here
- * is acquire-ordered, so a caller that observes the destroyed state via this
- * helper has the synchronizes-with edge from the destroyer's set_destroyed. */
-bool arts_route_table_was_destroyed(arts_guid_t key) {
-  arts_route_table_t *route_table = arts_get_route_table(key);
-  arts_route_item_t *item = arts_route_table_search_for_key(route_table, key);
-  if (item == NULL) {
-    return false;
+
+/* Acquire a slot's object, verified by the OBJECT's identity.
+ *
+ * search_for_key proves the slot held `key` BEFORE the value load; a slot is
+ * returned on destroy and re-claimed by another GUID, so that alone no longer
+ * proves the value we loaded is the one we asked for — the object could belong
+ * to a different GUID, and because DB, EVENT and EDT keys share these tables it
+ * could be a different KIND, which a caller would then use through the wrong
+ * struct.  Re-reading the slot's key word is not a proof either: the word is
+ * not monotone (claimed, retired, returned, re-claimed), and a late message
+ * for a destroyed GUID legally re-reserves that GUID into a freed slot — so
+ * the word can return to a previously observed key while the value belongs to
+ * an identity that held the slot in between.  The pinned cb's own tag cannot:
+ * it is stamped with the key the object was published under and the ref taken
+ * by the load keeps that cb from being recycled, so tag == key is a property
+ * of the object in hand, not of a word that may have changed twice since. */
+static inline arts_shared_ptr_t
+route_item_acquire_checked(arts_route_item_t *item, arts_guid_t key) {
+  arts_shared_ptr_t h = arts_atomic_shared_load(&item->value);
+  if (h != NULL && arts_shared_tag(h) != (uint64_t)key) {
+    arts_shared_release(&h);
+    return NULL;
   }
-  arts_shared_ptr_t v = arts_atomic_shared_load(&item->value);
-  bool absent = (arts_shared_get(v) == NULL);
-  arts_shared_release(&v);
-  if (!absent) {
-    return false;
-  }
-  return __atomic_load_n(&item->gen, __ATOMIC_ACQUIRE) > 0;
+  return h;
 }
 
 /* ── Typed handle lookups (caller-owned ref) ────────────────────────────── */
@@ -437,7 +472,7 @@ arts_route_table_lookup_typed(arts_guid_t guid, arts_guid_kind_t expected) {
   if (item == NULL) {
     return NULL;
   }
-  return arts_atomic_shared_load(&item->value);
+  return route_item_acquire_checked(item, guid);
 }
 
 arts_shared_ptr_t arts_route_table_lookup(arts_guid_t key) {
@@ -446,7 +481,7 @@ arts_shared_ptr_t arts_route_table_lookup(arts_guid_t key) {
   if (item == NULL) {
     return NULL;
   }
-  return arts_atomic_shared_load(&item->value);
+  return route_item_acquire_checked(item, key);
 }
 
 arts_shared_ptr_t arts_route_table_lookup_event(arts_guid_t guid) {
@@ -470,12 +505,33 @@ bool arts_route_table_move_item(arts_guid_t old_key, arts_guid_t new_key) {
   if (old_item == NULL) {
     return false;
   }
-  /* Take the install ref out of the old slot (single-flight; the cb pointer
-   * carries the existing strong count unchanged). */
+  /* Take the install ref out of the old slot under the same claim a destroy
+   * uses, and re-check the identity beneath it.  A bare exchange here would
+   * detach whatever the slot holds — and since slots are returned and
+   * re-claimed, that can be a live stranger's object, which this would then
+   * re-key under new_key. */
+  arts_guid_t expect_old = old_key;
+  if (!__atomic_compare_exchange_n(&old_item->key, &expect_old,
+                                   ARTS_ROUTE_KEY_RETIRING, false,
+                                   __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+    return false;
+  }
   arts_shared_ptr_t cb = arts_atomic_shared_exchange(&old_item->value, NULL);
+  /* Same return protocol as set_destroyed: publish the return, fence, then
+   * re-drive whatever raced onto the old slot's chain — a node parked against
+   * the fence pairing must be moved to wherever its own GUID lives now, not
+   * stranded on a slot another identity is about to claim. */
+  __atomic_store_n(&old_item->key, (arts_guid_t)0, __ATOMIC_RELEASE);
+  atomic_thread_fence(memory_order_seq_cst);
+  arts_ooo_redrive_all(old_item);
   if (!cb) {
     return false;
   }
+  /* Re-stamp while the cb is in no slot: readers verify a pinned value by its
+   * tag, so a moved object must carry the key it is about to answer for.  A
+   * stale handle from the old slot racing this read sees one of the two keys
+   * — old fails its lookup's compare, new is simply the rename completed. */
+  arts_shared_set_tag(cb, (uint64_t)new_key);
   if (arts_atomic_shared_compare_exchange(&new_item->value, NULL, cb)) {
     arts_ooo_drain(new_item);
     return true;
