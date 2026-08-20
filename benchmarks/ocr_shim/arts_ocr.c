@@ -621,6 +621,22 @@ static void collective_up_edt(uint32_t paramc, const uint64_t *paramv,
    * and observe stale / unpopulated data. */
   arts_db_release(partialDb, ARTS_MODE_RW);
 
+  /* Every input to this reduction step is a block THIS layer minted for one
+   * edge and one consumer: slot 0 is the contributor's own datum, minted by
+   * collective_launch_generation for this rank's up-edge, and slots 1.. are
+   * the children's partials, each minted for the edge this task is the far
+   * end of.  Reaching here means all of them have been read, and no other
+   * task can name them -- the edge GUID is derived per (collective,
+   * generation, rank, direction) and is satisfied exactly once.  Left alive
+   * they accumulate for the whole run, one set per generation per rank,
+   * which is the dominant footprint of any program that reduces every
+   * timestep. */
+  for (uint32_t i = 0; i < depc; i++) {
+    if (depv[i].guid != NULL_GUID) {
+      arts_db_destroy(depv[i].guid);
+    }
+  }
+
   if (r == 0) {
     /* Root: seed the broadcast.  The full reduction is the root's partial. */
     arts_guid_t down = collective_edge_guid(coll, nrank, gen, 0, 1);
@@ -685,6 +701,15 @@ static void collective_down_edt(uint32_t paramc, const uint64_t *paramv,
     } else if (dstType == ARTS_GUID_EVENT) {
       arts_event_satisfy_slot(dep, outDb, ARTS_EVENT_LATCH_DECR_SLOT);
     }
+  }
+
+  /* The broadcast input is likewise this layer's own: the root's partial on
+   * the seed edge, or the parent's forward copy.  Both were minted for this
+   * one edge and are read only here -- the copies handed onward (fwdDb, and
+   * outDb to the dependent) are separate blocks, so nothing downstream can
+   * still be looking at this one. */
+  if (depv[0].guid != NULL_GUID) {
+    arts_db_destroy(depv[0].guid);
   }
 }
 
@@ -775,68 +800,91 @@ typedef struct {
  * address — identical across forked ranks.  Pack the entire template
  * into the GUID itself:
  *
- *   bits 63-48 (16) = depc   (0xFFFF = EDT_PARAM_UNK; max non-UNK 65534)
- *   bits 47-32 (16) = paramc (0xFFFF = EDT_PARAM_UNK; max non-UNK 65534)
- *   bits 31-0  (32) = funcPtr (4 GiB; non-PIE x86-64 .text segments
- *                     are well below this in practice)
+ *   bits 63-44 (20) = depc   (0xFFFFF = EDT_PARAM_UNK; max non-UNK 1048574)
+ *   bits 43-28 (16) = paramc (0xFFFF = EDT_PARAM_UNK; max non-UNK 65534)
+ *   bits 27-0  (28) = funcPtr (256 MiB; non-PIE x86-64 .text sits in the
+ *                     low megabytes)
  *
- * 16 bits each for paramc/depc gives headroom for templates that
- * dynamically size depc to thousands; a narrower split silently
- * truncates those and strands the consumer.
+ * depc gets the widest field: a join EDT's fan-in scales with the problem
+ * size (one dependence per tile/box/chunk), while paramc and the text
+ * segment do not.  A field that cannot hold the requested count must fail
+ * LOUDLY at template creation: OCR programs conventionally ignore the
+ * status, so a quiet error here leaves the caller's GUID uninitialized and
+ * surfaces later as memory corruption in whatever decodes it.
  *
  * No magic tag is needed: callers always know the GUID came from
  * ocrEdtTemplateCreate when they pass it to ocrEdtCreate or
  * ocrEdtTemplateDestroy, so a runtime distinction from "other"
  * GUIDs is unnecessary. */
-#define ARTS_TPL_FUNCPTR_BITS 32
+#define ARTS_TPL_FUNCPTR_BITS 28
 #define ARTS_TPL_FUNCPTR_MASK ((1ULL << ARTS_TPL_FUNCPTR_BITS) - 1)
 #define ARTS_TPL_PARAMC_SHIFT ARTS_TPL_FUNCPTR_BITS
+#define ARTS_TPL_PARAMC_MASK 0xFFFFu
+#define ARTS_TPL_PARAMC_UNK 0xFFFFu
+#define ARTS_TPL_PARAMC_MAX 0xFFFEu
 #define ARTS_TPL_DEPC_SHIFT (ARTS_TPL_PARAMC_SHIFT + 16)
-#define ARTS_TPL_COUNT_UNK 0xFFFFu
-#define ARTS_TPL_COUNT_MAX 0xFFFEu
+#define ARTS_TPL_DEPC_MASK 0xFFFFFu
+#define ARTS_TPL_DEPC_UNK 0xFFFFFu
+#define ARTS_TPL_DEPC_MAX 0xFFFFEu
 
 static inline OcrEdtTemplate arts_tpl_decode(ocrGuid_t g) {
   uint64_t v = (uint64_t)g.guid;
   OcrEdtTemplate t;
   t.funcPtr = (ocrEdt_t)(uintptr_t)(v & ARTS_TPL_FUNCPTR_MASK);
-  uint32_t enc_paramc = (uint32_t)((v >> ARTS_TPL_PARAMC_SHIFT) & 0xFFFFu);
-  uint32_t enc_depc = (uint32_t)((v >> ARTS_TPL_DEPC_SHIFT) & 0xFFFFu);
-  /* 0xFFFF sentinel = EDT_PARAM_UNK (caller MUST provide explicit value
+  uint32_t enc_paramc = (uint32_t)((v >> ARTS_TPL_PARAMC_SHIFT) & ARTS_TPL_PARAMC_MASK);
+  uint32_t enc_depc = (uint32_t)((v >> ARTS_TPL_DEPC_SHIFT) & ARTS_TPL_DEPC_MASK);
+  /* All-ones sentinel = EDT_PARAM_UNK (caller MUST provide explicit value
    * at ocrEdtCreate; passing EDT_PARAM_DEF here is an OCR-app bug). */
-  t.paramc = (enc_paramc == ARTS_TPL_COUNT_UNK) ? EDT_PARAM_UNK : enc_paramc;
-  t.depc = (enc_depc == ARTS_TPL_COUNT_UNK) ? EDT_PARAM_UNK : enc_depc;
+  t.paramc = (enc_paramc == ARTS_TPL_PARAMC_UNK) ? EDT_PARAM_UNK : enc_paramc;
+  t.depc = (enc_depc == ARTS_TPL_DEPC_UNK) ? EDT_PARAM_UNK : enc_depc;
   return t;
 }
 
 u8 ocrEdtTemplateCreate_internal(ocrGuid_t *guid, ocrEdt_t funcPtr, u32 paramc,
                                  u32 depc, const char *funcName) {
-  (void)funcName;
   uint64_t fp = (uint64_t)(uintptr_t)funcPtr;
+  /* Encoding-capacity violations abort rather than return a status: OCR
+   * programs conventionally ignore the return value, so an error here would
+   * leave the caller's GUID uninitialized and turn into corruption at the
+   * first decode.  There is no valid template to hand back. */
   if ((fp & ~ARTS_TPL_FUNCPTR_MASK) != 0) {
-    /* funcPtr beyond 32 bits — non-PIE x86-64 .text never reaches this
-     * boundary in practice; treat as a build-time invariant violation. */
-    return OCR_EINVAL;
+    (void)fprintf(stderr,
+                  "ocrEdtTemplateCreate(%s): funcPtr %p exceeds the %d-bit "
+                  "template encoding\n",
+                  funcName ? funcName : "?", (void *)funcPtr,
+                  ARTS_TPL_FUNCPTR_BITS);
+    abort();
   }
   /* OCR allows EDT_PARAM_UNK ((u32)-1) for paramc/depc when the count is
    * dynamic at template creation but provided explicitly at every
    * ocrEdtCreate call (reductionLaunch is the canonical user).  Encode
-   * EDT_PARAM_UNK as the 0xFFFF sentinel; non-UNK values must fit in 16
-   * bits (max 65534, i.e. ARTS_TPL_COUNT_MAX). */
-  uint16_t enc_paramc;
+   * EDT_PARAM_UNK as the field's all-ones sentinel; non-UNK values must fit
+   * the field. */
+  uint32_t enc_paramc;
   if (paramc == EDT_PARAM_UNK) {
-    enc_paramc = ARTS_TPL_COUNT_UNK;
-  } else if (paramc > ARTS_TPL_COUNT_MAX) {
-    return OCR_EINVAL;
+    enc_paramc = ARTS_TPL_PARAMC_UNK;
+  } else if (paramc > ARTS_TPL_PARAMC_MAX) {
+    (void)fprintf(stderr,
+                  "ocrEdtTemplateCreate(%s): paramc %" PRIu32
+                  " exceeds the template encoding's max %" PRIu32 "\n",
+                  funcName ? funcName : "?", paramc,
+                  (uint32_t)ARTS_TPL_PARAMC_MAX);
+    abort();
   } else {
-    enc_paramc = (uint16_t)paramc;
+    enc_paramc = paramc;
   }
-  uint16_t enc_depc;
+  uint32_t enc_depc;
   if (depc == EDT_PARAM_UNK) {
-    enc_depc = ARTS_TPL_COUNT_UNK;
-  } else if (depc > ARTS_TPL_COUNT_MAX) {
-    return OCR_EINVAL;
+    enc_depc = ARTS_TPL_DEPC_UNK;
+  } else if (depc > ARTS_TPL_DEPC_MAX) {
+    (void)fprintf(stderr,
+                  "ocrEdtTemplateCreate(%s): depc %" PRIu32
+                  " exceeds the template encoding's max %" PRIu32 "\n",
+                  funcName ? funcName : "?", depc,
+                  (uint32_t)ARTS_TPL_DEPC_MAX);
+    abort();
   } else {
-    enc_depc = (uint16_t)depc;
+    enc_depc = depc;
   }
   uint64_t v = fp | ((uint64_t)enc_paramc << ARTS_TPL_PARAMC_SHIFT) |
                ((uint64_t)enc_depc << ARTS_TPL_DEPC_SHIFT);
@@ -1159,22 +1207,26 @@ u8 ocrEdtDestroy(ocrGuid_t guid) {
  * Map an OCR event flavor + property bits onto a hint snapshot for the
  * unified arts_event_create API.  All OCR
  * flavors collapse onto a single ARTS event type; behavior is selected
- * entirely via hint fields (latch / channel / etc.).  auto_destroy stays off
- * for all OCR flavors (async fire-and-linger; see below).
+ * entirely via hint fields (latch / channel / nb_deps).
  *
  * Default hint = LATCH(1) fire-and-linger (latch=1, auto_destroy=false).
- * Because ARTS is asynchronous, auto-destroying a fired ONCE/LATCH event would
- * race ahead of late (reordered) satisfies/binds, so the OCR single-fire
- * flavors deliberately do NOT auto-destroy here — they linger until an explicit
- * destroy.  Each case overrides only the fields that diverge.
+ * Because ARTS is asynchronous, auto-destroying a fired event would race
+ * ahead of late (reordered) satisfies/binds, so the lingering single-fire
+ * flavors (ONCE/IDEM/STICKY) do NOT auto-destroy — they stay addressable
+ * until an explicit destroy.  COUNTED is the one flavor that can be
+ * reclaimed safely: its declared consumer count (set from params at the
+ * create call) tells the runtime when the last bind has arrived, which is
+ * exactly the knowledge reordering takes away from every other flavor.
+ * Each case overrides only the fields that diverge.
  */
 static arts_event_hint_t ocr_event_kind_to_hint(ocrEventTypes_t kind,
                                                 u16 properties) {
   (void)properties;
-  /* The distinct single-fire OCR flavors (ONCE/IDEM/STICKY/COUNTED) all map
-   * to the unified LATCH(1) fire-and-linger event; their old auto-destroy /
-   * over-satisfy-error / exact-N-dep semantics are subsumed (silent
-   * over-satisfy, linger until explicit destroy).  CHANNEL is preserved. */
+  /* ONCE/IDEM/STICKY map to the unified LATCH(1) fire-and-linger event; their
+   * old auto-destroy / over-satisfy-error semantics are subsumed (silent
+   * over-satisfy, linger until explicit destroy).  COUNTED starts from the
+   * same base and adds its consumer count at the create call.  CHANNEL is
+   * preserved. */
   arts_event_hint_t h = ARTS_EVENT_HINT_LATCH(1);
   switch (kind) {
   case OCR_EVENT_ONCE_T:
@@ -1341,8 +1393,22 @@ u8 ocrEventCreateParams(ocrGuid_t *guid, ocrEventTypes_t eventType,
   if (eventType == OCR_EVENT_LATCH_T && params != NULL) {
     h.latch = (int32_t)params->EVENT_LATCH.counter;
   }
-  /* OCR_EVENT_COUNTED_T params.nbDeps ignored: COUNTED collapses to LATCH(1)
-   * (exact-N-dep auto-destroy semantics dropped — fire-and-linger). */
+  if (eventType == OCR_EVENT_COUNTED_T) {
+    /* The declared consumer count is the whole of what COUNTED adds, and the
+     * only thing that lets a single-fire event be reclaimed: with no count the
+     * runtime cannot tell "no more consumers" from "one still in flight",
+     * because a bind may legally arrive after the satisfy it depends on.  A
+     * zero (or missing) count is therefore not a degenerate COUNTED but a
+     * contradiction, and it aborts rather than returning a status the caller
+     * conventionally ignores — the reference implementation rejects it too. */
+    if (params == NULL || params->EVENT_COUNTED.nbDeps == 0) {
+      (void)fprintf(stderr,
+                    "[ARTS] OCR_EVENT_COUNTED_T requires a nonzero nbDeps: "
+                    "the declared consumer count is what reclaims the event\n");
+      abort();
+    }
+    h.nb_deps = (uint32_t)params->EVENT_COUNTED.nbDeps;
+  }
   if (eventType == OCR_EVENT_CHANNEL_T && params != NULL) {
     /* OCR 1.2 §B.5.2: nbSat and nbDeps are restricted to 1.  ARTS enforces
      * that constraint at the shim — generalized values would require a
