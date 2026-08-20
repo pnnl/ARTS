@@ -605,6 +605,15 @@ foreach(t ${SYNC_MPSC_TESTS})
     register_pure_unit_test(${t})
 endforeach()
 
+# --- Event state decider (event_arbiter.c) ---
+# Pure function of the packed event word, so the table is driven directly with
+# no runtime and no link.  Same standalone shape as the SYNC_* tests.
+add_executable(event_compute_next unit/event_compute_next.c)
+target_include_directories(event_compute_next PRIVATE
+    ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR}
+    ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
+register_pure_unit_test(event_compute_next)
+
 # --- Route-table slot reclamation (route_table.c) ---
 # Standalone like the SYNC_* tests: the test TU includes route_table.c, guid.c
 # and shared.c and supplies libc-backed allocator stubs, so no ARTS library

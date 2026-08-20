@@ -168,9 +168,9 @@ struct arts_event_s {
 
   union {
     struct {
-      int32_t latch;
-      bool fired;
-      bool auto_destroy; /* single-shot: mark_delete on fire (finish/proxy) */
+      uint64_t state; /* [destroyed:1|fire_st:2|nb_deps:29|latch:32] */
+      uint8_t counted;      /* immutable: nb_deps is a declared consumer count */
+      uint8_t auto_destroy; /* immutable: destroy on fire, consumers ignored */
       arts_guid_t data;
       arts_lf_stack_t deps_stack;
     } simple;
@@ -189,9 +189,17 @@ struct arts_event_s {
 
   union {
     struct {
-      _Atomic(int32_t) latch;     /* fires at <= 0 */
-      _Atomic(bool) fired;        /* single-fire CAS gate */
-      _Atomic(bool) auto_destroy; /* single-shot: mark_delete on fire */
+      /* The whole destroy predicate in ONE word — see event_arbiter.c.  Kept
+       * apart, its axes are a Dekker pair: each participant writes one and
+       * reads the other, and without a StoreLoad fence on both sides they miss
+       * each other and the event is never reclaimed.  Packed, one CAS moves an
+       * axis and observes the rest, and the decision is bound to the atom that
+       * causes it. */
+      _Atomic(uint64_t) state; /* [destroyed:1|fire_st:2|nb_deps:29|latch:32] */
+      /* Both immutable after creation, so they race with nothing and enter the
+       * decider as arguments rather than living in the word. */
+      uint8_t counted;      /* nb_deps is a declared consumer count */
+      uint8_t auto_destroy; /* destroy on fire, consumers ignored */
       arts_guid_t data;           /* last satisfy data; late binders read */
       arts_lf_stack_t deps_stack; /* Treiber stack of pending consumers */
     } simple;

@@ -107,6 +107,7 @@ extern "C" {
   X(TIME_EVENT_SIGNAL)                                                         \
   /* Num: events */                                                            \
   X(NUM_EVENT_CREATE)                                                          \
+  X(NUM_EVENT_DESTROY)                                                         \
   X(NUM_EVENT_SIGNAL)                                                          \
   /* Num: scheduling */                                                        \
   X(NUM_STEAL_ATTEMPT)                                                         \

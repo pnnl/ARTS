@@ -175,6 +175,11 @@ counters:
     unit: count
     help: 'Number of arts_event_create() calls'
 
+  NUM_EVENT_DESTROY:
+    group: 'Event counts'
+    unit: count
+    help: 'Events actually reclaimed — create minus this is what the run still holds'
+
   NUM_EVENT_SIGNAL:
     group: 'Event counts'
     unit: count

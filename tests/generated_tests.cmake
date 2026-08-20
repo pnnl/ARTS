@@ -355,6 +355,11 @@ foreach(_v 2n 3n 4n 2n_io)
 endforeach()
 
 # both single + multinode (OoO defer is home-rank-local but census asks for multinode too)
+# COUNTED delivery + reclamation, and that an undeclared ONCE still lingers.
+# Whitebox (reads the route table), single-node: the property is local.
+add_arts_test(event_counted_reclaim)
+register_single_node_test(event_counted_reclaim TIMEOUT 60)
+
 add_arts_test(event_destroy_before_create)
 register_single_node_test(event_destroy_before_create TIMEOUT 30)
 register_multinode_test(event_destroy_before_create TIMEOUT 60)

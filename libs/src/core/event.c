@@ -40,13 +40,16 @@
 /*
  * arts_event_s — single struct, is_channel-discriminated union.
  *
- *   - simple (non-CHANNEL): latch + Treiber dep stack.  All single-fire
- *     OCR flavors (ONCE / IDEM / STICKY / COUNTED) and LATCH(N) use this
- *     branch.  Fire trigger: latch reaches <= 0 (unique winner observes
- *     prev==1 in the atomic_fetch_sub).  Fire is a pure state transition
- *     and never destroys (fire-and-linger) — the event stays addressable
- *     to serve late binders from the stored data until an explicit
- *     arts_event_destroy.  Over-satisfy past the fire is silently absorbed.
+ *   - simple (non-CHANNEL): one packed state word + Treiber dep stack.  All
+ *     single-fire OCR flavors (ONCE / IDEM / STICKY / COUNTED) and LATCH(N)
+ *     use this branch.  Fire trigger: a DECR carries the latch to exactly 0
+ *     while unfired — the claim and its award are one CAS on the state word
+ *     (event_arbiter.c), and firing is once per event.  A fired event serves
+ *     late binders from the stored data until it is reclaimed: by explicit
+ *     arts_event_destroy, by auto_destroy at the fire, or by a declared
+ *     consumer count reaching zero.  Over-satisfy past the fire is silently
+ *     absorbed while the event lingers; once it is reclaimed, a late satisfy
+ *     is a destroy-contract violation (ordering incomplete) and is lossy.
  *
  *   - channel (CHANNEL only): nb_sat / nb_deps monotonic counters +
  *     two mpsc FIFO queues (data_queue, dep_queue) + single-flight
@@ -56,6 +59,11 @@
  */
 
 #include "arts/event.h"
+
+#include "event_arbiter.c" /* event_compute_next — the simple-arm decider */
+
+static void event_simple_step(struct arts_event_s *e, arts_guid_t guid, int op,
+                              arts_guid_t data_guid);
 
 #include "arts.h"
 #include "arts/db.h" /* arts_wait_release_dbs / arts_wait_reacquire_dbs */
@@ -155,12 +163,28 @@ static struct arts_event_s *event_alloc(const arts_event_hint_t *h) {
     arts_mpsc_init(&e->channel.dep_queue);
     atomic_store_explicit(&e->channel.draining, 0, memory_order_relaxed);
   } else {
-    atomic_store_explicit(&e->simple.latch, h->finish ? 1 : h->latch,
+    /* auto_destroy promises every consumer bound before the fire; counted
+     * promises exactly nb_deps of them will.  They are contradictory, so a
+     * caller asking for both is stating a contradiction. */
+    bool ad = (h->finish || h->auto_destroy);
+    bool ct = (h->nb_deps > 0);
+    if (ad && ct) {
+      ARTS_ERROR("event hint sets both auto_destroy and a consumer count");
+    }
+    /* A count the field cannot hold must fail here, not encode truncated: a
+     * multiple of the field's range would be born counted-with-zero and
+     * reclaimed at its first fire, before any consumer binds. */
+    if (h->nb_deps > EV_NBDEPS_MAX) {
+      ARTS_ERROR("event hint declares %u consumers; the count field holds at "
+                 "most %u",
+                 h->nb_deps, (uint32_t)EV_NBDEPS_MAX);
+    }
+    atomic_store_explicit(&e->simple.state,
+                          EV_MAKE(0u, EV_FIRE_IDLE, ct ? h->nb_deps : 0u,
+                                  h->finish ? 1 : h->latch),
                           memory_order_relaxed);
-    atomic_store_explicit(&e->simple.fired, false, memory_order_relaxed);
-    atomic_store_explicit(&e->simple.auto_destroy,
-                          (h->finish || h->auto_destroy) ? true : false,
-                          memory_order_relaxed);
+    e->simple.counted = ct ? 1u : 0u;
+    e->simple.auto_destroy = ad ? 1u : 0u;
     e->simple.data = NULL_GUID;
     arts_lf_stack_init(&e->simple.deps_stack);
   }
@@ -262,7 +286,9 @@ void arts_handler_event_destroy(void *item_v, void *args_v) {
   (void)item_v;
   struct arts_ooo_args_event_destroy_s *a =
       (struct arts_ooo_args_event_destroy_s *)args_v;
-  arts_route_table_set_destroyed(a->guid);
+  if (arts_route_table_set_destroyed(a->guid)) {
+    INCREMENT_NUM_EVENT_DESTROY_BY(1);
+  }
 }
 
 /* arts_event_destroy — API: destroy an event by GUID.
@@ -309,20 +335,20 @@ static struct arts_event_dep_s *event_node_alloc(arts_guid_kind_t kind,
 
 /*
  * drain_simple_chain — idempotent, multi-caller drain of simple.deps_stack
- * after fired==true.  Invoked by:
- *   (a) the unique satisfy thread that just CAS-set fired.
+ * once the payload is published (fire_st == FIRED).  Invoked by:
+ *   (a) the FIRING claimer, as the action of its PUBLISH commit.
  *   (b) any addDep thread that pushed onto the stack and then observed
- *       fired==true (race rescue: addDep's push lands *after* satisfy's
+ *       FIRED (race rescue: addDep's push lands *after* the publisher's
  *       reverse_drain finished).
  *
  * Concurrent callers self-serialise inside arts_lf_stack_reverse_drain's
  * `atomic_exchange(&head, NULL)` — only one caller per chain, others see
  * NULL and exit.  The outer loop catches pushes that landed during a
- * caller's iteration.  Fire never destroys (fire-and-linger): the event
- * stays addressable to serve late binders until an explicit destroy.
+ * caller's iteration.  The drain itself never destroys: every reclaim edge
+ * is committed by the state word's own transitions, never by a drainer.
  */
 static void drain_simple_chain(struct arts_event_s *e, arts_guid_t event_guid) {
-  (void)event_guid; /* simple events never auto-destroy */
+  (void)event_guid; /* unused: the drain only serves, never reclaims */
   arts_guid_t data = e->simple.data;
   for (;;) {
     arts_lf_link_t *fifo = arts_lf_stack_reverse_drain(&e->simple.deps_stack);
@@ -429,40 +455,71 @@ void arts_handler_event_satisfy_slot(void *item, void *vargs) {
   }
 
   /* Non-CHANNEL path: ONCE / IDEM / STICKY / COUNTED / LATCH. */
+  int op;
   if (slot == ARTS_EVENT_LATCH_INCR_SLOT) {
-    /* LATCH only: increment counter; no fire trigger here. */
-    atomic_fetch_add_explicit(&event->simple.latch, 1, memory_order_acq_rel);
+    op = EV_OP_SAT_INCR;
+  } else if (slot == ARTS_EVENT_LATCH_DECR_SLOT) {
+    op = EV_OP_SAT_DECR;
+  } else {
+    ARTS_ERROR("Event latch invalid slot %u", slot);
     return;
   }
-  if (slot != ARTS_EVENT_LATCH_DECR_SLOT) {
-    ARTS_ERROR("Event latch invalid slot %u", slot);
-  }
+  event_simple_step(event, event_guid, op, data_guid);
+}
 
-  /* DECR satisfy: dec counter, check for unique fire trigger
-   * (prev == 1).  Only that thread writes simple.data and runs drain. */
-  int32_t prev =
-      atomic_fetch_sub_explicit(&event->simple.latch, 1, memory_order_acq_rel);
-  if (prev <= 0) {
-    return; /* over-satisfy past the unique fire: silently absorbed */
-  }
-  if (prev == 1) {
-    /* Unique fire trigger.  Write data BEFORE the fired CAS so the
-     * release on the CAS publishes the data store to late binders. */
+/* Has the payload been published?  FIRING means a satisfier claimed the fire
+ * but has not written simple.data yet, so a binder that treats it as fired
+ * would deliver a GUID that is not there.  Only FIRED is readable. */
+static inline bool event_simple_published(struct arts_event_s *e) {
+  return EV_FIRE(atomic_load_explicit(&e->simple.state,
+                                      memory_order_acquire)) == EV_FIRE_FIRED;
+}
+
+/* Commit one transition and run what it awards.
+ *
+ * The decider is pure and the CAS is the only commit, so a losing thread
+ * recomputes from the state it lost to rather than waiting on anything.  The
+ * executor's contract is the part that cannot be read off the decider: the base
+ * action runs FIRST and the destroy modifier LAST.  Destroying first drops the
+ * install ref, and if that was the last one the deleter walks deps_stack
+ * straight into the node free — every parked consumer lost without a signal.
+ *
+ * FIRE is two-phase for the same reason the word is packed: claiming the fire
+ * and publishing the payload are not one atom.  The winner of IDLE->FIRING
+ * writes simple.data and only then commits FIRING->FIRED, whose own action is
+ * the drain.  A binder that arrives between the two parks, and the publisher's
+ * drain collects it. */
+static void event_simple_step(struct arts_event_s *e, arts_guid_t guid, int op,
+                              arts_guid_t data_guid) {
+  uint64_t cur, next;
+  uint32_t act;
+  do {
+    cur = atomic_load_explicit(&e->simple.state, memory_order_acquire);
+    next = event_compute_next(cur, op, e->simple.counted != 0u,
+                              e->simple.auto_destroy != 0u, &act);
+  } while (!atomic_compare_exchange_weak_explicit(
+      &e->simple.state, &cur, next, memory_order_acq_rel,
+      memory_order_acquire));
+
+  switch (act & EV_ACT_BASE_MASK) {
+  case EV_ACT_FIRE:
+    /* We claimed FIRING.  Publish the payload, then commit the second phase;
+     * its DRAIN action serves everyone parked, including anyone who parked
+     * while we were between the two. */
     if (data_guid != NULL_GUID) {
-      event->simple.data = data_guid;
-      atomic_thread_fence(memory_order_release);
+      e->simple.data = data_guid;
     }
-    bool fexp = false;
-    (void)atomic_compare_exchange_strong_explicit(&event->simple.fired, &fexp,
-                                                  true, memory_order_acq_rel,
-                                                  memory_order_acquire);
-    drain_simple_chain(event, event_guid);
-    if (atomic_load_explicit(&event->simple.auto_destroy,
-                             memory_order_acquire)) {
-      /* Single-shot: detach the cb from the route_table slot so a waiter
-       * polling presence observes the drain, and per-remote-EDT proxies are
-       * reclaimed instead of lingering. */
-      arts_route_table_set_destroyed(event_guid);
+    event_simple_step(e, guid, EV_OP_PUBLISH, NULL_GUID);
+    return; /* the PUBLISH step owns the drain and any destroy that follows */
+  case EV_ACT_DRAIN:
+    drain_simple_chain(e, guid);
+    break;
+  default:
+    break;
+  }
+  if (act & EV_ACT_DESTROY) {
+    if (arts_route_table_set_destroyed(guid)) {
+      INCREMENT_NUM_EVENT_DESTROY_BY(1);
     }
   }
 }
@@ -523,27 +580,49 @@ void arts_handler_event_add_dependence(void *item, void *vargs) {
     return;
   }
 
-  /* Already-fired ⇒ deliver immediately from simple.data (fire-and-linger). */
-  if (atomic_load_explicit(&event->simple.fired, memory_order_acquire)) {
+  /* Commit the registration through the decider so the declared consumer count
+   * actually moves: it is what tells a counted event that the last binder has
+   * arrived, and the destroy edge is emitted from that same transition.  The
+   * action it awards decides deliver-vs-park, and the destroy modifier is
+   * applied AFTER whichever of those runs — never instead of it, or the last
+   * consumer of a COUNTED(1) event is dropped and its slot never satisfied. */
+  uint64_t cur, next;
+  uint32_t act;
+  do {
+    cur = atomic_load_explicit(&event->simple.state, memory_order_acquire);
+    next = event_compute_next(cur, EV_OP_ADD_DEP, event->simple.counted != 0u,
+                              event->simple.auto_destroy != 0u, &act);
+  } while (!atomic_compare_exchange_weak_explicit(
+      &event->simple.state, &cur, next, memory_order_acq_rel,
+      memory_order_acquire));
+
+  if ((act & EV_ACT_BASE_MASK) == EV_ACT_DELIVER) {
     arts_guid_t data = event->simple.data;
     if (dest_type == ARTS_GUID_EDT) {
       arts_edt_satisfy_slot(destination, slot, data, access_mode);
     } else if (dest_type == ARTS_GUID_EVENT) {
       arts_event_satisfy_slot(destination, data, slot);
     }
-    return;
+  } else {
+    /* Not yet published: park on the Treiber stack.  The event may reach
+     * FIRED between our commit and our push; re-check and drain so our dep is
+     * not stranded.  addDep never advances fire_st — only the FIRING claimer,
+     * who wrote simple.data, may publish. */
+    struct arts_event_dep_s *dep =
+        event_node_alloc(dest_type, destination, slot, access_mode);
+    arts_lf_stack_push(&event->simple.deps_stack, &dep->link);
+    if (event_simple_published(event)) {
+      drain_simple_chain(event, source);
+    }
   }
-
-  /* Not yet fired: enqueue dep onto the Treiber stack. */
-  struct arts_event_dep_s *dep =
-      event_node_alloc(dest_type, destination, slot, access_mode);
-  arts_lf_stack_push(&event->simple.deps_stack, &dep->link);
-
-  /* Race rescue: the event may have fired between our fired-check and our
-   * push; re-load fired and drain so our dep is not stranded.  addDep MUST NOT
-   * CAS `fired` — only the unique satisfy thread that wrote simple.data may. */
-  if (atomic_load_explicit(&event->simple.fired, memory_order_acquire)) {
-    drain_simple_chain(event, source);
+  /* Destroy modifier LAST, whichever base action ran.  The decider only emits
+   * it with DELIVER today, but the executor's contract — base action first,
+   * destroy after — must not lean on that: a destroy executed instead of a
+   * park drops the very consumer counted events exist to serve. */
+  if (act & EV_ACT_DESTROY) {
+    if (arts_route_table_set_destroyed(source)) {
+      INCREMENT_NUM_EVENT_DESTROY_BY(1);
+    }
   }
 }
 
@@ -658,7 +737,8 @@ void arts_handler_event_create(void *ptr) {
                           memory_order_relaxed);
   } else {
     arts_lf_stack_init(&mem_packet->simple.deps_stack);
-    /* latch / fired / data preserved from sender's post-init state. */
+    /* state word / counted / auto_destroy / data preserved from the sender's
+     * post-init state. */
   }
 
   /* add_item_race installs the event under the route_table lock; on

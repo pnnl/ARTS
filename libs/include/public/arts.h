@@ -473,6 +473,16 @@ typedef struct {
    *  creation — there is no runtime setter.  Default false (fire-and-linger).
    */
   bool auto_destroy;
+  /** Number of dependences this event expects, for the single-fire flavours
+   *  that declare one.  0 = undeclared, and the event then lingers after it
+   *  fires: with no count the runtime cannot tell "no more consumers" from
+   *  "one still in flight", and ARTS delivers messages out of order across
+   *  ranks, so a bind can legally arrive after the satisfy it depends on.
+   *  Declaring the count is what makes reclaiming the event safe — it is the
+   *  standard's OCR_EVENT_COUNTED_T, and the only way to get a single-fire
+   *  event back.  Over-declaring leaks it; under-declaring destroys it while a
+   *  bind is still coming, and that bind then waits forever. */
+  uint32_t nb_deps;
 } arts_event_hint_t;
 
 /** OCR LATCH_T — counter event.  Argument is the initial counter value;
@@ -486,14 +496,23 @@ typedef struct {
 /** Default values: single satisfy fires, then fire-and-linger. */
 #define ARTS_EVENT_HINT_DEFAULTS ARTS_EVENT_HINT_LATCH(1)
 
-/* Single-fire OCR event flavors all collapse to LATCH(1): the distinct
- * ONCE/IDEM/STICKY/COUNTED semantics (auto-destroy, over-satisfy error,
- * exact-N dep count) are subsumed by the unified fire-and-linger +
- * silent-over-satisfy model.  Aliases kept for source compatibility. */
+/* The lingering single-fire OCR flavors collapse to LATCH(1): the distinct
+ * ONCE/IDEM/STICKY semantics (auto-destroy timing, over-satisfy error) are
+ * subsumed by the unified fire-and-linger + silent-over-satisfy model.
+ * COUNTED is NOT in that collapse — its declared consumer count is real and
+ * is what reclaims the event (see the macro below).  Aliases kept for source
+ * compatibility. */
 #define ARTS_EVENT_HINT_ONCE ARTS_EVENT_HINT_LATCH(1)
 #define ARTS_EVENT_HINT_IDEMPOTENT ARTS_EVENT_HINT_LATCH(1)
 #define ARTS_EVENT_HINT_STICKY ARTS_EVENT_HINT_LATCH(1)
-#define ARTS_EVENT_HINT_COUNTED(nb_deps) ARTS_EVENT_HINT_LATCH(1)
+/** OCR COUNTED_T — fires once, then self-destroys when all `n` declared
+ *  dependences have registered.  See arts_event_hint_t::nb_deps. */
+#define ARTS_EVENT_HINT_COUNTED(n)                                             \
+  ((arts_event_hint_t){.rank = ARTS_HINT_CURRENT_RANK,                         \
+                       .latch = 1,                                             \
+                       .channel = false,                                       \
+                       .nb_deps = (n),                                         \
+                       .guid = NULL_GUID})
 
 /** OCR CHANNEL_T — multi-fire FIFO event. */
 #define ARTS_EVENT_HINT_CHANNEL                                                \
