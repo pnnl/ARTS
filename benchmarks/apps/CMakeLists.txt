@@ -471,6 +471,14 @@ add_benchmark_app(NAME triangle
     DIR triangle/refactored/ocr/intel
     SOURCES triangle.c
     OPTIMIZED_PLACEMENT
+    # COUNTED_EVENTS states the completion events' true consumer counts (the
+    # program knows both before creating them).  The OCR spec destroys a ONCE
+    # once its consumers are satisfied, so declaring the count changes nothing
+    # a spec-conforming runtime does -- it hands a runtime that keeps fired
+    # events for late binders the reclaim point the spec's wording assumes.
+    # (The board destroys are unconditional in the source: freeing an
+    # unreachable block is the program's own obligation, not an option.)
+    EXTRA_DEFINES OCR_APP_COUNTED_EVENTS
 )
 
 add_benchmark_app(NAME tempest

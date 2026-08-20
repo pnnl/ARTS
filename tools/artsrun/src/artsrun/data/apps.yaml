@@ -782,9 +782,13 @@ apps:
     marker: 'final count\s+\d+'
     scalar_re: 'final count\s+(\d+)'
     scalar_kind: int
-    expect: '1074'
-    expect_args: ['5']
-    args: []
+    # One 8-row board searched once (rows generalizes the author's 5-row
+    # puzzle; depth truncates its tree; rounds stays 1 — the graph is the
+    # dial, not repetition).  The pin is the measured count at these exact
+    # arguments, cross-checked by consensus like every non-analytic scalar.
+    expect: '325211332'
+    expect_args: ['9', '1', '8']
+    args: ['9', '1', '8']
     optimized: true
 
   xeonNumaSize:

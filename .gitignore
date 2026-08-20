@@ -39,7 +39,16 @@ third_party/ocrPNNL/
 #   datasets/    large staged runtime datasets (README stays tracked)
 /research/
 /logs/
-/experiments/
+# experiments/ is untracked VALUES (machine-local profiles, campaign rosters)
+# — except the paper's main-experiment definition, which is part of the
+# claim and therefore tracked: the Dane profile and the paper-main roster.
+/experiments/*
+!/experiments/profiles/
+/experiments/profiles/*
+!/experiments/profiles/dane.yaml
+!/experiments/benchsets/
+/experiments/benchsets/*
+!/experiments/benchsets/paper-main.yaml
 /scratch/*
 !/scratch/.gitkeep
 /notes/

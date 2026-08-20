@@ -1,0 +1,29 @@
+# LLNL Dane (CTS-2): 2x Intel Xeon Platinum (Sapphire Rapids), 112 physical
+# cores per node, 256 GB, InfiniBand.  One rank per node.
+#
+# 108 workers + 4 progress threads fills the node exactly, and 108 = 2**2 * 3**3
+# is chosen for its factorisation: the SPMD ports (hpcg, nekbone, CoMD tiled,
+# the Stencil family, miniAMR chandra) need their rank grid to equal the total
+# worker count and to factor into a near-cubic 3-D grid.  Doubling 108 walks
+# 108/216/432/864/1728/3456 -> 6x6x3, 6x6x6, 12x6x6, 12x12x6, 12x12x12,
+# 24x12x12 across the whole node sweep.  110 workers would leave the prime 11
+# in every one of those.
+name: dane
+launcher: slurm
+
+nodes: [1, 2, 4, 8, 16, 32]
+workers: 108
+progress: 4
+
+pin: true
+provider: verbs;ofi_rxm
+route_table_size: 16
+core_dump: true
+port_count: 1
+ports: [25000]
+
+slurm:
+  poll_interval_s: 10
+
+cell_timeout_s: 900
+repeats: 1

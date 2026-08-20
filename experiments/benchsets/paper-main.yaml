@@ -1,0 +1,204 @@
+# Paper campaign roster.
+#
+# Omitted fields fall through to the catalog, so this file only has to
+# carry what this campaign changes: which applications run, in which
+# versions, and any calibration that differs from the catalog default.
+# Set `enabled: false` to drop one without editing the tool.
+
+name: paper-main
+description: curated roster for the coherence comparison
+
+apps:
+  basicIO:
+    enabled: false
+    versions: [asborn]
+  cache_offset:
+    enabled: false
+    versions: [asborn]
+  cholesky:
+    enabled: true
+    versions: [asborn, optimized]
+  cholesky_blas:
+    enabled: true
+    versions: [asborn, optimized]
+  CoMD_intel_chandra:
+    enabled: false   # unsupported: needs EW semantics the runtime does not implement
+  CoMD_intel_chandra_tiled:
+    enabled: true
+    versions: [asborn]
+  CoMD_sdsc:
+    enabled: true
+    versions: [asborn, optimized]
+  CoMD_sdsc2:
+    enabled: false   # unsupported: needs EW semantics the runtime does not implement
+  curvefit:
+    enabled: false
+    versions: [asborn]
+  dbcreate_matrix:
+    enabled: false
+    versions: [asborn]
+  dbctrl:
+    enabled: false
+    versions: [asborn]
+  fft:
+    enabled: true
+    versions: [asborn, restructured]
+  fibonacci:
+    enabled: true
+    versions: [asborn, optimized]
+  globalsum_cgNoShim:
+    enabled: false
+    versions: [asborn]
+  globalsum_cgShim:
+    enabled: false
+    versions: [asborn]
+  globalsum_pcg:
+    enabled: false
+    versions: [asborn]
+  graph500:
+    enabled: true
+    versions: [asborn]
+  highbw:
+    enabled: false
+    versions: [asborn]
+  hpcg_intel:
+    enabled: true
+    versions: [asborn]
+  hpcg_intel_Eager:
+    enabled: false
+    versions: [asborn]
+  hpcg_intel_Eager_Collective:
+    enabled: true
+    versions: [asborn]
+  hpgmg:
+    enabled: true
+    versions: [asborn, optimized]
+  LCS_all_db_distributed:
+    enabled: true
+    versions: [asborn, optimized]
+  LCS_distributed_ST:
+    enabled: true
+    versions: [asborn]
+  LCS_shared:
+    enabled: true
+    versions: [asborn]
+  miniAMR_forkbomb:
+    enabled: false
+    versions: [asborn]
+  miniAMR_intel:
+    enabled: true
+    versions: [asborn, optimized]
+  miniAMR_intel_bryan:
+    enabled: true
+    versions: [asborn]
+  miniAMR_intel_chandra:
+    enabled: true
+    versions: [asborn]
+  multigen:
+    enabled: false
+    versions: [asborn]
+  multigen_2:
+    enabled: false
+    versions: [asborn]
+  nekbone:
+    enabled: true
+    versions: [asborn]
+  npb_cg:
+    enabled: true
+    versions: [asborn, restructured]
+  nqueens:
+    enabled: true
+    versions: [asborn, optimized]
+  p2p:
+    enabled: true
+    versions: [asborn, optimized]
+  printf:
+    enabled: false
+    versions: [asborn]
+  prodcon:
+    enabled: false
+    versions: [asborn]
+  quicksort:
+    enabled: true
+    versions: [asborn, restructured]
+  reduction_intel:
+    enabled: false
+    versions: [asborn]
+  reduction_intel_chandra:
+    enabled: false
+    versions: [asborn]
+  RSBench_intel:
+    enabled: true
+    versions: [asborn, optimized]
+  RSBench_intel_sharedDB:
+    enabled: true
+    versions: [asborn]
+  sar_large:
+    enabled: true
+    versions: [asborn]
+  sar_pss:
+    enabled: true
+    versions: [asborn, optimized]
+  sar_small:
+    enabled: true
+    versions: [asborn]
+  smithwaterman:
+    enabled: true
+    versions: [asborn, optimized]
+  stencil1D_channel:
+    enabled: false
+    versions: [asborn]
+  stencil1D_guid:
+    enabled: false
+    versions: [asborn]
+  stencil1D_guidPI:
+    enabled: false
+    versions: [asborn]
+  Stencil1D_intel_chandra:
+    enabled: true
+    versions: [asborn]
+  stencil1D_once:
+    enabled: false
+    versions: [asborn]
+  stencil1D_oncePI:
+    enabled: false
+    versions: [asborn]
+  stencil1D_sticky:
+    enabled: false
+    versions: [asborn]
+  stencil1D_stickyLG:
+    enabled: false
+    versions: [asborn]
+  Stencil2D_intel_chandra:
+    enabled: true
+    versions: [asborn]
+  Stencil2D_intel_channelEVTs:
+    enabled: true
+    versions: [asborn]
+  stream:
+    enabled: true
+    versions: [asborn, restructured]
+  stream_org:
+    enabled: false
+    versions: [asborn]
+  stream_sa:
+    enabled: false
+    versions: [asborn]
+  task_priorities:
+    enabled: false
+    versions: [asborn]
+  tempest:
+    enabled: true
+    versions: [asborn, optimized]
+  testlibs:
+    enabled: false
+    versions: [asborn]
+  triangle:
+    enabled: true
+    versions: [asborn, optimized]
+  xeonNumaSize:
+    enabled: false
+    versions: [asborn]
+  XSBench_intel:
+    enabled: true
+    versions: [asborn, optimized, restructured]
