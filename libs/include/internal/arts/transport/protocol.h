@@ -101,7 +101,6 @@ enum arts_msg_type {
    * publish payload.  Unblocks the releaser's await in arts_db_release_rw
    * so lock_home_grant cannot run before the new data is at home.  RO
    * releases are fire-and-forget and never send this message. */
-  MSG_DB_EXCL_RELEASE_ACK,
   /* EXCL RETAIN-only messages (FORWARD / DELIVER / CONFIRM / RORET).
    * Used only in ARTS_COHERENCE_PROTOCOL=EXCL + ARTS_RELEASE_POLICY=RETAIN
    * builds.  Sequential append, no gaps. */
@@ -541,14 +540,6 @@ struct ARTS_PACKED arts_msg_excl_release_packet_s {
   uint64_t rdzv_cookie;
 };
 
-/* EXCL_RELEASE_ACK: home → RW releaser after installing publish.  Carries
- * cv verbatim from the EXCL_RELEASE so the releaser wakes by pointer identity.
- */
-struct ARTS_PACKED arts_msg_excl_release_ack_packet_s {
-  struct arts_msg_header_s header;
-  arts_guid_t db_guid;
-  uint64_t cv; /* releaser's sem_t address, forwarded verbatim from RELEASE */
-};
 
 /* ===== EXCL RETAIN-only wire packets ========================================
  * Sent only between ranks compiled with EXCL+RETAIN.  Members unconditional;

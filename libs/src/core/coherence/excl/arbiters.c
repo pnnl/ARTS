@@ -35,6 +35,7 @@ uint64_t excl_compute_next(uint64_t cur, int op, uint32_t *out_grant) {
   uint32_t w = EXCL_STATE_W(cur);
   uint32_t r = EXCL_STATE_R(cur);
   uint32_t bit = EXCL_STATE_BIT(cur);
+  uint32_t td = EXCL_STATE_TEARDOWN(cur);
   uint32_t grant = LOCK_GRANT_NONE;
   switch (op) {
   case EXCL_OP_RW_ACQ:
@@ -86,8 +87,29 @@ uint64_t excl_compute_next(uint64_t cur, int op, uint32_t *out_grant) {
       bit = EXCL_PHASE_BIT_RW;
     }
     break;
+  case EXCL_OP_TEARDOWN:
+    /* Mark in the same atom that reads the counts, so a destroy and a
+     * concurrent last release cannot each conclude the other will tear down.
+     * Only the op that FIRST sets the mark can claim the teardown here:
+     * duplicate destroys are designed into the protocol. */
+    if (td == 0u) {
+      td = 1u;
+      if (w == 0 && r == 0) {
+        grant = LOCK_GRANT_DESTROY; /* lock already free — tear down now */
+      }
+    }
+    break;
   default:
     break;
+  }
+  /* A release that LANDS on the zero edge under an existing mark is the other
+   * teardown point.  The two are mutually exclusive: the destroy claims it only
+   * when both counts are already zero, and only one CAS can carry a counter to
+   * zero.  No grant can be owed at that instant, so setting `grant` here
+   * discards nothing. */
+  if (td && (op == EXCL_OP_RW_REL || op == EXCL_OP_RO_REL) && w == 0 &&
+      r == 0) {
+    grant = LOCK_GRANT_DESTROY;
   }
   /* Normalize state_bit when one counter hit 0 (state_bit only meaningful with
    * both > 0). */
@@ -95,7 +117,7 @@ uint64_t excl_compute_next(uint64_t cur, int op, uint32_t *out_grant) {
     bit = 0;
   }
   *out_grant = grant;
-  return LOCK_MAKE_STATE(bit, w, r);
+  return LOCK_MAKE_STATE_TD(td, bit, w, r);
 }
 
 /* ===== cache_compute_next ==============================================

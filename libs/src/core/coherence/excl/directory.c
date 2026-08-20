@@ -253,38 +253,40 @@ void arts_db_home_teardown(struct arts_db_s *db) {
  * OOO_DB_DESTROY Cat-B body for the EXCL protocol.  Fan-out DESTROY_NOTIFY
  * to every rank in cached_ranks (the destroy roster), wake parked waiters,
  * then detach the route-table slot. */
-void arts_handler_db_destroy(void *item_v, void *args_v) {
-  struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
-  struct arts_ooo_args_db_destroy_s *a =
-      (struct arts_ooo_args_db_destroy_s *)args_v;
-  struct arts_db_s *db = arts_db_of_cache(cache);
-  if (db == NULL) {
+/* Tear the home down: notify every rank that ever cached this DB, then return
+ * the route slot.  The fan-out sits INSIDE arts_route_table_set_destroyed's
+ * single-flight rather than before it: duplicate destroys are produced by the
+ * protocol on purpose, and only the caller that actually detaches the object
+ * may put DESTROY_NOTIFY on the wire. */
+void arts_excl_home_teardown(struct arts_db_s *db, arts_guid_t db_guid) {
+  /* Claim first: only the caller that actually detaches the object may put
+   * DESTROY_NOTIFY on the wire.  Duplicate destroys are produced by the
+   * protocol on purpose, and a second fan-out would tell every cache to drop a
+   * DB twice.  Reading db below stays safe after the detach — the dispatch
+   * that reached this handler pins the object across the call. */
+  if (!arts_route_table_set_destroyed(db_guid)) {
     return;
   }
   unsigned int self = arts_global_rank_id;
-  /* Fan-out DESTROY_NOTIFY to every rank that ever acquired this DB.
-   * Inline the bitset word-walk (arts_rank_bitset_for_each requires a
+  /* Inline the bitset word-walk (arts_rank_bitset_for_each requires a
    * callback; C has no local functions, so we open-code the loop). */
-  {
-    const struct arts_rank_bitset_s *bs = &db->cached_ranks;
-    for (unsigned int w = 0; w < bs->nwords; w++) {
-      uint64_t snap = atomic_load_explicit(&bs->words[w], memory_order_acquire);
-      while (snap) {
-        unsigned int b = (unsigned int)__builtin_ctzll(snap);
-        unsigned int rank = w * 64 + b;
-        if (rank != self) {
-          arts_send_db_cache_destroy(rank, a->db_guid);
-        }
-        snap &= snap - 1;
+  const struct arts_rank_bitset_s *bs = &db->cached_ranks;
+  for (unsigned int w = 0; w < bs->nwords; w++) {
+    uint64_t snap = atomic_load_explicit(&bs->words[w], memory_order_acquire);
+    while (snap) {
+      unsigned int b = (unsigned int)__builtin_ctzll(snap);
+      unsigned int rank = w * 64 + b;
+      if (rank != self) {
+        arts_send_db_cache_destroy(rank, db_guid);
       }
+      snap &= snap - 1;
     }
   }
   /* No rw_waiters drain here: the request queue is single-consumer (the CONFIRM
    * that pops the migrated requester is its only consumer, serialized by the
-   * lock phase machine).  A legitimately destroyed DB has every RW acquire
-   * released, so the queue is empty; and every rank that ever requested RW is
-   * in cached_ranks (recorded at request time) and was just notified above.
-   * Draining here would be a second, unsynchronized consumer of a
-   * single-consumer queue — a use-after-free against a concurrent CONFIRM. */
-  (void)arts_route_table_set_destroyed(a->db_guid);
+   * lock phase machine).  Every rank that ever requested RW is in cached_ranks
+   * (recorded at request time) and was just notified above.  Draining here
+   * would be a second, unsynchronized consumer of a single-consumer queue — a
+   * use-after-free against a concurrent CONFIRM. */
 }
+

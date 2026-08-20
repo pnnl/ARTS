@@ -520,10 +520,10 @@ add_arts_test(publish_ack_post_on_miss)
 register_single_node_test(publish_ack_post_on_miss TIMEOUT 120)
 register_multinode_test(publish_ack_post_on_miss TIMEOUT 120)
 
-# T110 EXPOSES B018 (EXCL_RELEASE_ACK). EXCL only; self-skips elsewhere.
-add_arts_test(excl_release_ack_post_on_miss)
-register_single_node_test(excl_release_ack_post_on_miss TIMEOUT 120)
-register_multinode_test(excl_release_ack_post_on_miss TIMEOUT 120)
+# T110 EXPOSES B018 (cv-guarded releaser wake). EXCL only; self-skips elsewhere.
+add_arts_test(excl_release_wake_on_miss)
+register_single_node_test(excl_release_wake_on_miss TIMEOUT 120)
+register_multinode_test(excl_release_wake_on_miss TIMEOUT 120)
 
 
 # T112 EXPOSES B023 (self-send vs dispatcher parity). All protocols; needs 1n AND multinode.

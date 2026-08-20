@@ -399,36 +399,6 @@ void arts_send_db_cache_destroy(unsigned int sharer_rank, arts_guid_t db_guid) {
 }
 
 #ifdef ARTS_PROTOCOL_EXCL
-/* arts_send_db_excl_release_ack — EXCL_RELEASE_ACK: home → RW releaser.
- *
- * Mirrors arts_send_db_publish_ack (VAL WT): forwards cv verbatim so
- * the releaser's await_publish_ack unblocks by pointer-identity sem_post.
- *
- * Cat-C SPECIAL self-send: posts the sem even when db==NULL (home cache
- * torn down concurrently) so the blocked releaser is never stranded.
- *
- * The sem_post inline (rather than calling arts_handler_db_publish_ack)
- * avoids a cross-protocol link dependency: arts_handler_db_publish_ack is
- * compiled only in the publishing arms (!EXCL && (!WB || INV)), never in
- * the exclusion build. */
-void arts_send_db_excl_release_ack(unsigned int releaser_rank,
-                                   arts_guid_t db_guid, uint64_t cv) {
-  struct arts_msg_excl_release_ack_packet_s p;
-  arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_EXCL_RELEASE_ACK);
-  p.header.rank = arts_global_rank_id;
-  p.db_guid = db_guid;
-  p.cv = cv;
-  if (releaser_rank == arts_global_rank_id) {
-    /* Self-send: pointer-identity sem_post directly (no lookup needed —
-     * the body ignores item_v and only uses cv; unconditional post matches
-     * the Cat-C SPECIAL dispatcher pattern). */
-    if (cv != 0) {
-      sem_post((sem_t *)(uintptr_t)cv);
-    }
-    return;
-  }
-  arts_transport_send_async((int)releaser_rank, (char *)&p, sizeof(p));
-}
 #endif /* ARTS_PROTOCOL_EXCL */
 
 /* The WB-only senders (CONFIRM_ACK, SNAPSHOT_REDIRECT) live in

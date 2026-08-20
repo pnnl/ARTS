@@ -151,7 +151,15 @@ extern "C" {
 #endif                                         /* ARTS_RELEASE_RETAIN */
 
 /* ── HOME home lock_state ────────────────────────────────────────────────
- * Layout: [ state_bit:1 (62) | w:31 (61..31) | r:31 (30..0) ]
+ * Layout: [ teardown:1 (63) | state_bit:1 (62) | w:31 (61..31) | r:31 (30..0) ]
+ *
+ * teardown records that a destroy arrived for a DB whose lock this home still
+ * holds on someone's behalf.  It rides in the state word so that marking the
+ * destroy and observing whether anyone still holds commit in ONE atom: the
+ * destroy and the last release then race a single CAS instead of a flag and a
+ * count that can each miss the other.  Whoever reaches the zero edge performs
+ * the teardown, so the home outlives every release owed to it — which is what
+ * lets the release itself be fire-and-forget.
  *
  * state_bit is meaningful only when w>0 && r>0:
  *   EXCL_PHASE_BIT_RW (0) = RW phase held / RO waiters queued
@@ -168,10 +176,15 @@ extern "C" {
   ((uint32_t)(((s) >> EXCL_STATE_R_BITS) & EXCL_STATE_W_MASK))
 #define EXCL_STATE_BIT(s)                                                      \
   ((uint32_t)(((s) >> (EXCL_STATE_R_BITS + EXCL_STATE_W_BITS)) & 0x1ULL))
-#define LOCK_MAKE_STATE(bit, w, r)                                             \
-  (((uint64_t)((bit) & 0x1ULL) << (EXCL_STATE_R_BITS + EXCL_STATE_W_BITS)) |   \
+#define EXCL_STATE_TEARDOWN_SHIFT 63
+#define EXCL_STATE_TEARDOWN(s)                                                 \
+  ((uint32_t)(((s) >> EXCL_STATE_TEARDOWN_SHIFT) & 0x1ULL))
+#define LOCK_MAKE_STATE_TD(td, bit, w, r)                                      \
+  (((uint64_t)((td) & 0x1ULL) << EXCL_STATE_TEARDOWN_SHIFT) |                  \
+   ((uint64_t)((bit) & 0x1ULL) << (EXCL_STATE_R_BITS + EXCL_STATE_W_BITS)) |   \
    (((uint64_t)(w) & EXCL_STATE_W_MASK) << EXCL_STATE_R_BITS) |                \
    ((uint64_t)(r) & EXCL_STATE_R_MASK))
+#define LOCK_MAKE_STATE(bit, w, r) LOCK_MAKE_STATE_TD(0u, bit, w, r)
 #define EXCL_PHASE_BIT_RW 0u
 #define EXCL_PHASE_BIT_RO 1u
 #endif /* ARTS_RELEASE_PURGE */
@@ -239,9 +252,13 @@ extern "C" {
 #define EXCL_OP_RO_ACQ 1
 #define EXCL_OP_RW_REL 2
 #define EXCL_OP_RO_REL 3
+#define EXCL_OP_TEARDOWN 4 /* a destroy arrived; tear down at the zero edge */
 #define LOCK_GRANT_NONE 0
 #define LOCK_GRANT_ONE_RW 1
 #define LOCK_GRANT_ALL_RO 2
+/* Not a grant: the committer of this transition owns the DB's teardown.  At
+ * most one transition per DB ever returns it. */
+#define LOCK_GRANT_DESTROY 3
 uint64_t excl_compute_next(uint64_t cur, int op, uint32_t *out_grant);
 #endif /* ARTS_RELEASE_PURGE */
 
@@ -458,5 +475,12 @@ struct arts_db_s {
 #ifdef __cplusplus
 }
 #endif
+
+/* Shared by both release policies: perform the home teardown (notify every
+ * rank that ever cached the DB, then return the route slot).  PURGE reaches it
+ * from whichever of the destroy and the last release hits the zero edge under
+ * the teardown mark; RETAIN calls it directly on destroy. */
+struct arts_db_s;
+void arts_excl_home_teardown(struct arts_db_s *db, arts_guid_t db_guid);
 
 #endif /* ARTS_COHERENCE_EXCL_TYPES_H */

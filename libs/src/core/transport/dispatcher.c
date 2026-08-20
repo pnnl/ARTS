@@ -39,7 +39,7 @@
 #include "arts/transport/dispatcher.h"
 
 #include <assert.h>    /* WB-write-policy INVALIDATE direct-call invariant assert */
-#include <semaphore.h> /* sem_post (EXCL_RELEASE_ACK inline wake) */
+#include <semaphore.h> /* sem_post (PUBLISH_CTS inline wake) */
 #include <string.h> /* memcpy (PUBLISH inline-payload copy into OoO args) */
 #include <unistd.h>
 
@@ -726,20 +726,20 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
         .rdzv_cookie = pack->rdzv_cookie,
         .data_inline = 0,
     };
-    /* A home slot can be absent for two distinct reasons, and an EXCL_RELEASE
-     * must treat them oppositely:
-     *   - post-destroy (gen > 0): a concurrent (legal) destroy detached the slot
-     *     while this holder still owed its release.  The DB is gone, so there is
-     *     no publish target and no next grantee — deferring on the OoO list
-     *     would wait for an install that never comes and strand the remote
-     *     releaser in await_publish_ack.  ACK it directly (a torn-down home
-     *     must never drop the ACK) and discard any paired one-sided landing.
-     *   - pre-create (gen == 0): a creator-remote seeded RW hold releases via
-     *     the announce leg, ordered only after its own DB_CREATE_COHERENT; with
-     *     >= 2 progress threads the create/release can dispatch out of per-peer
-     *     order, so the release may reach home before the home db_s is
-     *     installed.  This one MUST keep deferring so the install-time OoO drain
-     *     replays it.
+    /* An absent home slot means the create has not landed yet: a
+     * creator-remote seeded RW hold releases via the announce leg, ordered
+     * only after its own DB_CREATE_COHERENT, and with >= 2 progress threads
+     * the two can dispatch out of per-peer order.  Defer, and the
+     * install-time drain replays it.
+     *
+     * A release cannot legitimately outlive its DB: every release still owed
+     * is counted in the home's lock_state, and a destroy only MARKS that word
+     * — the teardown that detaches the slot runs at the zero edge, after the
+     * last owed release has landed and decremented.  A release that finds the
+     * slot absent therefore cannot be post-teardown unless the program
+     * destroyed before its ordering completed, and deferring is the right
+     * answer for that too: it stalls loudly, where the previous behaviour
+     * discarded the releaser's payload and ACKed success.
      * When the slot is present, run the release inline on the pinned db_s. */
     arts_shared_ptr_t db_h = arts_route_table_lookup_db(pack->db_guid);
     struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(db_h);
@@ -748,36 +748,12 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
       arts_shared_release(&db_h);
     } else {
       arts_shared_release(&db_h);
-      if (arts_route_table_was_destroyed(pack->db_guid)) {
-        if (pack->rdzv_txid != 0) {
-          arts_db_rdzv_discard_landing(pack->rdzv_txid, pack->rdzv_cookie);
-        }
-        if ((arts_db_access_mode_t)pack->mode == DB_MODE_RW && pack->cv != 0) {
-          arts_send_db_excl_release_ack(pack->header.rank, pack->db_guid,
-                                        pack->cv);
-        }
-      } else {
-        arts_ooo_dispatch_or_defer_guid(pack->db_guid, OOO_DB_EXCL_RELEASE,
-                                        &args, sizeof(args));
-      }
+      arts_ooo_dispatch_or_defer_guid(pack->db_guid, OOO_DB_EXCL_RELEASE,
+                                      &args, sizeof(args));
     }
     break;
   }
-  case MSG_DB_EXCL_RELEASE_ACK: {
-    ARTS_DEBUG("Coh EXCL_RELEASE_ACK Received");
-    struct arts_msg_excl_release_ack_packet_s *pack =
-        (struct arts_msg_excl_release_ack_packet_s *)(packet);
-    /* Cat-C SPECIAL — pointer-identity sem_post on cv directly.  The wake
-     * is cache-independent: a torn-down home cache must NOT drop the ACK or
-     * the blocked releaser hangs (await_publish_ack would spin forever).
-     * arts_handler_db_publish_ack is not linked in the exclusion build (it
-     * is compiled only in the publishing arms), so inline the sem_post
-     * here. */
-    if (pack->cv != 0) {
-      sem_post((sem_t *)(uintptr_t)pack->cv);
-    }
-    break;
-  }
+
 #endif /* ARTS_RELEASE_PURGE */
 #ifdef ARTS_RELEASE_RETAIN
   /* RETAIN-only: async migration/serve protocol.

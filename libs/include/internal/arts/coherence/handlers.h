@@ -427,7 +427,7 @@ void arts_send_db_excl_grant(unsigned int requester_rank, arts_guid_t db_guid,
                              arts_shared_ptr_t src_h, uint64_t data_size);
 /* arts_send_db_excl_release: cv is the releaser's stack-local sem_t address
  * (RW only; 0 for RO); version is the monotone counter (RW only; 0 for RO).
- * Home echoes cv in the EXCL_RELEASE_ACK to unblock the releaser.  A remote
+ * Home echoes cv in the PUBLISH_CTS to unblock the releaser.  A remote
  * RW release PUTs the dirty bytes into the grant's `pub` landing first and
  * echoes {rdzv_txid, rdzv_cookie} here; `data` rides inline only same-rank. */
 void arts_send_db_excl_release(unsigned int home_rank, arts_guid_t db_guid,
@@ -435,11 +435,6 @@ void arts_send_db_excl_release(unsigned int home_rank, arts_guid_t db_guid,
                                uint64_t cv, const void *data,
                                uint64_t data_size, uint64_t rdzv_txid,
                                uint64_t rdzv_cookie);
-/* arts_send_db_excl_release_ack: home → releaser after installing publish.
- * Mirrors arts_send_db_publish_ack; cv is echoed verbatim so the releaser
- * wakes by pointer identity (no seq tracking). */
-void arts_send_db_excl_release_ack(unsigned int releaser_rank,
-                                   arts_guid_t db_guid, uint64_t cv);
 
 #ifdef ARTS_WRITE_POLICY_WB
 /* ===== EXCL RETAIN handlers (Cat-C direct dispatch) = */

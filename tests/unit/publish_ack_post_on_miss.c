@@ -59,9 +59,9 @@
 /// never wakes and the finish scope never drains → ctest TIMEOUT FAIL.
 ///
 /// Config gate: PUBLISH / PUBLISH_ACK exist only under HOME (VAL+HOME,
-/// and WRF_VAL — OWNER has no synchronous publish (its dispatcher
-/// fatals on the message) and EXCL uses LOCK_RELEASE_ACK instead.  Compile-time
-/// self-skip on OWNER/EXCL.
+/// and WRF_VAL — WB has no synchronous publish (its dispatcher
+/// fatals on the message) and EXCL wakes on the publish path.  Compile-time
+/// self-skip on WB/EXCL.
 
 #include "arts.h"
 

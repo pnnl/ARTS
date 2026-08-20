@@ -80,6 +80,12 @@ static void lock_home_grant(struct arts_db_s *db, struct arts_db_cache_s *cache,
   if (grant == LOCK_GRANT_NONE) {
     return;
   }
+  if (grant == LOCK_GRANT_DESTROY) {
+    /* This release was the last one owed to a home a destroy already marked.
+     * Nothing is left to grant — tear the home down instead. */
+    arts_excl_home_teardown(db, cache->db_guid);
+    return;
+  }
   arts_shared_ptr_t buf_h = arts_db_buf_acquire(cache);
   struct arts_db_buffer_s *buf =
       (struct arts_db_buffer_s *)arts_shared_get(buf_h);
@@ -271,19 +277,12 @@ static void lock_release_commit(struct arts_db_s *db,
 struct lock_release_landed_ctx_s {
   arts_shared_ptr_t db_h;
   arts_guid_t db_guid;
-  unsigned int releaser;
-  uint64_t cv;
 };
 
 static void lock_release_landed_cb(void *arg) {
   struct lock_release_landed_ctx_s *ctx =
       (struct lock_release_landed_ctx_s *)arg;
   struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(ctx->db_h);
-  if (ctx->cv != 0) {
-    /* ACK even when the DB was destroyed mid-round — a torn-down home cache
-     * must never strand the blocked releaser. */
-    arts_send_db_excl_release_ack(ctx->releaser, ctx->db_guid, ctx->cv);
-  }
   if (db != NULL) {
     lock_release_commit(db, &db->cache, DB_MODE_RW);
   }
@@ -340,8 +339,6 @@ void arts_handler_db_excl_release(void *item_v, void *args_v) {
         (struct lock_release_landed_ctx_s *)arts_malloc(sizeof(*ctx));
     ctx->db_h = arts_route_table_lookup_db(cache->db_guid);
     ctx->db_guid = a->db_guid;
-    ctx->releaser = a->releaser;
-    ctx->cv = a->cv;
     arts_net_rdzv_expect(a->rdzv_txid, lock_release_landed_cb, ctx);
     return;
   }
@@ -357,12 +354,43 @@ void arts_handler_db_excl_release(void *item_v, void *args_v) {
     const void *data = (const char *)a + sizeof(*a);
     arts_db_buf_write_inplace(cache, data, a->data_size);
   }
-  if (mode == DB_MODE_RW && a->cv != 0) {
-    arts_send_db_excl_release_ack(a->releaser, a->db_guid, a->cv);
-  }
 
   /* (2)+(3) transition + grant. */
   lock_release_commit(db, cache, mode);
+}
+
+/* A destroy does not tear the home down on arrival: under exclusion the home
+ * may still hold the lock for a holder whose release is in flight, and that
+ * release carries both a counter decrement and a payload PUT aimed at this
+ * generation.  Tearing down first is what lets a stale release land on the
+ * NEXT generation of a labeled GUID.  So the destroy MARKS the state word and
+ * whichever of it and the last release reaches the zero edge performs the
+ * teardown; marking and reading the counts commit in one CAS, so neither can
+ * conclude the other will do it.
+ *
+ * The mark delays the slot's return, and no legitimate create can collide
+ * with that window: an ordinary GUID is minted from a monotonic sequence and
+ * never comes back, and re-creating a labeled GUID across a lifetime
+ * boundary is the reuse case ARTS does not support
+ * (docs/programming_model/guids.rst). */
+void arts_handler_db_destroy(void *item_v, void *args_v) {
+  struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
+  struct arts_ooo_args_db_destroy_s *a =
+      (struct arts_ooo_args_db_destroy_s *)args_v;
+  struct arts_db_s *db = arts_db_of_cache(cache);
+  if (db == NULL) {
+    return;
+  }
+  uint32_t grant;
+  uint64_t cur, next;
+  do {
+    cur = atomic_load_explicit(&db->lock_state, memory_order_acquire);
+    next = excl_compute_next(cur, EXCL_OP_TEARDOWN, &grant);
+  } while (!atomic_compare_exchange_weak_explicit(
+      &db->lock_state, &cur, next, memory_order_acq_rel, memory_order_acquire));
+  if (grant == LOCK_GRANT_DESTROY) {
+    arts_excl_home_teardown(db, a->db_guid);
+  }
 }
 
 /* ===== arts_db_acquire_is_serialized ===================================
@@ -869,11 +897,20 @@ void arts_send_db_excl_release(unsigned int home_rank, arts_guid_t db_guid,
  * this phase (so for a self-send, the inline grant handler that follows will
  * CAS the next phase onto an already-IDLE word — no overwrite).
  *
- * RW → synchronous publish: ship buf->data with a stack-local sem_t cv
- *      token; home echoes it in EXCL_RELEASE_ACK and await_publish_ack
- *      returns only after the post (no lost update across TCP; self-send posts
- *      inline and returns at once).
- * RO → data-less fire-and-forget notify. */
+ * Neither edge waits for an acknowledgement.  Under exclusion the home IS the
+ * order: it commits and grants only after it has paired the release packet
+ * with the payload's write completion, and a request that arrives first simply
+ * stays pending because there is no grant to give.  What the payload leg does
+ * need is a pin on the source bytes while the one-sided PUT drains them, and
+ * that is the PUT's own local-completion callback, not a remote round trip.
+ *
+ * RW → PUT the dirty bytes into the landing the grant advertised, then send a
+ *      control-only release; the buffer ref rides the PUT.
+ * RO → data-less notify.
+ *
+ * The one wait left on this path is the CTS in the announce leg below, which
+ * is not an acknowledgement: a hold that never received a grant has no landing
+ * address, and there is nowhere to PUT until the home names one. */
 static void lock_send_release_rw(struct arts_db_cache_s *cache) {
   unsigned int home = (unsigned int)arts_guid_get_rank(cache->db_guid);
   if (home == arts_global_rank_id) {
@@ -884,10 +921,10 @@ static void lock_send_release_rw(struct arts_db_cache_s *cache) {
      * grant directly on the live cache.  Routing this through a GUID-keyed
      * self-send would re-resolve the DB via its route slot, which a concurrent
      * (legal) destroy may have already detached while this holder still owed
-     * its release; the self-send would then MISS, defer on the OoO list
-     * forever, and strand this worker in await_publish_ack.  A release
-     * provably follows a successful acquire, so it never needs the OoO
-     * before-create deferral that the request path relies on. */
+     * its release; the self-send would then MISS and defer on the OoO list
+     * forever, losing the release outright.  A release provably follows a
+     * successful acquire, so it never needs the OoO before-create deferral
+     * that the request path relies on. */
     lock_release_commit(arts_db_of_cache(cache), cache, DB_MODE_RW);
     return;
   }
@@ -924,46 +961,44 @@ static void lock_send_release_rw(struct arts_db_cache_s *cache) {
       arts_db_buf_release(&buf_h);
       return; /* shutdown escape: round abandoned with the runtime — leak wr */
     }
-    /* buf_h (held until after the ACK) pins the source; the ACK follows the
-     * target-side completion, which implies the fabric drained it. */
+    /* buf_h transfers into the PUT's local completion, which pins the source
+     * bytes until the fabric drains them.  cv=0 asks for no ACK: the home
+     * pairs {packet, write completion} on its own side and commits + grants
+     * from there, so waiting here would only serve the pin the callback
+     * already holds. */
     arts_net_put_payload((int)home, wr->landing.addr, wr->landing.key,
-                         wr->landing.txid, data, ds, /*on_local_done=*/NULL,
-                         NULL);
+                         wr->landing.txid, data, ds, arts_db_buf_ref_release_cb,
+                         (void *)buf_h);
     arts_send_db_excl_release(home, cache->db_guid, DB_MODE_RW,
-                              /*version=*/0u, (uint64_t)(uintptr_t)wr,
+                              /*version=*/0u, /*cv=*/0u,
                               /*data=*/NULL, ds, wr->landing.txid,
                               wr->landing.cookie);
-    await_publish_ack(&wr->sem); /* install ACK */
-    if (arts_atomic_read(&arts_node_info.shutdown_state) == 0) {
-      sem_destroy(&wr->sem);
-      arts_free(wr);
-    }
-    arts_db_buf_release(&buf_h);
+    sem_destroy(&wr->sem);
+    arts_free(wr);
     return;
   }
-  sem_t cv;
-  sem_init(&cv, 0, 0);
-  uint64_t cv_token = (uint64_t)(uintptr_t)&cv;
   if (home != arts_global_rank_id && ds > 0u && pub.txid != 0) {
     /* Remote dirty release: PUT the dirty bytes straight into home's stable
      * buffer (the landing advertised in the grant) — the global RW lock
      * excludes every reader while they fly — then send the control-only
-     * release packet; home pairs {packet, write completion} before it ACKs
-     * and grants onward.  buf_h (held until after the ACK) pins the source
-     * bytes; the ACK follows the target-side completion, which implies the
-     * fabric fully drained them. */
+     * release packet; home pairs {packet, write completion} before it commits
+     * and grants onward.  The releaser does not wait: ordering is the home's
+     * lock, not an acknowledgement, and a request that arrives before the
+     * release simply stays pending because there is no grant to give.  buf_h
+     * transfers into the PUT's local completion, which is what pins the source
+     * bytes until the fabric drains them. */
     arts_net_put_payload((int)home, pub.addr, pub.key, pub.txid, data, ds,
-                         /*on_local_done=*/NULL, NULL);
+                         arts_db_buf_ref_release_cb, (void *)buf_h);
     arts_send_db_excl_release(home, cache->db_guid, DB_MODE_RW, /*version=*/0u,
-                              cv_token, /*data=*/NULL, ds, pub.txid, pub.cookie);
-  } else {
-    /* Same-rank (inline) or data-less release. */
-    arts_send_db_excl_release(home, cache->db_guid, DB_MODE_RW, /*version=*/0u,
-                              cv_token, data, ds, /*rdzv_txid=*/0u,
-                              /*rdzv_cookie=*/0u);
+                              /*cv=*/0u, /*data=*/NULL, ds, pub.txid,
+                              pub.cookie);
+    return; /* buf_h transferred to the PUT */
   }
-  await_publish_ack(&cv);
-  sem_destroy(&cv);
+  /* Data-less release: nothing is in flight from this buffer, so the send
+   * carries the whole release and the local ref drops here. */
+  arts_send_db_excl_release(home, cache->db_guid, DB_MODE_RW, /*version=*/0u,
+                            /*cv=*/0u, data, ds, /*rdzv_txid=*/0u,
+                            /*rdzv_cookie=*/0u);
   arts_db_buf_release(&buf_h);
 }
 

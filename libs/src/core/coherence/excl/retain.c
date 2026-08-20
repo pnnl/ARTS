@@ -1143,6 +1143,22 @@ void arts_db_release_ro(struct arts_db_cache_s *cache) {
   }
 }
 
+/* RETAIN tears the home down on arrival.  It needs no teardown mark: the only
+ * message a release sends to the home is a data-less RO_RETURN, so a release
+ * that arrives after the teardown costs a deferred payload and nothing else —
+ * the payload legs of this policy move owner->owner, and a pending migration
+ * means a live acquire, which the destroy contract already forbids. */
+void arts_handler_db_destroy(void *item_v, void *args_v) {
+  struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
+  struct arts_ooo_args_db_destroy_s *a =
+      (struct arts_ooo_args_db_destroy_s *)args_v;
+  struct arts_db_s *db = arts_db_of_cache(cache);
+  if (db == NULL) {
+    return;
+  }
+  arts_excl_home_teardown(db, a->db_guid);
+}
+
 /* ===== lock_owner_compute_next ==========================================
  * OWNER home arbiter — pure function of the single lock_state word
  * [phase:2 | owner:14 | w:24 | r:24], run inside a CAS-retry loop.  This IS the

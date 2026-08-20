@@ -37,27 +37,26 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 
-/// @file excl_release_ack_post_on_miss.c
-/// @brief T110 — LOCK_RELEASE_ACK cv-guarded post, even on a cache MISS
-///        (B018).
+/// @file excl_release_wake_on_miss.c
+/// @brief T110 — the cv-guarded wake of a blocked EXCL releaser survives a
+///        cache MISS at the home (B018).
 ///
-/// Under the EXCL protocol an RW release publishes to the home and blocks on
-/// a stack-local sem_t whose address rides the wire `cv` field; the home wakes
-/// the releaser via LOCK_RELEASE_ACK by pointer identity.  Unlike the HOME
-/// PUBLISH_ACK (which posts unconditionally), the LOCK_RELEASE_ACK path
-/// guards the post with `cv != 0` — both the self-send shortcut and the RX
-/// dispatcher. The invariant under test: the post still happens on a cache MISS
-/// (home cache torn down concurrently) so long as cv != 0; otherwise the
-/// blocked RW releaser is stranded → distributed hang.
+/// Under EXCL an RW release blocks on a stack-local sem_t whose address rides
+/// the wire `cv` field, and the home wakes it by pointer identity on the
+/// publish path.  That post is guarded by `cv != 0` on both the self-send
+/// shortcut and the RX dispatcher, which is what separates it from the
+/// unconditional PUBLISH_ACK post.  The invariant under test: the post still
+/// happens when the home's cache entry is a MISS — torn down concurrently —
+/// so long as cv != 0.  Miss it and the releaser is never woken: a
+/// distributed hang, not a wrong answer.
 ///
-/// Black-box driver: a long cross-rank RW ping-pong forces a EXCL release +
-/// LOCK_RELEASE_ACK on every ownership handoff; the same DBs are destroyed and
-/// recreated each generation so an ACK can race a torn-down home (the MISS).  A
-/// stranded releaser is caught by the ctest TIMEOUT (no in-test spin).
+/// Black-box driver: a long cross-rank RW ping-pong forces a release on every
+/// ownership handoff, and the same DBs are destroyed and re-created each
+/// generation so a wake can race a torn-down home.  A stranded releaser is
+/// caught by the ctest TIMEOUT — the test itself never spins.
 ///
-/// Config gate: LOCK_RELEASE_ACK exists only under the EXCL protocol; every
-/// other protocol uses PUBLISH_ACK (HOME/WRF_VAL) or async transfer (OWNER).
-/// Compile-time self-skip on non-EXCL.
+/// Config gate: this wake belongs to the exclusion family; the others reach a
+/// releaser through PUBLISH_ACK or an async transfer.  Self-skips elsewhere.
 
 #include "arts.h"
 
@@ -66,7 +65,7 @@
 
 #if !defined(ARTS_PROTOCOL_EXCL)
 int main(void) {
-  printf("SKIP excl_release_ack_post_on_miss: EXCL-only\n");
+  printf("SKIP excl_release_wake_on_miss: EXCL-only\n");
   return 0;
 }
 #else
@@ -74,7 +73,7 @@ int main(void) {
 #define ITERS 300u
 
 /// RW holder: bump the per-DB counter (a real write so the EXCL release does a
-/// non-empty publish before its LOCK_RELEASE_ACK).
+/// non-empty publish before the home answers).
 static void rw_bump_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                         arts_edt_dep_t depv[]) {
   (void)paramc;
@@ -93,7 +92,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
 
-  arts_printf("=== excl_release_ack_post_on_miss ===\n");
+  arts_printf("=== excl_release_wake_on_miss ===\n");
 
   unsigned int nranks = arts_get_total_ranks();
 
@@ -106,7 +105,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_db_release(db, DB_MODE_RW);
 
     /* RW ping-pong: each handoff releases the lock (publish + ACK).  The
-     * releaser blocks on its stack sem until the home posts LOCK_RELEASE_ACK.
+     * releaser blocks on its stack sem until the home posts the wake.
      */
     arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
     unsigned int hops = (nranks > 1) ? (2u * nranks) : 2u;
@@ -122,7 +121,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_db_destroy(db);
   }
 
-  arts_printf("PASS: excl_release_ack_post_on_miss %u iters x %u ranks\n",
+  arts_printf("PASS: excl_release_wake_on_miss %u iters x %u ranks\n",
               ITERS, nranks);
   arts_shutdown();
 }

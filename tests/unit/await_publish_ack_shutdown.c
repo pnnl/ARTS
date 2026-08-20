@@ -41,7 +41,7 @@
 /// @brief T116 — await_publish_ack escapes under shutdown; no UB on the stale
 ///        stack sem (B017).
 ///
-/// The HOME/WRF_VAL RW release tail blocks in `await_publish_ack` on a
+/// The WT/WRF_VAL RW release tail blocks in `await_publish_ack` on a
 /// stack-local sem_t until the home's PUBLISH_ACK posts it by pointer
 /// identity.  Two failure modes are under test:
 ///   1. Lost-ACK under shutdown: once teardown starts the network receiver
@@ -61,8 +61,8 @@
 /// stale-stack post is an ASan use-after-free / SIGSEGV.
 ///
 /// Config gate: PUBLISH_ACK + await_publish_ack exist only under HOME
-/// (VAL+HOME) and WRF_VAL — OWNER has no synchronous publish, EXCL
-/// uses LOCK_RELEASE_ACK.  Compile-time self-skip on OWNER/EXCL.
+/// (VAL+WT) and WRF_VAL — WB has no synchronous publish, EXCL
+/// wakes on the publish path.  Compile-time self-skip on WB/EXCL.
 
 #include "arts.h"
 

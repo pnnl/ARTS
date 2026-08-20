@@ -99,33 +99,31 @@ _Static_assert(MSG_DB_EXCL_REQUEST == 23,
 _Static_assert(MSG_DB_EXCL_GRANT == 24, "ordinal MSG_DB_EXCL_GRANT drifted");
 _Static_assert(MSG_DB_EXCL_RELEASE == 25,
                "ordinal MSG_DB_EXCL_RELEASE drifted");
-_Static_assert(MSG_DB_EXCL_RELEASE_ACK == 26,
-               "ordinal MSG_DB_EXCL_RELEASE_ACK drifted");
-_Static_assert(MSG_DB_EXCL_FORWARD == 27,
+_Static_assert(MSG_DB_EXCL_FORWARD == 26,
                "ordinal MSG_DB_EXCL_FORWARD drifted");
-_Static_assert(MSG_DB_EXCL_DELIVER == 28,
+_Static_assert(MSG_DB_EXCL_DELIVER == 27,
                "ordinal MSG_DB_EXCL_DELIVER drifted");
-_Static_assert(MSG_DB_EXCL_CONFIRM == 29,
+_Static_assert(MSG_DB_EXCL_CONFIRM == 28,
                "ordinal MSG_DB_EXCL_CONFIRM drifted");
-_Static_assert(MSG_DB_EXCL_RORET == 30, "ordinal MSG_DB_EXCL_RORET drifted");
-_Static_assert(MSG_DB_GRANT_CTS == 31,
+_Static_assert(MSG_DB_EXCL_RORET == 29, "ordinal MSG_DB_EXCL_RORET drifted");
+_Static_assert(MSG_DB_GRANT_CTS == 30,
                "ordinal MSG_DB_GRANT_CTS drifted");
-_Static_assert(MSG_DB_PUBLISH_CTS == 32,
+_Static_assert(MSG_DB_PUBLISH_CTS == 31,
                "ordinal MSG_DB_PUBLISH_CTS drifted");
-_Static_assert(MSG_DB_EXCL_CTS == 33, "ordinal MSG_DB_EXCL_CTS drifted");
-_Static_assert(MSG_DB_INV_REQUEST == 34, "ordinal MSG_DB_INV_REQUEST drifted");
-_Static_assert(MSG_DB_INV_CTS == 35, "ordinal MSG_DB_INV_CTS drifted");
-_Static_assert(MSG_DB_INV_DELIVER == 36, "ordinal MSG_DB_INV_DELIVER drifted");
-_Static_assert(MSG_DB_INV_INVALIDATE == 37,
+_Static_assert(MSG_DB_EXCL_CTS == 32, "ordinal MSG_DB_EXCL_CTS drifted");
+_Static_assert(MSG_DB_INV_REQUEST == 33, "ordinal MSG_DB_INV_REQUEST drifted");
+_Static_assert(MSG_DB_INV_CTS == 34, "ordinal MSG_DB_INV_CTS drifted");
+_Static_assert(MSG_DB_INV_DELIVER == 35, "ordinal MSG_DB_INV_DELIVER drifted");
+_Static_assert(MSG_DB_INV_INVALIDATE == 36,
                "ordinal MSG_DB_INV_INVALIDATE drifted");
-_Static_assert(MSG_DB_INV_INVALIDATE_ACK == 38,
+_Static_assert(MSG_DB_INV_INVALIDATE_ACK == 37,
                "ordinal MSG_DB_INV_INVALIDATE_ACK drifted");
-_Static_assert(MSG_DB_INV_REDIRECT == 39,
+_Static_assert(MSG_DB_INV_REDIRECT == 38,
                "ordinal MSG_DB_INV_REDIRECT drifted");
-_Static_assert(MSG_DB_CREATE_RETURN == 40,
+_Static_assert(MSG_DB_CREATE_RETURN == 39,
                "MSG_DB_CREATE_RETURN ordinal moved");
-_Static_assert(MSG_COUNT == 41,
-               "MSG_COUNT drifted (wire-compat: must be 41 in all configs)");
+_Static_assert(MSG_COUNT == 40,
+               "MSG_COUNT drifted (wire-compat: must be 40 in all configs)");
 
 /* ===== (2) header layout — read before the message type is known. ===== */
 _Static_assert(offsetof(struct arts_msg_header_s, message_type) == 0,
@@ -214,8 +212,6 @@ _Static_assert(sizeof(struct arts_msg_excl_grant_packet_s) == 96,
                "lock_grant sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_excl_release_packet_s) == 72,
                "lock_release sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_excl_release_ack_packet_s) == 32,
-               "lock_release_ack sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_excl_cts_packet_s) == 40,
                "lock_cts sizeof drifted");
 #ifdef ARTS_RELEASE_RETAIN

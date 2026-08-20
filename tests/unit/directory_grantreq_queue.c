@@ -325,12 +325,6 @@ void *arts_shared_get(arts_shared_ptr_t p) {
   (void)p;
   return NULL;
 }
-void arts_send_db_excl_release_ack(unsigned int releaser_rank,
-                                   arts_guid_t db_guid, uint64_t cv) {
-  (void)releaser_rank;
-  (void)db_guid;
-  (void)cv;
-}
 void arts_send_db_cache_destroy(unsigned int sharer_rank, arts_guid_t db_guid) {
   (void)sharer_rank;
   (void)db_guid;

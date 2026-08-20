@@ -317,7 +317,7 @@ struct arts_ooo_args_db_excl_request_s {
 /* EXCL_RELEASE: inline publish payload of data_size bytes trails this
  * header (data_size == 0 for RO releases).
  * cv: RW only — releaser's stack-local sem_t address; forwarded verbatim in
- * the EXCL_RELEASE_ACK so the releaser wakes by pointer identity.  0 for RO.
+ * the PUBLISH_CTS so the releaser wakes by pointer identity.  0 for RO.
  * version: monotone round counter bumped by the releaser; home's buf_install
  * rejects stale overwrites when a reordered/duplicate RELEASE races a newer
  * one (same guard as the VAL publish path). */

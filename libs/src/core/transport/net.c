@@ -216,7 +216,6 @@ static inline bool net_is_ack_class(unsigned int msg_type) {
   case MSG_SHUTDOWN:
   case MSG_DB_PUBLISH_ACK:
   case MSG_DB_PUBLISH_CTS:
-  case MSG_DB_EXCL_RELEASE_ACK:
     return true;
   default:
     return false;
