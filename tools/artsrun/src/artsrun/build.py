@@ -129,12 +129,17 @@ def configure_counters(build_dir: Path, wanted: Path, *, on_line=None,
     quietly change the configuration in any other respect.  The rebuild that
     follows is a full one, and says so.
     """
+    from artsrun.paths import repo_root
+
     say = on_line or (lambda _msg: None)
     if shutil.which("cmake") is None:
         raise BuildError("cmake not found on PATH")
     say(f"counters changed — reconfiguring {build_dir} (this rebuilds everything)")
+    # -S is required even for an existing cache: without it cmake derives the
+    # source directory from the CALLER'S cwd, and a campaign launched from
+    # anywhere but the repo root reconfigures against the wrong source.
     proc = subprocess.run(
-        [*(prefix or []), "cmake", "-B", str(build_dir),
+        [*(prefix or []), "cmake", "-S", str(repo_root()), "-B", str(build_dir),
          f"-DARTS_COUNTER_CONFIG={wanted}"],
         capture_output=True, text=True,
     )

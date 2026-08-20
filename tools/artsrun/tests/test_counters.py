@@ -153,3 +153,50 @@ def test_the_sampling_interval_reaches_the_runtime_configuration():
                        counter_folder="/runs/c", capture_interval=250)
     assert "counter_capture_interval=250" in text
     assert "counter_folder=/runs/c" in text
+
+
+def test_a_set_that_turns_everything_off_names_the_counters_still_on(tmp_path):
+    from artsrun.build import counter_mismatch
+    from artsrun.model.counters import Counterset
+
+    build_dir = _tree_with_counters(tmp_path / "build", {
+        "NUM_EDT_CREATE": ("PERIODIC", "CLUSTER", "SUM"),
+        "NUM_DB_CREATE": ("OFF", "NODE", "SUM"),
+    })
+    empty = Counterset(name="timing", counters={}, allow_empty=True)
+    assert counter_mismatch(build_dir, empty) == ["NUM_EDT_CREATE"]
+
+
+def test_an_all_off_set_still_reconfigures_a_counting_tree(tmp_path, monkeypatch):
+    # Selecting a named empty set pledges the tree to no instrumentation;
+    # the reconfigure is what redeems that pledge.  Gating the check on the
+    # set enabling something let a timing campaign measure on whatever an
+    # earlier campaign left compiled in.
+    from types import SimpleNamespace
+
+    import artsrun.campaign as campaign_mod
+    from artsrun.campaign import Campaign
+    from artsrun.model.counters import Counterset
+    from artsrun.model.profile import Launcher
+
+    build_dir = _tree_with_counters(tmp_path / "build", {
+        "NUM_EDT_CREATE": ("PERIODIC", "CLUSTER", "SUM"),
+    })
+    wanted = tmp_path / "cfg" / "counters_timing.cfg"
+    reconfigured = []
+    monkeypatch.setattr(campaign_mod, "ensure_build_dir", lambda *a, **k: None)
+    monkeypatch.setattr(campaign_mod, "write_counter_config", lambda cs, d: wanted)
+    monkeypatch.setattr(campaign_mod, "configure_counters",
+                        lambda bd, w, **k: reconfigured.append((bd, w)))
+    monkeypatch.setattr(campaign_mod, "plan_targets", lambda *a: "plan")
+
+    c = Campaign(
+        selection=None, plane=None, catalog=None, benchset=None,
+        profile=SimpleNamespace(launcher=Launcher.LOCAL),
+        build_dir=build_dir, run_dir=tmp_path / "run",
+        counterset=Counterset(name="timing", counters={}, allow_empty=True),
+    )
+    assert c.build_plan() == "plan"
+    assert reconfigured == [(build_dir, wanted)]
+    # Nothing is on, so there is no counter output to read back through.
+    assert c.counters_cfg is None

@@ -104,11 +104,17 @@ class Campaign:
         ensure_build_dir(self.build_dir, bootstrap=bootstrap, on_line=on_line,
                          prefix=prefix)
         self.counters_cfg = None
-        if self.counterset and self.counterset.enabled:
+        if self.counterset:
+            # A selected set constrains the tree even when it turns nothing
+            # on: the compiled selection must match what the campaign asked
+            # for, or the cells measure with whatever counters an earlier
+            # campaign left compiled in.  Only the counter-output plumbing
+            # needs a counter to actually be enabled.
             # Written next to the run so the file the build was configured
             # against is the one the results can be read back through.
             wanted = write_counter_config(self.counterset, self.run_dir / "cfg")
-            self.counters_cfg = wanted
+            if self.counterset.enabled:
+                self.counters_cfg = wanted
             differing = counter_mismatch(self.build_dir, self.counterset)
             if differing:
                 configure_counters(self.build_dir, wanted, on_line=on_line,

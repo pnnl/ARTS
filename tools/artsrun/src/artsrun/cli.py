@@ -303,8 +303,10 @@ def run_cmd(
         _fail(str(exc))
 
     try:
-        cset = (store.load_counterset(counters) if counters
-                else store.default_counterset())
+        # No -c means the campaign takes the tree as it stands (unvalidated);
+        # naming a set — the all-OFF timing set included — pledges the tree
+        # to that selection and reconfigures it on any mismatch.
+        cset = store.load_counterset(counters) if counters else None
     except store.NotFound as exc:
         _fail(str(exc))
     campaign = Campaign.prepare(
