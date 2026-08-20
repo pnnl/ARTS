@@ -115,6 +115,13 @@ class Counterset(BaseModel):
 
     counters: dict[str, CounterSetting] = Field(default_factory=dict)
 
+    # A set that turns nothing on is normally a typo — an empty file, a
+    # mis-spelled key — so shipping one has to be said out loud.  The one
+    # legitimate case is a campaign whose only output is a time: selecting a
+    # named empty set still forces the reconfigure, which is what proves the
+    # tree carries no instrumentation.  Omitting `-c` proves nothing.
+    allow_empty: bool = False
+
     @model_validator(mode="after")
     def _known(self) -> "Counterset":
         catalog = load_counter_catalog()

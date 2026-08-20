@@ -77,7 +77,9 @@ def test_the_shipped_sets_load_and_enable_something():
 
     for name in store.list_countersets():
         cset = store.load_counterset(name)
-        assert cset.enabled, f"{name} turns nothing on"
+        assert cset.enabled or cset.allow_empty, (
+            f"{name} turns nothing on and does not say it means to"
+        )
         assert cset.capture_interval >= 1
 
 

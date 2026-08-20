@@ -138,7 +138,9 @@ def test_every_counterset_on_disk_loads():
     for path in sorted(countersets_dir().glob("*.yaml")):
         cs = load_counterset(path.stem)
         assert cs.name == path.stem
-        assert cs.enabled, f"{path.stem} turns nothing on"
+        assert cs.enabled or cs.allow_empty, (
+            f"{path.stem} turns nothing on and does not say it means to"
+        )
 
 
 def test_the_runtime_takes_counts_and_bytes_at_different_sites():
