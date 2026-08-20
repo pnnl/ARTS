@@ -96,10 +96,10 @@ Uncertain in the notes file — plus 8 `OCR_EVENT_CHANNEL_T` from
 channel = 16" claim; only the *count of labeled creates* needed
 correcting, not their sum.
 
-Calibrated args `['25600', '128', '30']` (same as `Stencil2D_intel_chandra`):
-8×16 tile grid, `np_x=3200,np_y=1600`, ≈82 MB/tile payload, ≈10.5 GB total;
-`C(128)=13`; EDTs ≈ `-3+2,048+43,648+78` = **45,771**; DBs ≈ `32·128-7` =
-**4,089**; Events ≈ `10+3,968+43,648+39` = **47,665**.
+Calibrated args `['41472', '13824', '400']`: 108×128 tile grid,
+`np_x=384,np_y=324`, ≈1.9 MB/tile payload, ≈27.5 GB total; `C(13824)=1383`;
+EDTs ≈ `-3+221,184+60,977,664+8,298` = **61.2 M**; DBs ≈ `32·13824-7` =
+**442,361**; Events ≈ `10+428,544+60,977,664+4,149` = **61.4 M**.
 
 Counter cross-check: verified (1 node, `NP=64 NR=4 NT=2` vs `NP=64 NR=4
 NT=4`): predicted absolutes 200/122/269 and 288/122/357 (`NUM_EDT_CREATE` /
@@ -109,7 +109,14 @@ ports, the fixed control-chain/payload-DB formulas
 (`2+5·NR+11·NR·(NT+1)` / `1+21·NR`) were already exactly right — the gap
 was the un-derived three reduction trees (`+45` EDT / `+36` DB at `NR=4`)
 plus an event slope of 11 instead of the previously-claimed 9 per
-tile-round.
+tile-round. A later `NR=16` re-check (`NP=2048 NT=100/400`) confirms the
+EDT/DB formulas and the per-tile-round slopes exactly (11 events created,
+10 destroyed — the surviving one is the `timestepEdt` FINISH/output pair's
+runtime-minted half), but finds the event TOTAL under-predicted by a flat,
+NT-independent 72: the setup/reduction terms vary with the grid's actual
+corner/edge/interior neighbor mix, which the `NR=4` (2×2, all-corner)
+verification point could not expose. The formula is kept with that caveat
+rather than re-fit.
 
 ## Wiring
 
@@ -179,18 +186,57 @@ the only place this port does cross-rank traffic that chandra's per-round
 sticky pair does not — but it happens once per run, not once per round, so
 it does not change the steady-state locality story.
 
+## Family shape (measured, 15w+1p x 1/2/4/8 nodes, `6144 768 200`)
+
+asborn (there is no `_opt` — the port's own affinity layer IS the
+placement), e2e seconds, counters all off:
+
+| arm | 1n | 2n | 4n | 8n |
+|---|---|---|---|---|
+| val_wb | 7.33 | 3.94 | 2.05 | 1.14 |
+| val_wb_comb | 7.29 | 3.90 | 1.98 | 1.13 |
+| inv_wb | 7.33 | 3.97 | 2.06 | 1.27 |
+| excl_retain | 7.31 | 3.97 | 2.03 | 1.24 |
+
+Every arm strong-scales near-ideally (6.4x at 8 nodes) and the arms are
+indistinguishable: the block placement confines halo traffic to tile-block
+edges, each halo buffer has one producer and one consumer per round, and no
+hot globally-shared RO DB exists — so VAL has nothing to re-validate en
+masse (combining changes nothing) and INV/EXCL pay only boundary-edge
+rounds. This is the coherence-friendly pole of the application set, the
+structural opposite of the one-hot-DB fan-in programs.
+
 ## Sizing
 
-Same dials as `Stencil2D_intel_chandra` (`NR` for SPMD/PD-block width,
-`NP` for per-tile compute and memory, `NT` for chain depth), with the same
-guidance: pick `NR` a small multiple of `N·C` with a near-square
-`splitDimension_Cart2D` factorization, size `NP` for `8·2·np_x·np_y` bytes
-resident per tile, size `NT` for wall-clock length. The calibrated args
-`25600 128 30` are identical to the chandra 2-D target (8×16 grid,
-`np_x=3200,np_y=1600`, ≈10.5 GB total) — this variant's per-round object
-churn is lower (no sticky-event destroy/recreate every round), so at equal
-`NR`/`NP`/`NT` it is the lighter of the two 2-D ports on pure event-object
-overhead, though the two still communicate a comparable number of halo
-bytes per round. Memory scales with `NP²/NR` per tile exactly as in the
-chandra ports; `NR` is free to raise for cross-node parallelism without
-moving memory per tile.
+The CLI is `NP NR NT`, all three or none (`argc==4`). `NR` fixes the SPMD
+width and must factor near-square through `splitDimension_Cart2D` — a prime
+`NR` degenerates to a 1×NR strip. The campaign pins `NR = 13824 = 108·128`:
+it spans 32 nodes × 108 workers at 4 tiles per worker, and the calibrated
+`NP` divides both axes exactly. `NP` is the size dial (per-tile arrays scale
+as `NP²/NR`); `NT` is the real timestep count — rounds are usage, not
+repetition padding.
+
+Measured on the Dane-mirror geometry (1 node, 108w+4p, Release, val_wb,
+counters all off, `NR=13824`):
+
+| NP | NT | e2e |
+|---|---|---|
+| 13824 | 100 | 5.2 s* |
+| 27648 | 100 | 16.8 s* |
+| 13824 | 400 | 18.6 s* |
+| 27648 | 400 | 69.1 s |
+| 41472 | 400 | **144.4 s** |
+| 55296 | 200 | 131.6 s |
+
+(*) measured with an object-counter set still compiled in; a clean-tree
+re-measure of `27648 400` moved 67.2→69.1 s, so that instrumentation is
+within run-to-run noise and the starred points stand for shape. e2e is
+linear in `NT` and tracks `NP²`, so the lattice extrapolates cleanly. The
+calibrated arguments are the feasible point nearest the ~150 s anchor:
+`41472 13824 400` (np `384×324` per tile, ≈27.5 GB total payload);
+`55296 13824 200` stands as the alternate if a larger domain at fewer
+rounds is ever preferred. Peak object load is bounded by the frontier, not
+the run: the only per-round survivor is one runtime-minted FINISH/output
+event per tile-round (measured slope exactly 1.0), ≈5.5 M events ≈
+single-digit GB at the calibrated size — no Dane budget concern, uniform
+across coherence arms, so the as-born source is left untouched.

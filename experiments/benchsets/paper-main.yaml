@@ -160,7 +160,7 @@ apps:
     enabled: false
     versions: [asborn]
   Stencil1D_intel_chandra:
-    enabled: true
+    enabled: false   # same source as Stencil2D_intel_chandra (PROBLEM_TYPE=1) — 2-neighbor degenerate
     versions: [asborn]
   stencil1D_once:
     enabled: false
@@ -175,7 +175,7 @@ apps:
     enabled: false
     versions: [asborn]
   Stencil2D_intel_chandra:
-    enabled: true
+    enabled: false   # same kernel as channelEVTs, per-round sticky churn — channelEVTs represents the family
     versions: [asborn]
   Stencil2D_intel_channelEVTs:
     enabled: true

@@ -601,6 +601,7 @@ apps:
     binary: stencil1D_channel
     class: spmd
     provenance: '1-D stencil, channel-event idiom (Intel OCR app)'
+    kind: microbench
     marker: 'S3 i9 valu'
     scalar_re: 'S3 i9 valu\s+([0-9.]+)'
     args: ['48', '50', '340000']
@@ -610,6 +611,7 @@ apps:
     binary: stencil1D_guid
     class: spmd
     provenance: '1-D stencil, labeled-GUID idiom (Intel OCR app)'
+    kind: microbench
     marker: 'S3 i9 valu'
     scalar_re: 'S3 i9 valu\s+([0-9.]+)'
     args: ['48', '50', '340000']
@@ -618,7 +620,8 @@ apps:
   stencil1D_guidPI:
     binary: stencil1D_guidPI
     class: spmd
-    provenance: '1-D stencil, labeled-GUID idiom, pointer-immediate (Intel OCR app)'
+    provenance: '1-D stencil, labeled-GUID idiom, parallel init (Intel OCR app)'
+    kind: microbench
     marker: '9 49\s'
     scalar_re: '9 49\s+([0-9.]+)'
     args: ['48', '50', '340000']
@@ -631,12 +634,13 @@ apps:
     marker: 'L1 norm check'
     scalar_re: 'Solution validates'
     scalar_kind: bool
-    args: ['700000000', '128', '30']
+    args: ['700000000', '13824', '2200']
 
   stencil1D_once:
     binary: stencil1D_once
     class: spmd
     provenance: '1-D stencil, once-event idiom (Intel OCR app)'
+    kind: microbench
     marker: 'S3 i9 valu'
     scalar_re: 'S3 i9 valu\s+([0-9.]+)'
     args: ['48', '50', '340000']
@@ -645,7 +649,8 @@ apps:
   stencil1D_oncePI:
     binary: stencil1D_oncePI
     class: spmd
-    provenance: '1-D stencil, once-event idiom, pointer-immediate (Intel OCR app)'
+    provenance: '1-D stencil, once-event idiom, parallel init (Intel OCR app)'
+    kind: microbench
     marker: '9 49\s'
     scalar_re: '9 49\s+([0-9.]+)'
     args: ['48', '50', '340000']
@@ -655,6 +660,7 @@ apps:
     binary: stencil1D_sticky
     class: spmd
     provenance: '1-D stencil, sticky-event idiom (Intel OCR app)'
+    kind: microbench
     marker: 'S3 i9 valu'
     scalar_re: 'S3 i9 valu\s+([0-9.]+)'
     expect: '1'
@@ -666,6 +672,7 @@ apps:
     binary: stencil1D_stickyLG
     class: spmd
     provenance: '1-D stencil, sticky labeled-GUID idiom (Intel OCR app)'
+    kind: microbench
     marker: '9 49\s'
     scalar_re: '9 49\s+([0-9.]+)'
     args: ['48', '50', '340000']
@@ -678,9 +685,9 @@ apps:
     marker: 'L1 norm'
     scalar_re: 'L1 norm\s*=\s*([\-+0-9.eE]+)'
     tolerance: 1e-06
-    expect: '22.0'
-    expect_args: []
-    args: ['25600', '128', '30']
+    expect: '2202.000000'
+    expect_args: ['25600', '13824', '1100']
+    args: ['25600', '13824', '1100']
 
   Stencil2D_intel_channelEVTs:
     binary: Stencil2D_intel_channelEVTs
@@ -689,9 +696,9 @@ apps:
     marker: 'Computed L1 norm'
     scalar_re: 'Computed L1 norm\s*=\s*([\-+0-9.eE]+)'
     tolerance: 1e-06
-    expect: '22.0'
-    expect_args: []
-    args: ['25600', '128', '30']
+    expect: '802.000000000000'
+    expect_args: ['41472', '13824', '400']
+    args: ['41472', '13824', '400']
 
   stream:
     binary: stream
