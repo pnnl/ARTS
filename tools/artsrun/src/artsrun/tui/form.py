@@ -66,6 +66,15 @@ PROFILE_FIELDS: list[FieldSpec] = [
               "registered-memory pool floor the fabric draws payload buffers "
               "from (empty = the runtime's own default)",
               example="64", optional=True, section="transport"),
+    FieldSpec("stack_size_mb", "worker stack (MB)", "int",
+              "stack every worker thread gets, in every runtime the campaign "
+              "measures. A runtime whose message handling recurses on the "
+              "worker stack is bounded by this, so the platform default "
+              "measures the default rather than the runtime; one value for "
+              "all of them keeps a difference between them a difference in "
+              "the runtimes. Reserved, not committed, so it costs address "
+              "space until a recursion descends",
+              example="256", section="run"),
     FieldSpec("port_count", "connections / node", "int",
               "parallel connections each node opens. A local run has the "
               "runtime claim node_count x this many ports itself; ssh and "
@@ -240,7 +249,7 @@ def blank_values() -> dict[str, Any]:
         "nodes": [1],
         "workers": "4", "progress": "1",
         "port_count": "1",
-        "repeats": "1", "cell_timeout_s": "300",
+        "repeats": "1", "cell_timeout_s": "300", "stack_size_mb": "256",
         "provider": "", "net_interface": "", "route_table_size": "16",
         "regpool_slab_mb": "", "ports": "", "hosts": "",
         "pin": True, "core_dump": False,

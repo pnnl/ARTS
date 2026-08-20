@@ -42,6 +42,9 @@ def render_arts(profile: Profile, nodes: int, *, counter_folder: str | None = No
         net_interface=profile.net_interface,
         fabric_domain=profile.fabric_domain,
         regpool_slab_mb=profile.regpool_slab_mb,
+        # ARTS states the stack in bytes, the reference in MiB; the profile
+        # states it once so the two cannot drift apart.
+        stack_size_bytes=profile.stack_size_mb * 1024 * 1024,
         ports=profile.ports,
         port_count=profile.port_count,
         hosts=hosts,
@@ -53,13 +56,15 @@ def render_arts(profile: Profile, nodes: int, *, counter_folder: str | None = No
 def render_ocr(profile: Profile, nodes: int) -> str:
     """Reference-runtime configuration.
 
-    The per-node width is the same thread budget the runtime under test gets;
-    the binding line is emitted single-node only, where absolute core numbers
-    stay inside the process's own block.
+    The per-node width is the same thread budget the runtime under test gets,
+    and so is the worker stack — this key is in MiB where the ARTS one is in
+    bytes, and both come from the profile's single value. The binding line is
+    emitted single-node only, where absolute core numbers stay inside the
+    process's own block.
     """
     return _env().get_template("ocr.cfg.j2").render(
         last_thread=profile.threads_per_node - 1,
-        stack_size=0,
+        stack_size=profile.stack_size_mb,
         binding=(nodes == 1),
     )
 

@@ -11,6 +11,7 @@ node_count={{ nodes }}
 pin={{ 1 if pin else 0 }}
 route_table_size={{ route_table_size }}
 core_dump={{ 1 if core_dump else 0 }}
+stack_size={{ stack_size_bytes }}
 {%- if provider %}
 provider={{ provider }}
 {%- endif %}

@@ -63,6 +63,16 @@ class Profile(BaseModel):
     fabric_domain: str | None = None
     regpool_slab_mb: int | None = None
 
+    # Worker stack, in MiB, given to EVERY runtime a campaign measures — the
+    # runtime under test and the references alike.  A runtime whose message
+    # handling recurses on the worker stack has a multinode depth bounded by
+    # this value, so leaving it at the platform default (8 MiB, from
+    # RLIMIT_STACK) does not measure the runtime, it measures the default.
+    # Applying one value to all of them is what keeps a difference between
+    # them a difference in the runtimes.  Stacks are reserved, not committed,
+    # so the cost is address space until a recursion actually descends.
+    stack_size_mb: int = Field(default=256, ge=0)
+
     # Parallel connections each node opens.  A local run has the runtime find
     # its own block of node_count x port_count; a remote one must be told which
     # ports to use, and then the list has to name exactly this many.
