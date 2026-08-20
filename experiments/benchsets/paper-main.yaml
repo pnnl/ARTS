@@ -4,6 +4,11 @@
 # carry what this campaign changes: which applications run, in which
 # versions, and any calibration that differs from the catalog default.
 # Set `enabled: false` to drop one without editing the tool.
+#
+# Version policy: the campaign's subject is `optimized`; an app lists
+# `asborn` only when it offers no optimized variant (no hint layer, so
+# as-born IS the optimized placement).  `restructured` stays reserved for
+# apps whose anti-scaling hints alone cannot fix.
 
 name: paper-main
 description: curated roster for the coherence comparison
@@ -17,10 +22,10 @@ apps:
     versions: [asborn]
   cholesky:
     enabled: true
-    versions: [asborn, optimized]
+    versions: [optimized]
   cholesky_blas:
     enabled: true
-    versions: [asborn, optimized]
+    versions: [optimized]
   CoMD_intel_chandra:
     enabled: false   # unsupported: needs EW semantics the runtime does not implement
   CoMD_intel_chandra_tiled:
@@ -28,7 +33,7 @@ apps:
     versions: [asborn]
   CoMD_sdsc:
     enabled: true
-    versions: [asborn, optimized]
+    versions: [optimized]
   CoMD_sdsc2:
     enabled: false   # unsupported: needs EW semantics the runtime does not implement
   curvefit:
@@ -45,7 +50,7 @@ apps:
     versions: [asborn, restructured]
   fibonacci:
     enabled: true
-    versions: [asborn, optimized]
+    versions: [optimized]
   globalsum_cgNoShim:
     enabled: false
     versions: [asborn]
@@ -72,10 +77,10 @@ apps:
     versions: [asborn]
   hpgmg:
     enabled: true
-    versions: [asborn, optimized]
+    versions: [optimized]
   LCS_all_db_distributed:
     enabled: true
-    versions: [asborn, optimized]
+    versions: [optimized]
   LCS_distributed_ST:
     enabled: true
     versions: [asborn]
@@ -87,7 +92,7 @@ apps:
     versions: [asborn]
   miniAMR_intel:
     enabled: true
-    versions: [asborn, optimized]
+    versions: [optimized]
   miniAMR_intel_bryan:
     enabled: true
     versions: [asborn]
@@ -108,10 +113,10 @@ apps:
     versions: [asborn, restructured]
   nqueens:
     enabled: true
-    versions: [asborn, optimized]
+    versions: [optimized]
   p2p:
     enabled: true
-    versions: [asborn, optimized]
+    versions: [optimized]
   printf:
     enabled: false
     versions: [asborn]
@@ -129,7 +134,7 @@ apps:
     versions: [asborn]
   RSBench_intel:
     enabled: true
-    versions: [asborn, optimized]
+    versions: [optimized]
   RSBench_intel_sharedDB:
     enabled: true
     versions: [asborn]
@@ -138,13 +143,13 @@ apps:
     versions: [asborn]
   sar_pss:
     enabled: true
-    versions: [asborn, optimized]
+    versions: [optimized]
   sar_small:
     enabled: true
     versions: [asborn]
   smithwaterman:
     enabled: true
-    versions: [asborn, optimized]
+    versions: [optimized]
   stencil1D_channel:
     enabled: false
     versions: [asborn]
@@ -189,16 +194,16 @@ apps:
     versions: [asborn]
   tempest:
     enabled: true
-    versions: [asborn, optimized]
+    versions: [optimized]
   testlibs:
     enabled: false
     versions: [asborn]
   triangle:
     enabled: true
-    versions: [asborn, optimized]
+    versions: [optimized]
   xeonNumaSize:
     enabled: false
     versions: [asborn]
   XSBench_intel:
     enabled: true
-    versions: [asborn, optimized, restructured]
+    versions: [optimized, restructured]
