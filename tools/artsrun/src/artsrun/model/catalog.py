@@ -196,7 +196,7 @@ class Catalog(BaseModel):
         return app, app.binary
 
 
-def _expand(value, root: str):
+def expand_repo(value, root: str):
     """Resolve `{repo}` in argument lists against this checkout.
 
     An application that reads an input file is given an absolute path, since
@@ -206,9 +206,9 @@ def _expand(value, root: str):
     if isinstance(value, str):
         return value.replace("{repo}", root)
     if isinstance(value, list):
-        return [_expand(v, root) for v in value]
+        return [expand_repo(v, root) for v in value]
     if isinstance(value, dict):
-        return {k: _expand(v, root) for k, v in value.items()}
+        return {k: expand_repo(v, root) for k, v in value.items()}
     return value
 
 
@@ -221,5 +221,5 @@ def load_catalog() -> Catalog:
         spec = dict(spec)
         spec.setdefault("name", name)
         spec.setdefault("binary", name)
-        apps[name] = AppEntry.model_validate(_expand(spec, root))
+        apps[name] = AppEntry.model_validate(expand_repo(spec, root))
     return Catalog(apps=apps)

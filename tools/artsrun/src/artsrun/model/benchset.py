@@ -12,7 +12,9 @@ import sys
 
 from pydantic import BaseModel, Field
 
-from artsrun.model.catalog import AppClass, AppEntry, Catalog, ScalarKind, Version
+from artsrun.model.catalog import (AppClass, AppEntry, Catalog, ScalarKind,
+                                   Version, expand_repo)
+from artsrun.paths import repo_root
 
 
 class BenchsetEntry(BaseModel):
@@ -122,10 +124,18 @@ class Benchset(BaseModel):
                 # An override applies to the row, so it follows the version
                 # into the rewrite only when the rewrite shares the CLI.
                 if entry is not None and version is not Version.RESTRUCTURED:
+                    # A roster's override goes through the same `{repo}`
+                    # resolution the catalog's own arguments get: the catalog
+                    # is committed and cannot carry one machine's absolute
+                    # path, and neither can a roster.  Without this an
+                    # override naming an input file reaches the application
+                    # as the literal "{repo}/..." and it fails on open.
+                    root = str(repo_root())
                     if entry.args is not None:
-                        args, overridden = entry.args, True
+                        args, overridden = expand_repo(entry.args, root), True
                     if entry.args_by_nodes is not None:
-                        args_by_nodes, overridden = entry.args_by_nodes, True
+                        args_by_nodes = expand_repo(entry.args_by_nodes, root)
+                        overridden = True
                 out.append(
                     ResolvedApp(
                         name=app.name,
