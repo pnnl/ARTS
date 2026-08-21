@@ -323,8 +323,24 @@ apps:
     scalar_kind: int
     expect: '523'
     expect_args: ['1024', '512', '16']
-    args: ['65536', '1024', '48']
+    args: ['131072', '1024']
     optimized: true
+    restructured_as: LCS_wavefront
+
+  LCS_wavefront:
+    binary: LCS_wavefront
+    class: task
+    provenance: 'LCS; wavefront rewrite (boundary strips on counted events)'
+    marker: 'LCS length:'
+    scalar_re: 'LCS length:\s*(\d+)'
+    scalar_kind: int
+    expect: '890574'
+    expect_args: ['1769472', '256']
+    # L = N/base = 6912: the average anti-diagonal width (L/2 = 3456) matches
+    # the largest campaign geometry's total worker count, and the point sits
+    # nearest the ~150 s single-node anchor (141.0 s at 108 workers).
+    args: ['1769472', '256']
+    restructured_from: LCS_all_db_distributed
 
   LCS_distributed_ST:
     binary: LCS_distributed_ST
@@ -333,9 +349,14 @@ apps:
     marker: 'LCS length:'
     scalar_re: 'LCS length:\s*(-?\d+)'
     scalar_kind: int
-    expect: '1024'
-    expect_args: []
-    args: ['57344', '1024', '48']
+    expect: '131072'
+    expect_args: ['131072', '1024']
+    # The three tiled LCS rows share one workload so the decomposition ladder
+    # is comparable cell by cell.  ~150 s is a SCALING row's anchor; these
+    # rows exist to show their curves, so the size is what keeps the worst
+    # 32-node cell under the ceiling (and the eager fully-tiled table on one
+    # node) — the multinode growth supplies the rest of the plot.
+    args: ['131072', '1024']
 
   LCS_shared:
     binary: LCS_shared
@@ -344,9 +365,14 @@ apps:
     marker: 'LCS length:'
     scalar_re: 'LCS length:\s*(-?\d+)'
     scalar_kind: int
-    expect: '1024'
-    expect_args: []
-    args: ['40960', '1024', '48']
+    expect: '131072'
+    expect_args: ['131072', '1024']
+    # The three tiled LCS rows share one workload so the decomposition ladder
+    # is comparable cell by cell.  ~150 s is a SCALING row's anchor; these
+    # rows exist to show their curves, so the size is what keeps the worst
+    # 32-node cell under the ceiling (and the eager fully-tiled table on one
+    # node) — the multinode growth supplies the rest of the plot.
+    args: ['131072', '1024']
 
   miniAMR_forkbomb:
     binary: miniAMR_forkbomb

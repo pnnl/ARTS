@@ -40,7 +40,6 @@ contention — see Wiring.
 |-----|---------|---------|-------------------|
 | `argv[1]` = `N` | string length; sizes the whole DAG and every DB payload | 1024 | ✓ `atol` in `mainEdt`, propagated to the recursion through `LCS_task_params.N` in `paramv` — multinode-safe |
 | `argv[2]` = `base` | recursion base case: quadrant side length at which the split stops | 256 | ✓ same, via `LCS_task_params.base`; clamped to `N` if larger |
-| `argv[3]` = `num_workers` | intended worker count | 16 | ⚠ parsed on rank 0, used only in one `ocrPrintf` — never sets ARTS's actual thread count (that is `ARTS_CONFIG`'s own `workers` key) and is not propagated anywhere else. Passing it prints a one-line warning that it has no effect in this port |
 
 `GAP_PENALTY` (`= 0`) and the `CHECK_RESULTS`/`PRINT` compile-time
 switches (both unconditionally `#define`d in this file) are compile-time
@@ -146,6 +145,36 @@ nodes only increases the fraction of turns that cross the network without
 relieving the serialization itself (an anti-scaling shape by
 construction, in the same spirit as `fibonacci`).
 
+## Placement (optimized)
+
+**No `optimized` variant is offered.**  With one per-node-exclusive RW
+block, the only thing a hint layer could do is refuse to distribute — a
+pin-to-one-rank placement runs flat at every node count, which hides the
+very contention this row exists to show, and its number is already on
+every plot because at one node all versions coincide.  As-born's
+round-robin scatter IS the maximal use of the machine's task resources,
+so as-born is the placed form; the distribution story belongs to the
+restructured decomposition (`LCS_all_db_distributed:restructured`).
+
+## Family shape (measured, 15w+1p x 1/2/4/8 nodes, `65536 1024`)
+
+as-born, e2e seconds — every arm degrades identically (the migrating
+score turn costs ~0.9 ms per remote hop regardless of family; there is
+nothing for a coherence protocol to cache when every turn moves the
+block):
+
+| arm | 1n | 2n | 4n | 8n |
+|---|---|---|---|---|
+| val_wb | 4.29 | 5.78 | 6.76 | 7.97 |
+| val_wb_comb | 4.29 | 5.76 | 6.72 | 8.02 |
+| inv_wb | 4.29 | 5.78 | 6.84 | 8.17 |
+| excl_retain | 4.29 | 5.73 | 6.72 | 7.78 |
+
+The growth is linear in the turn count, so at the calibrated size
+(4^9 turns) the multinode cells are censored points, not measurements —
+the roster runs this row for its 1-node anchor and the anti-scaling
+exhibit.
+
 ## Sizing
 
 `N` and `base` together set `d = ⌈log₂(N/base)⌉`-ish (exact rule: shifts
@@ -173,3 +202,15 @@ available concurrency:
   app's parallelism ceiling.
 - Memory is never the limit (DB payload is `O(N)`, tens to hundreds of KB
   even at large `N`); leave it out of the sizing decision.
+
+Measured on the Dane-mirror geometry (1 node, 108w+4p, Release):
+`327680 1024` = 92.4 s, `393216 1024` = 132.8 s — wall tracks `N²` (the
+work), so the lattice extrapolates cleanly (`131072` ≈ 15 s).  The
+calibrated arguments are **`131072 1024`**, shared by all three tiled
+LCS rows so the decomposition ladder is comparable cell by cell.  The
+~150 s anchor is a SCALING row's rule; an anti-scaling row's size is
+whatever keeps its worst 32-node cell under the ceiling — the multinode
+growth supplies the rest of the plot (and the fully-tiled sibling cannot
+run larger anyway).  The pinned answer equals `N` — the zero-gap
+recurrence's analytic result for any strings — so the pin guards the
+run's shape, not its arithmetic.

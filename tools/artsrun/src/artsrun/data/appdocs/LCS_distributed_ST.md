@@ -33,7 +33,6 @@ depends only on `N`/`base`, never on string content.
 |-----|---------|---------|-------------------|
 | `argv[1]` = `N` | string length | 1024 | ✓ `atol` in `mainEdt`, reaches the recursion via `LCS_task_params.N` (`paramv`) — multinode-safe |
 | `argv[2]` = `base` | recursion cut-off: the quad-tree halves until `n ≤ base` | 256 | ✓ same, via `LCS_task_params.base`; indirectly sizes each `S`/`T` label block, which is cut to the resulting base-case width `N>>d` (equal to `base` only when `N/base` is a power of two) |
-| `argv[3]` = `num_workers` | intended worker count | 16 | ⚠ parsed on rank 0, used only in one `ocrPrintf` — no functional effect, does not set ARTS's thread count |
 
 `GAP_PENALTY` is compile-time only, no argv path.
 
@@ -141,6 +140,20 @@ pressure on rank 0 specifically for `S`/`T` traffic without making any
 individual acquire more likely to be local, and it leaves the `score`
 bottleneck exactly as severe as `LCS_shared`'s.
 
+## Family shape (measured, 15w+1p x 1/2/4/8 nodes, `65536 1024`)
+
+as-born, e2e seconds — the curve OVERLAPS `LCS_shared`'s (4.29 -> ~8.0 at
+8 nodes on every arm): tiling the read-only inputs changes nothing while
+the single score block still migrates every turn, which is this row's
+point on the decomposition ladder.
+
+| arm | 1n | 2n | 4n | 8n |
+|---|---|---|---|---|
+| val_wb | 4.29 | 5.76 | 6.75 | 7.99 |
+| val_wb_comb | 4.29 | 5.75 | 6.79 | 7.95 |
+| inv_wb | 4.29 | 5.76 | 6.85 | 8.14 |
+| excl_retain | 4.31 | 5.84 | 6.93 | 8.09 |
+
 ## Sizing
 
 Same dials and the same anti-scaling shape as `LCS_shared` — `d` (via
@@ -150,8 +163,11 @@ changes how much of that traffic is remote, not how much of it is
 concurrent. The only new consideration versus `LCS_shared`: `base` is a
 cut-off, not a tile size, so the tile count is `2^d` and the tile width
 `N>>d` — for a `N/base` that is not a power of two there are more, narrower
-tiles than the ratio suggests. The calibrated `args = [57344, 1024, 48]`
-gives `d=6` (4,096 leaf turns, `L=64` label blocks of 896 characters); as
-with `LCS_shared`, this size is picked for
-observability, not to saturate a target worker count, since worker count
-does not relieve the `score` bottleneck.
+tiles than the ratio suggests. The calibrated arguments are **`131072 1024`**, shared by all three
+tiled LCS rows (ladder comparability; `393216 1024` measured 140.9 s on
+the Dane-mirror geometry, so the shared size lands near 16 s at one node
+and leaves the 32-node anti-scaled cell room under the ceiling — the
+tile-width fix makes any `N` legal, no power-of-two ratio needed).  As
+with `LCS_shared` the pinned answer equals `N` (analytic), and worker
+count does not relieve the `score` bottleneck — the multinode growth IS
+this row's plot.

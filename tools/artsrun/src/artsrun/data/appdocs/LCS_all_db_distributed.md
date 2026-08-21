@@ -39,7 +39,6 @@ content.
 |-----|---------|---------|-------------------|
 | `argv[1]` = `N` | string length | 1024 | ✓ `atol` in `mainEdt`, reaches the recursion via `LCS_task_params.N` (`paramv`) — multinode-safe |
 | `argv[2]` = `base` | recursion base case / tile side length (both the recursion's and the score grid's) | 256 | ✓ same, via `LCS_task_params.base` |
-| `argv[3]` = `num_workers` | intended worker count | 16 | ✗ parsed on rank 0 but never used anywhere, not even printed — strictly dead (worse than the other two variants, which at least log it) |
 
 `GAP_PENALTY` is compile-time only. `LCS_ROW_BANDS_PER_RANK` and the
 `OCR_APP_OPTIMIZED_PLACEMENT`-guarded hint helpers (`scoreIdx`,
@@ -172,6 +171,65 @@ exists specifically to close this gap by deriving `EDT_AFFINITY` from
 the same row-band arithmetic that decides a tile's home, so the EDT and
 its data agree on a rank; as-born, they don't.
 
+## Placement (optimized)
+
+As-born is wavefront work fed from labeled-GUID score blocks whose homes
+round-robin on the raw linear label index — neighbours in the block grid land
+on unrelated ranks, so the heavy north-south payload of the wavefront crosses
+the wire nearly every step.
+
+The layer places by contiguous ROW BANDS (`blockRowHint`, one band per rank;
+`LCS_ROW_BANDS_PER_RANK` widens to k cyclic bands): a block's West neighbour
+shares its row and therefore its rank, North/NW share its band except on the
+nranks-1 boundary rows, so the dominant payload stays rank-local while the
+anti-diagonal frontier still reaches every band once it is a band tall.  The
+same band function is applied on BOTH sides: base-case EDTs pin to their
+block's band rank, and the labeled index is re-encoded as `band(row) +
+nranks*t` so the label-derived round-robin home of each score block lands on
+its band's rank too — pure index arithmetic, agreed by every producer and
+consumer without communication.  (Measured at the time of the v2 rework: 4n
+-23% from the EDT pins alone.)
+
+The 2026-08-21 rework extends the layer on both remaining fronts: S string
+tiles are band-steered too (`sIdx` — row i's tile is read only by block-row
+i+1's band), and every creation-phase block is created `NO_ACQUIRE`, so a
+block whose home is remote is born there instead of materializing on the
+creating rank — without it the eager creation loop pulls the whole table
+onto one rank.
+
+## Family shape (measured, 15w+1p x 1/2/4/8 nodes, `32768 1024`)
+
+e2e seconds, both versions:
+
+| arm | asborn 1n/2n/4n/8n | optimized 1n/2n/4n/8n |
+|---|---|---|
+| val_wb | 1.03 / 2.79 / 3.28 / 3.34 | 1.02 / 1.65 / 2.05 / 2.34 |
+| val_wb_comb | 1.09 / 2.80 / 3.30 / 3.36 | 1.08 / 1.66 / 2.06 / 2.34 |
+| inv_wb | 1.02 / 2.99 / 3.60 / 3.81 | 1.02 / 1.69 / 2.04 / 2.40 |
+| excl_retain | 1.02 / 7.76 / 6.70 / 5.86 | 1.01 / 1.79 / 2.29 / 2.64 |
+
+At the calibrated workload (`131072 1024`, L=128) the sweep reads
+asborn 41.6 / 57.6 / 52.7 / 40.7 s and optimized 41.7 / 45.2 / 31.4 /
+19.0 s across 1/2/4/8 nodes: as-born never beats its own single node,
+while the band placement does scale INSIDE the wiring cap — 2.2x at 8
+nodes against the `(4/3)^7 = 7.5x` span bound, helped by NO_ACQUIRE
+spreading the eager table's materialization across the nodes' homes.
+Lowering the cap
+shows the plateau directly: the same N at `base 8192` (L=16, cap 3.16x)
+runs 36.0 / 40.8 / 36.5 / 34.9 s across 1/2/4/8 nodes — eight nodes buy
+nothing.  The cap itself no placement can move: the recursion's quadrant gating is the only ordering (the
+leaf's datablock dependences satisfy immediately), so creation itself
+trickles behind completion and the span caps speedup at `(4/3)^d`.
+Measured on one 108-worker node at fixed work (`131072 1024`): 1..8
+workers give 47.4 / 29.1 / 24.2 / 16.5 / 16.0 / 14.9 / 14.2 / 13.6 s —
+saturation at ~3.5x — and 112 workers run SLOWER (15.5 s) than 12.
+Memory is the second wall: the creation phase materializes the whole
+`(N+1)²`-cell table before the first leaf runs, so the destroy-at-diag
+only trims the tail, never the peak.  Both walls are the 2016 source's
+own structure; the answer to both is the restructured version
+(`LCS_wavefront` — real tile dependences, lazy creation), which runs the
+same `131072 1024` in 0.82 s on the same node.
+
 ## Sizing
 
 Both `N` and `base` must keep `N/base` a power of two for correctness
@@ -198,3 +256,16 @@ constraint this variant has and the other two do not:
   parallelism, smaller per-tile compute and per-DB payload) without
   changing total score memory; growing `base` does the reverse. Either
   way, keep `N/base` a power of two.
+
+Measured on the Dane-mirror geometry (1 node, 108w+4p, Release,
+optimized): `131072 1024` = 41-42 s (68 GB eager table, slab
+prepopulation included), and one step up
+(`196608 1024`, 155 GB) already exceeds a 570 s ceiling — the per-tile
+overhead grows with tile count on top of the serial floor.  The
+calibrated arguments stay **`131072 1024`** — also the workload the
+two sequential siblings share, so the ladder compares cell by cell: this
+row is the paper's no-scale-by-wiring exhibit, and that is the largest
+size whose eager footprint and wall time both behave (NO_ACQUIRE spreads
+the table across nodes' homes multinode, but a strong-scaling sweep's
+one-node cell still carries all of it); the scaling story continues in
+`LCS_wavefront`.

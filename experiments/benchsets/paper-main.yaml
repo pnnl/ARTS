@@ -80,7 +80,7 @@ apps:
     versions: [optimized]
   LCS_all_db_distributed:
     enabled: true
-    versions: [optimized]
+    versions: [optimized, restructured]
   LCS_distributed_ST:
     enabled: true
     versions: [asborn]

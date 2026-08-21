@@ -913,6 +913,16 @@ add_benchmark_app(NAME LCS_all_db_distributed
     OPTIMIZED_PLACEMENT
 )
 
+# Wavefront restructuring of the same computation: boundary strips travel on
+# labeled counted events, leaves spawn per row and run in anti-diagonal
+# order, memory follows the frontier.
+add_benchmark_app(NAME LCS_wavefront
+    DIR LCS/refactored/ocr/intel-jesmin-lcs_all_db_distributed
+    SOURCES lcs_wavefront.c
+    LIBS timer
+    EXTRA_LINK_LIBS m
+)
+
 # ==========================================================================
 # Tier 14: SAR (all sizes share same sources from sar/ocr/src/)
 # ==========================================================================
