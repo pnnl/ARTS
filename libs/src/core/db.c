@@ -497,6 +497,13 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
         ARTS_DEBUG("arts_db_create: DB[Guid:%lu, Type:%s, Size:%lu] "
                    "created locally",
                    guid, GET_DB_TYPE_NAME(db_type), len);
+      } else {
+        /* The pool reports exhaustion by returning NULL only after every
+         * node's growth has failed; a silent NULL_GUID here would surface
+         * as arbitrary downstream failures instead of the real cause. */
+        ARTS_ERROR("arts_db_create: allocation of %lu bytes failed — "
+                   "registered pool exhausted on every node",
+                   (unsigned long)db_size);
       }
     }
   } else {

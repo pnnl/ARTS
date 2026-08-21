@@ -119,6 +119,11 @@
 #ifndef ARTS_MPOL_BIND
 #define ARTS_MPOL_BIND 2
 #endif
+/* madvise advice that faults a range in and REPORTS failure (Linux 5.14+),
+ * declared locally for older toolchain headers. */
+#ifndef MADV_POPULATE_WRITE
+#define MADV_POPULATE_WRITE 23
+#endif
 
 #define REGPOOL_MAX_SLABS 4096u
 #define REGPOOL_MAX_NODES 64u /* single-word NUMA bitmask covers node < 64 */
@@ -185,6 +190,11 @@ static _Atomic(mi_arena_id_t) g_node_arena[REGPOOL_MAX_NODES];
  * arena-table slot per base-slab-worth of demand (the allocator caps how many
  * arenas a process may register). */
 static unsigned g_node_grow_count[REGPOOL_MAX_NODES];
+
+/* One warning per node exhaustion, not one per refused grow: a full node is
+ * re-tried by every allocation that prefers it, and each retry would print.
+ * Guarded by g_lock (set and cleared only inside a grow). */
+static bool g_node_full_warned[REGPOOL_MAX_NODES];
 
 /* Per-thread allocator heap, bound to one exclusive arena at a time.  The
  * binding moves on exhaustion (see regpool_thread_bind); the superseded heap
@@ -258,6 +268,29 @@ static void regpool_bind_numa(void *base, size_t len, int node) {
                 (unsigned long)(sizeof(mask) * 8), 0UL);
 }
 
+/* Free bytes on one NUMA node, or SIZE_MAX when the kernel does not expose
+ * it (no sysfs, single-node) — unknown must not veto growth. */
+static size_t regpool_node_free_bytes(int node) {
+  char path[64];
+  snprintf(path, sizeof path, "/sys/devices/system/node/node%d/meminfo", node);
+  FILE *f = fopen(path, "r");
+  if (f == NULL)
+    return SIZE_MAX;
+  char line[128];
+  size_t kb = 0;
+  bool found = false;
+  while (fgets(line, sizeof line, f) != NULL) {
+    unsigned long v;
+    if (sscanf(line, "Node %*d MemFree: %lu kB", &v) == 1) {
+      kb = (size_t)v;
+      found = true;
+      break;
+    }
+  }
+  fclose(f);
+  return found ? kb * 1024 : SIZE_MAX;
+}
+
 /* Map `len` bytes aligned to `align`, NUMA-bind, and (when a domain is set)
  * register.  Over-maps by `align` and trims so the base is aligned
  * regardless of what the kernel hands back.  The mapping is left unpopulated
@@ -290,6 +323,19 @@ static bool regpool_map_slab(int node, size_t len, size_t align, void **out_base
    * any allocator first-touch — a bind after pages are already resident
    * affects only future faults and silently fails to relocate this range. */
   regpool_bind_numa(base, len, node);
+
+  /* Populate every page NOW.  Under the strict bind above, a first-touch
+   * fault on an exhausted node is a mempolicy-constrained OOM-kill the
+   * process never observes: the allocator hands out addresses against the
+   * not-yet-resident range, the cross-node fallback cascade never sees a
+   * failure, and the process dies silently at the touch.  Populating at
+   * map time closes that window for the slab's whole lifetime.  The size
+   * was clamped to the node's free bytes by the grow that requested this
+   * slab (MADV_POPULATE_WRITE cannot report bind-exhaustion itself — the
+   * population walks the ordinary fault path, so only sizing within the
+   * node keeps the constrained OOM killer out of reach).  The cost is
+   * that a slab commits in full at creation. */
+  (void)madvise(base, len, MADV_POPULATE_WRITE);
 
   struct fid_mr *mr = NULL;
   uint64_t rkey = 0;
@@ -432,6 +478,32 @@ static bool regpool_grow_locked(int node) {
     if (want < g_slab_bytes)
       want = g_slab_bytes;
   }
+  /* Under the strict NUMA bind a slab must also fit the NODE, not just the
+   * machine: populating a bound range on a full node is answered by the
+   * mempolicy-constrained OOM killer, never by ENOMEM.  Clamp to the node's
+   * own free bytes (headroom held back for the kernel and concurrent
+   * consumers) so the node's tail is still used, and fail the grow — warned
+   * once per exhaustion, cleared when the node grows again — when not even
+   * a base slab fits; the caller's cascade then grows another node. */
+  {
+    const size_t headroom = (size_t)2 * 1024 * 1024 * 1024;
+    size_t node_free = regpool_node_free_bytes(node);
+    if (node_free != SIZE_MAX) {
+      size_t usable = node_free > headroom ? node_free - headroom : 0;
+      while (want > usable && want > g_slab_bytes)
+        want >>= 1;
+      if (want > usable) {
+        if (!g_node_full_warned[node]) {
+          g_node_full_warned[node] = true;
+          ARTS_WARN("regpool: node %d holds %zu MiB free — no room for even "
+                    "a %zu MiB slab; growth falls over to the remaining "
+                    "nodes",
+                    node, node_free >> 20, g_slab_bytes >> 20);
+        }
+        return false;
+      }
+    }
+  }
   while (!regpool_map_slab(node, want, REGPOOL_BASE_ALIGN, &base, &mr, &rkey)) {
     if (want <= g_slab_bytes)
       return false;
@@ -476,6 +548,7 @@ static bool regpool_grow_locked(int node) {
     return false;
   }
   g_node_grow_count[node]++;
+  g_node_full_warned[node] = false;
   atomic_store_explicit(&g_node_arena[node], arena, memory_order_release);
   return true;
 }
