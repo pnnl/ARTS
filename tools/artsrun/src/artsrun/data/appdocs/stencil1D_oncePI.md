@@ -111,14 +111,14 @@ dependency chain (grandchild-ahead, so 2 generations always exist before
 the currently-running one completes), and a true `N`-way join via
 `wrapupEdt`. Critical-path depth ≈ `T`.
 
-## Placement (as-born)
+## Placement (base)
 
 `NULL_HINT` everywhere. Same effective policy as `stickyLG`: DB homes are
 scattered across whichever rank each chain's round-robin-placed `init` EDT
 landed on (not concentrated at rank 0, unlike the lineage-A trio), but
 every subsequent `stencilEdt` clone is independently round-robin-placed
 too, so the executing EDT and the DBs it acquires are on unrelated ranks
-just as often — no locality is expressed by the as-born program.
+just as often — no locality is expressed by the base program.
 
 ## Sizing
 

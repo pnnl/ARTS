@@ -86,7 +86,7 @@ def test_a_version_the_application_lacks_is_absent_not_unchecked():
     async def check(app, pilot):
         bench = app.query_one("#bench", BenchsetPanel)
         idents = {t.ident for t in bench.toggles}
-        return ("graph500:optimized" in idents, "nqueens:optimized" in idents,
+        return ("graph500:hinted" in idents, "nqueens:hinted" in idents,
                 len(bench.query(".bench-cell.blank")))
 
     has_absent, has_present, blanks = drive(check)
@@ -371,7 +371,11 @@ def test_argument_boxes_show_the_catalog_default_as_a_placeholder():
 
     value, placeholder = drive(check)
     assert value == ""                 # paper-main overrides nothing
-    assert placeholder == "15 8"       # the catalog's strong-axis calibration
+    # The placeholder is the catalog's own calibration, whatever it currently
+    # is — pinning the literal here only breaks the test every recalibration.
+    from artsrun.model.catalog import load_catalog
+    catalog_args = [r for r in load_catalog().rows if r.name == "nqueens"][0].args
+    assert placeholder == " ".join(catalog_args)
 
 
 def test_an_edited_argument_becomes_an_override():
@@ -382,7 +386,7 @@ def test_an_edited_argument_becomes_an_override():
         bench.query_one("#a-nqueens", Input).value = "12 4"
         edited = bench.edited_benchset("scratch")
         resolved = {a.key: a for a in edited.resolve(app.catalog)}
-        return resolved["nqueens:asborn"].args, resolved["nqueens:asborn"].args_overridden
+        return resolved["nqueens:hinted"].args, resolved["nqueens:hinted"].args_overridden
 
     assert drive(check) == (["12", "4"], True)
 

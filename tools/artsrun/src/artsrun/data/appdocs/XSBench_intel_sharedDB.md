@@ -145,7 +145,7 @@ predecessor's `FINISH` scope draining) — `G` sync points per chain, same
 batching structure as `XSBench_intel`'s `NB` but over coarse per-thread
 chunks (`CHUNK_SIZE=1000`) rather than per-lookup fan-out.
 
-## Placement (as-born)
+## Placement (base)
 
 Unlike `XSBench_intel`, this port makes real, non-`NULL_HINT` placement
 decisions. `forkSpmdEdts_Cart1D` pins each of the `P` rank-init chains to a
@@ -203,22 +203,23 @@ ladder divides it to hold the aggregate at 1.6G, which sizes the 1-node
 bentley-geometry cell at ~108 s and lets the high-node cells shrink as the
 row's near-perfect scaling dictates.
 
-## Family shape (measured, 15w+1p × 1/2/4/8 nodes, `-s large -g 96`, aggregate `-l` 1.6G)
+## Family shape (measured, 15w+1p × 1/2/4/8 nodes, `-s large -g 96 -l 50M -t 108 -p 32` fixed)
 
-e2e seconds — near-perfect strong scaling, arms indistinguishable (the
-decomposition shares nothing across instances, so no coherence arm has
-anything to do):
+e2e seconds — near-perfect strong scaling of the fixed 32-instance
+program, arms indistinguishable (the decomposition shares nothing across
+instances, so no coherence arm has anything to do):
 
 | arm | 1n | 2n | 4n | 8n |
 |---|---|---|---|---|
-| val_wb | 108.4 | 60.0 | 32.3 | 16.5 |
-| val_wb_comb | 108.4 | 60.1 | 32.3 | 16.5 |
-| inv_wb | 108.3 | 60.1 | 32.5 | 16.6 |
-| excl_retain | 107.8 | 60.0 | 32.3 | 16.5 |
+| val_wb | 119.5 | 66.2 | 35.2 | 17.5 |
+| val_wb_comb | 119.7 | 66.5 | 35.2 | 17.5 |
+| inv_wb | 119.9 | 66.2 | 35.4 | 17.6 |
+| excl_retain | 119.4 | 66.2* | 35.2 | 17.6 |
 
-Speedup 1.81 / 3.36 / 6.57 at 2/4/8 nodes (efficiency 84-90%; the residual
-is the per-instance init replica each node pays). A Dane-geometry single
-node (108w+4p) runs the full 1.6G in 20.6 s. Contrast `XSBench_intel`: the
-same benchmark, exploded-DB dataflow decomposition, is wire-bound and
-anti-scaling with 7.7× separation between coherence arms — this pair is the
-decomposition ablation of the set.
+Speedup 1.81 / 3.40 / 6.83 at 2/4/8 nodes (efficiency 85-90%; the
+residual is the 32 replicas'-worth of init packed onto fewer nodes). A
+Dane-geometry single node (108w+4p) runs the same program in 23.0 s.
+(*) The excl_retain 2-node cell reproducibly measures ~122 s with a
+normal kernel (122.3/122.4 across two runs) — ~56 s sits outside the
+kernel, an arm-specific non-compute stall this configuration alone
+shows; queued for a runtime-side look.

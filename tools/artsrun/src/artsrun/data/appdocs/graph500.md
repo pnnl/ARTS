@@ -172,7 +172,7 @@ templates, and a dedicated `finalShutdownEdt` (chained off its output event)
 calls `ocrShutdown()` — deliberately split out so shutdown never truncates
 `shutDownEdt`'s own dependence-release work out of the measured run.
 
-## Placement (as-born)
+## Placement (base)
 
 No `OCR_APP_OPTIMIZED_PLACEMENT` guard exists anywhere in this source — the
 affinity usage below is the app's own, unconditional mechanism (gated only

@@ -11,7 +11,7 @@ from artsrun.run.types import Cell, CellResult, Status
 
 def _cell(nodes: int, name: str = "app") -> Cell:
     app = ResolvedApp(
-        name=name, version=Version.ASBORN, binary=name, cls=AppClass.TASK,
+        name=name, version=Version.BASE, binary=name, cls=AppClass.TASK,
         marker="X", scalar_re="X",
     )
     entry = SelectionEntry(

@@ -142,10 +142,10 @@ rank blocks on — and the halo `_stop` EDTs, which cannot fire until all of a
 rank's up-to-26 neighbours have satisfied their channels. A rank is never
 more than one iteration ahead of its neighbours, nor ahead of the root at all.
 
-## Placement (as-born)
+## Placement (base)
 
 This application carries no `OCR_APP_OPTIMIZED_PLACEMENT` layer and has no
-`_opt` target. The affinity hints it does carry are genuinely as-born:
+`_hinted` target. The affinity hints it does carry are genuinely base:
 `ENABLE_EXTENSION_AFFINITY` is defined for the benchmark build, so
 `NEK_OCR_ENABLE_AFFINITIES` is on and the program places explicitly.
 `BtForkIF` computes `pdID = rankID % ocrAffinityCount(AFFINITY_PD)`, i.e.

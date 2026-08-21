@@ -126,7 +126,7 @@ concurrency in principle (see Wiring), but the single shared `score` DB
 reduces the *effective* critical path to `4^d` sequential turns
 regardless of available parallelism.
 
-## Placement (as-born)
+## Placement (base)
 
 No `OCR_APP_OPTIMIZED_PLACEMENT` guard exists anywhere in this file —
 every `ocrEdtCreate`/`ocrDbCreate` passes `NULL_HINT`. Effective policy:
@@ -145,20 +145,20 @@ nodes only increases the fraction of turns that cross the network without
 relieving the serialization itself (an anti-scaling shape by
 construction, in the same spirit as `fibonacci`).
 
-## Placement (optimized)
+## Placement (hinted)
 
-**No `optimized` variant is offered.**  With one per-node-exclusive RW
+**No `hinted` variant is offered.**  With one per-node-exclusive RW
 block, the only thing a hint layer could do is refuse to distribute — a
 pin-to-one-rank placement runs flat at every node count, which hides the
 very contention this row exists to show, and its number is already on
 every plot because at one node all versions coincide.  As-born's
 round-robin scatter IS the maximal use of the machine's task resources,
-so as-born is the placed form; the distribution story belongs to the
+so base is the placed form; the distribution story belongs to the
 restructured decomposition (`LCS_all_db_distributed:restructured`).
 
 ## Family shape (measured, 15w+1p x 1/2/4/8 nodes, `65536 1024`)
 
-as-born, e2e seconds — every arm degrades identically (the migrating
+base, e2e seconds — every arm degrades identically (the migrating
 score turn costs ~0.9 ms per remote hop regardless of family; there is
 nothing for a coherence protocol to cache when every turn moves the
 block):
@@ -184,7 +184,7 @@ Because the whole run is bottlenecked by one RW-exclusive `score` DB
 (Wiring), **more workers or nodes do not shorten the critical path** —
 the run's wall time tracks the `4^d` sequential `score` turns, each
 paying an acquire/compute/release round trip that is a remote hop most of
-the time under as-born placement. Sizing choices here trade run *length*
+the time under base placement. Sizing choices here trade run *length*
 against how much of that traffic crosses the network, not against
 available concurrency:
 

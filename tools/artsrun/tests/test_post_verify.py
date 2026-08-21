@@ -12,7 +12,7 @@ class _Cell:
 
 
 def _app(post_verify=None):
-    return ResolvedApp(name="x", binary="x", version="asborn", cls="task",
+    return ResolvedApp(name="x", binary="x", version="base", cls="task",
                        marker="M", scalar_re="M (\\d+)",
                        post_verify=post_verify)
 

@@ -13,8 +13,9 @@
 # layout decides most of it: apps/kernels/ and apps/examples/ are
 # microbenchmarks, apps/<name>/ is an application.
 #
-# Versions: every application has `asborn`.  `optimized` exists where the
-# source carries a placement hint layer (built as <binary>_opt), and
+# Versions: every application has `base` (as published, plus the disclosed
+# structure-preserving conformance adaptations).  `hinted` exists where the
+# source carries a placement hint layer (built as <binary>_hinted), and
 # `restructured` where the task/data decomposition was redesigned and
 # registered as its own target — the answer to a scaling problem that
 # placement hints alone could not fix.
@@ -61,7 +62,7 @@ apps:
     # The tile size is part of the stream layout, hence part of the name.
     args: ['--ds', '5000', '--ts', '100', '--fib', '{repo}/datasets/cholesky/cholesky_perf5k_ts100.bin']
     fixtures: ['{repo}/datasets/cholesky/cholesky_input.mat', '{repo}/datasets/cholesky/cholesky_perf5k_ts100.bin']
-    optimized: true
+    hinted: true
 
   cholesky_blas:
     binary: cholesky_blas
@@ -74,7 +75,7 @@ apps:
     # the text path.
     args: ['--ds', '7500', '--ts', '100', '--fi', '{repo}/datasets/cholesky/cholesky_perf7k5.mat']
     fixtures: ['{repo}/datasets/cholesky/cholesky_perf7k5.mat']
-    optimized: true
+    hinted: true
 
   CoMD_intel_chandra:
     binary: CoMD_intel_chandra
@@ -200,7 +201,7 @@ apps:
     expect: '55'
     expect_args: ['10']
     args: ['33']
-    optimized: true
+    hinted: true
 
   globalsum_cgNoShim:
     binary: globalsum_cgNoShim
@@ -257,7 +258,7 @@ apps:
 
   highbw:
     binary: highbw
-    class: bw
+    class: mw
     provenance: 'OCR high-bandwidth example'
     kind: microbench
     marker: 'HIGHBW_WORK_SUM'
@@ -312,7 +313,7 @@ apps:
     expect: '2.97878e-06'
     expect_args: ['4', '1']
     args: ['5', '512']
-    optimized: true
+    hinted: true
 
   LCS_all_db_distributed:
     binary: LCS_all_db_distributed
@@ -324,7 +325,7 @@ apps:
     expect: '523'
     expect_args: ['1024', '512', '16']
     args: ['131072', '1024']
-    optimized: true
+    hinted: true
     restructured_as: LCS_wavefront
 
   LCS_wavefront:
@@ -393,7 +394,7 @@ apps:
     expect: '710400'
     expect_args: ['--nx', '4', '--ny', '4', '--nz', '4', '--num_tsteps', '2', '--num_objects', '1']
     args: ['--nx', '16', '--ny', '16', '--nz', '16', '--npx', '8', '--npy', '8', '--npz', '8', '--num_tsteps', '12', '--num_objects', '1']
-    optimized: true
+    hinted: true
 
   miniAMR_intel_bryan:
     binary: miniAMR_intel_bryan
@@ -494,7 +495,7 @@ apps:
     expect: '4'
     expect_args: ['6', '2']
     args: ['15', '8']
-    optimized: true
+    hinted: true
 
   p2p:
     binary: p2p
@@ -506,7 +507,7 @@ apps:
     expect: '228'
     expect_args: ['2', '10', '30', '5']
     args: ['128', '256', '100', '1400']
-    optimized: true
+    hinted: true
 
   printf:
     binary: printf
@@ -520,7 +521,7 @@ apps:
 
   prodcon:
     binary: prodcon
-    class: bw
+    class: spmd
     provenance: 'OCR tagged-scheduler producer/consumer kernel'
     kind: microbench
     marker: 'MB/s'
@@ -588,7 +589,7 @@ apps:
     marker: 'Lookups:'
     scalar_kind: bool
     args: ['-l', '31000000']
-    optimized: true
+    hinted: true
 
   RSBench_intel_sharedDB:
     binary: RSBench_intel_sharedDB
@@ -597,12 +598,8 @@ apps:
     marker: 'RS_CHECKSUM'
     scalar_re: 'RS_CHECKSUM:\s+([0-9]+)'
     scalar_kind: int
-    # Dormant pin: measured at the retired per-node ladder ('-l 245000000
-    # -t 3456 -p 1'); it does not fire at the fixed args below and the
-    # RSBench cycle re-pins at them (the checksum depends on the
-    # per-instance lookup ranges).
-    expect: '321587046369'
-    expect_args: ['-l', '245000000', '-t', '3456', '-p', '1']
+    expect: '9732682317'
+    expect_args: ['-l', '7656250', '-t', '108', '-p', '32']
     # Strict sweep invariant (same convention as XSBench_intel_sharedDB,
     # same fork-SPMD code family): every logical count is node-invariant —
     # 32 instances, 108 chains each (1x the campaign node's persistent
@@ -622,7 +619,7 @@ apps:
     scalar_kind: int
     args: ['{repo}/datasets/sar-huge/Data.bin', '{repo}/datasets/sar-huge/PlatformPosition.bin', '{repo}/datasets/sar-huge/PulseTransmissionTime.bin', '{repo}/scratch/sar_detects.txt', '{repo}/third_party/ocr-apps/apps/sar/ocr/problem_size_scaling/Parameter2.txt']
     fixtures: ['{repo}/datasets/sar-huge/Data.bin', '{repo}/datasets/sar-huge/PlatformPosition.bin', '{repo}/datasets/sar-huge/PulseTransmissionTime.bin']
-    optimized: true
+    hinted: true
 
   smithwaterman:
     binary: smithwaterman
@@ -741,16 +738,13 @@ apps:
 
   stream:
     binary: stream
-    class: bw
+    class: spmd
     provenance: 'STREAM memory-bandwidth benchmark (McCalpin)'
     marker: 'STREAM_RESULT'
     scalar_re: 'STREAM_RESULT a\[0\] = ([0-9.eE+-]+)'
     tolerance: 0.001
-    # Dormant pin: measured at the retired per-node ladder ('100000000 54
-    # 2100'); it does not fire at the fixed args below and re-pinning at
-    # them is queued (a[0] depends on the iteration count).
-    expect: '1.370277069331697e+15'
-    expect_args: ['100000000', '54', '2100']
+    expect: '9.388296233681296e+29'
+    expect_args: ['100000000', '1728', '4200']
     # Strict sweep invariant: the chain count and iteration count are
     # node-invariant, fixed at the largest geometry's calibration — 1728
     # chains (the BW rule's 1x: 54 per node x 32 nodes; a measured harm
@@ -761,7 +755,7 @@ apps:
 
   stream_dist:
     binary: stream_dist
-    class: bw
+    class: spmd
     provenance: 'STREAM; distributed rewrite'
     marker: 'STREAM checksum'
     scalar_re: 'STREAM checksum: a\[0\] = ([0-9.eE+-]+)'
@@ -773,7 +767,7 @@ apps:
 
   stream_org:
     binary: stream_org
-    class: bw
+    class: spmd
     provenance: 'STREAM; original single-node form'
     marker: 'MB/s'
     scalar_re: 'STREAM_VALID relerr = ([0-9.eE+-]+)'
@@ -784,7 +778,7 @@ apps:
 
   stream_sa:
     binary: stream_sa
-    class: bw
+    class: spmd
     provenance: 'STREAM; shared-array form'
     marker: 'MB/s'
     scalar_re: 'STREAM_VALID relerr = ([0-9.eE+-]+)'
@@ -813,7 +807,7 @@ apps:
     expect: '21'
     expect_args: []
     args: ['96']
-    optimized: true
+    hinted: true
     multinode_timeout: 40
 
   testlibs:
@@ -843,7 +837,7 @@ apps:
     expect: '325211332'
     expect_args: ['9', '1', '8']
     args: ['9', '1', '8']
-    optimized: true
+    hinted: true
 
   xeonNumaSize:
     binary: xeonNumaSize
@@ -881,7 +875,7 @@ apps:
     # What large multiplies is init's dependence registrations
     # (n_isotopes^2 x g), so -g compensates: g=96 keeps a 34K-DB exploded
     # plane while holding init to ~150 s at multinode (measured 2n
-    # optimized val_wb: 148 s init; g=192 doubles it, g=1000 is minutes to
+    # hinted val_wb: 148 s init; g=192 doubles it, g=1000 is minutes to
     # hours).  Resolution below the official 11303 is disclosed either way;
     # the lookup structure does not depend on it.
     # -b is the in-flight window (lookup chains per sync batch) — this
@@ -895,7 +889,7 @@ apps:
     # 1024..13824), which is itself evidence that production, not the
     # window, binds.
     args: ['-s', 'large', '-g', '96', '-l', '300000', '-b', '3456']
-    optimized: true
+    hinted: true
     # No restructured version, by decision: any distribution-friendly rebuild
     # of this program converges on the sibling XSBench_intel_sharedDB (its
     # own catalog row) — per-lookup tasking pays more runtime work per lookup
@@ -914,7 +908,7 @@ apps:
     expect: '6523'
     expect_args: []
     args: []
-    optimized: true
+    hinted: true
     default_enabled: false
     timeout: 120
 
@@ -928,7 +922,7 @@ apps:
     expect: '1991'
     expect_args: []
     args: []
-    optimized: true
+    hinted: true
     default_enabled: false
 
   sar_small:
@@ -941,7 +935,7 @@ apps:
     expect: '458'
     expect_args: []
     args: []
-    optimized: true
+    hinted: true
     default_enabled: false
 
   sar_tiny:
@@ -954,7 +948,7 @@ apps:
     expect: '12'
     expect_args: []
     args: []
-    optimized: true
+    hinted: true
     default_enabled: false
 
   XSBench_intel_sharedDB:

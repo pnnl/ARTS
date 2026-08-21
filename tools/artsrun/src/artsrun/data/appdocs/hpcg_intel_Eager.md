@@ -147,7 +147,7 @@ latency for the absence of per-message allocation. The coarse MG levels are
 still full-width and still pay 26 messages for `1/512` of the level-0 work.
 Serial points: `mainEdt`'s spawn loop and `wrapUpEdt`.
 
-## Placement (as-born)
+## Placement (base)
 
 As published and identical to `hpcg_intel`; there is no
 `OCR_APP_OPTIMIZED_PLACEMENT` layer in this source. `mainEdt` reads

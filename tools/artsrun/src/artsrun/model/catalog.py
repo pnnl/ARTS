@@ -10,7 +10,7 @@ from __future__ import annotations
 from enum import StrEnum
 from functools import lru_cache
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from artsrun.data import load_data
 from artsrun.paths import repo_root
@@ -20,7 +20,6 @@ class AppClass(StrEnum):
     TASK = "task"
     SPMD = "spmd"
     MW = "mw"
-    BW = "bw"
 
 
 class Kind(StrEnum):
@@ -44,30 +43,30 @@ class Kind(StrEnum):
 
 
 class Version(StrEnum):
-    """One program's answers to the same problem, in increasing order of how
-    much of it was rewritten.
+    """Which build of an application a cell runs.
 
-    ASBORN is the application as published — including whatever hints its
-    authors already gave it, which is why "hinted" was the wrong name for the
-    next step.  OPTIMIZED changes no code structure: it only adds or changes
-    placement hints on EDTs and DBs, statically optimized as far as hints
-    alone can carry the program.  RESTRUCTURED redesigns the decomposition
-    itself, as a separate target shown in the row of the application it
-    re-implements.
+    BASE is the application as published, plus the disclosed
+    structure-preserving conformance adaptations every version and runtime
+    shares — including whatever hints its authors shipped.  HINTED changes
+    no code structure: it only adds or changes placement hints on EDTs and
+    DBs, as far as hints alone can carry the program.  RESTRUCTURED
+    redesigns the task/data decomposition and is registered as its own
+    target.
     """
 
-    ASBORN = "asborn"
-    OPTIMIZED = "optimized"
+    BASE = "base"
+    HINTED = "hinted"
     RESTRUCTURED = "restructured"
 
     @classmethod
     def _missing_(cls, value):
-        # The optimized version was recorded as "hinted" before the rename;
-        # selections and benchsets written under that name still resolve.
-        if value == "hinted":
-            return cls.OPTIMIZED
+        # The tiers were recorded as "asborn"/"optimized" before the rename;
+        # accept the old names so recorded selections stay replayable.
+        if value == "asborn":
+            return cls.BASE
+        if value == "optimized":
+            return cls.HINTED
         return None
-
 
 class ScalarKind(StrEnum):
     FLOAT = "float"
@@ -100,7 +99,9 @@ class AppEntry(BaseModel):
     args: list[str] = Field(default_factory=list)
     args_by_nodes: dict[int, list[str]] = Field(default_factory=dict)
 
-    optimized: bool = False
+    # "optimized" is the field's pre-rename spelling, accepted on input
+    # so entries renamed in later bundles still parse meanwhile.
+    hinted: bool = Field(default=False, validation_alias=AliasChoices("hinted", "optimized"))
     restructured_as: str | None = None
     restructured_from: str | None = None
 
@@ -146,9 +147,9 @@ class AppEntry(BaseModel):
         versions are one program's answers to the same problem, in increasing
         order of how much of it was rewritten.
         """
-        v = [Version.ASBORN]
-        if self.optimized:
-            v.append(Version.OPTIMIZED)
+        v = [Version.BASE]
+        if self.hinted:
+            v.append(Version.HINTED)
         if self.restructured_as:
             v.append(Version.RESTRUCTURED)
         return v
@@ -189,11 +190,11 @@ class Catalog(BaseModel):
                 raise KeyError(f"{name} has no restructured version")
             other = self.apps[app.restructured_as]
             return other, other.binary
-        if version is Version.OPTIMIZED:
-            if not app.optimized:
-                raise KeyError(f"{name} has no optimized version: its source "
+        if version is Version.HINTED:
+            if not app.hinted:
+                raise KeyError(f"{name} has no hinted version: its source "
                                "carries no hint layer")
-            return app, f"{app.binary}_opt"
+            return app, f"{app.binary}_hinted"
         return app, app.binary
 
 

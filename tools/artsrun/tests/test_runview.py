@@ -38,7 +38,7 @@ def test_the_table_holds_one_row_per_cell_with_its_axes(tmp_path):
     assert count == 2
     _, app_name, version, runtime, family, write, release, n, rep, \
         status, wall, scalar, verdict = row
-    assert (app_name, version, runtime) == ("app", "asborn", "arts_val_wb")
+    assert (app_name, version, runtime) == ("app", "base", "arts_val_wb")
     assert (family, write, release) == ("VAL", "WB", "RETAIN")
     assert (n, rep) == ("1", "1")
     assert status == "ok"
@@ -210,7 +210,7 @@ def test_g_swaps_the_table_for_the_scaling_reading(tmp_path):
         drive(tmp_path, check)
     assert scaling_on and table_off
     app_name, version, entry, one, two = row
-    assert (app_name, version, entry) == ("app", "asborn", "arts_val_wb")
+    assert (app_name, version, entry) == ("app", "base", "arts_val_wb")
     assert one == "10.00s"
     assert two == "8.00s ×1.25"  # speedup vs the 1n base
     assert scaling_after is False and table_after is True

@@ -105,7 +105,7 @@ from `LCS_shared` is that the preamble now issues `2L` extra
 `ocrDbCreate` calls (one per labeled tile) instead of 2 (`S_guid`,
 `T_guid`) — still entirely serial, still entirely on rank 0.
 
-## Placement (as-born)
+## Placement (base)
 
 No `OCR_APP_OPTIMIZED_PLACEMENT` guard in this file — every
 `ocrEdtCreate` passes `NULL_HINT`. But **labeled GUIDs are placed
@@ -142,7 +142,7 @@ bottleneck exactly as severe as `LCS_shared`'s.
 
 ## Family shape (measured, 15w+1p x 1/2/4/8 nodes, `65536 1024`)
 
-as-born, e2e seconds — the curve OVERLAPS `LCS_shared`'s (4.29 -> ~8.0 at
+base, e2e seconds — the curve OVERLAPS `LCS_shared`'s (4.29 -> ~8.0 at
 8 nodes on every arm): tiling the read-only inputs changes nothing while
 the single score block still migrates every turn, which is this row's
 point on the decomposition ladder.

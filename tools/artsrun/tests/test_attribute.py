@@ -104,10 +104,10 @@ def test_a_missing_binary_degrades_to_addresses(tmp_path):
 
 def test_cells_lists_only_directories_holding_counters(tmp_path):
     root = tmp_path / "counters"
-    (root / "app.asborn.val_wb.1n.r1").mkdir(parents=True)
-    (root / "app.asborn.val_wb.1n.r1" / "n0.json").write_text("{}")
+    (root / "app.base.val_wb.1n.r1").mkdir(parents=True)
+    (root / "app.base.val_wb.1n.r1" / "n0.json").write_text("{}")
     (root / "empty").mkdir()
-    assert [p.name for p in attr.cells(tmp_path)] == ["app.asborn.val_wb.1n.r1"]
+    assert [p.name for p in attr.cells(tmp_path)] == ["app.base.val_wb.1n.r1"]
 
 
 def test_the_attribution_set_enables_the_per_task_tables():

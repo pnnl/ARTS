@@ -242,7 +242,7 @@ def plan_targets(
                 if entry.kind.value == "ocrvx" and app and app.ocrvx_skip:
                     continue
                 # The hint layer is already folded into the resolved stem.
-                wanted.append(entry.binary(stem, optimized=False))
+                wanted.append(entry.binary(stem, hinted=False))
 
     targets = sorted(set(wanted))
     have = available_targets(build_dir)

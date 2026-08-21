@@ -99,7 +99,7 @@ def expand(
                             app=app,
                             nodes=nodes,
                             repeat=repeat,
-                            binary=apps_dir / entry.binary(app.binary, optimized=False),
+                            binary=apps_dir / entry.binary(app.binary, hinted=False),
                             args=app.args_for(nodes),
                             timeout_s=app.timeout_for(nodes) or profile.cell_timeout_s,
                             cfg=config_for(entry.kind, configs[nodes]),

@@ -119,7 +119,7 @@ no rank-0-only or native-preamble phase inside the DAG itself — `mainEdt`'s
 own `preamble()` (banner + size printout) runs once, natively, before any EDT
 is created.
 
-## Placement (as-born)
+## Placement (base)
 
 Every `ocrDbCreate` in this source passes `NULL_HINT`, so every DB homes at
 its creator's own executing rank (creator/first-touch) — a copy of the fresh
@@ -140,7 +140,7 @@ churned `a` into the next `loop` — is a coin flip (probability `(N-1)/N` at
 means to measure as local memory bandwidth becomes, at `N>1`, dominated by
 RDMA transfers of full per-thread arrays on nearly every phase transition;
 the algorithm has no exploitable locality left to lose (there was never any
-data reuse to place near), but the as-born program adds gratuitous network
+data reuse to place near), but the base program adds gratuitous network
 traffic on top of the minimum the algorithm requires. A second, independent
 consequence: `finalize` is itself round-robin-placed, so it does not
 reliably land on rank 0. Its `printTimes()` reads the file-scope `times`
@@ -152,6 +152,28 @@ most cells are never both set and diffed on the same process. The printed
 `MB/s` figure should not be trusted at multinode; the `STREAM_RESULT`/
 "Solution Validates" scalar the harness reads does not depend on `times` and
 is unaffected.
+
+## Placement (hinted)
+
+**No `hinted` variant is offered (decision 2026-08-19).**  With one
+per-node-exclusive RW block, the only thing a hint layer can do is refuse to
+distribute — and that number is already on every plot, because at one node all
+versions coincide: the containment performance at N nodes IS the base
+1-node cell.  A horizontal line derivable from the base curve adds nothing,
+so the guard code stays in the source but no `_hinted` target is built; the
+restructured version carries the distribution story.
+
+As-born ships placement INTENT (`OCR_HINT_EDT_DISPERSE` on `mainLet`) that the
+shim does not translate, so effectively everything round-robins: each kernel
+lands on a fresh rank and ships every array it reads across the wire once per
+kernel per sweep (see above).
+
+The layer (`streamHereEdtHint` in `stream.c`: copy/scale/add/triad and the
+loop driver) pins the whole kernel chain to the creating rank, so the arrays
+never move.  A bandwidth chain has no width to distribute — this is the 1x
+width class — so containment is the whole story; distributing SEGMENTS of the
+arrays is a different program and exists as the restructured `stream_dist`.
+`pdCount <= 1` returns `NULL_HINT`.
 
 ## Sizing
 

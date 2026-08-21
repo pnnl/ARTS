@@ -94,7 +94,7 @@ ahead the *next* EDT already exists when the *current* one starts), and an
 `O(N)`-deep serialized finalization wave identical to sticky's. Total
 critical-path depth ≈ `T + N`.
 
-## Placement (as-born)
+## Placement (base)
 
 `NULL_HINT` everywhere, no affinity code outside the dead `#ifdef PARALLEL`
 block — same effective policy as `stencil1D_sticky`: EDTs round-robin

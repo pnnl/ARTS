@@ -60,7 +60,7 @@ flags fall through the `else if` chain silently.
 | `--stencil` | 7 or 27 | 7 | ✓ |
 | `--uniform_refine` | refine every block to `num_refine` regardless of objects | 0 | ✓ — the object-free way to exercise the refinement path |
 | `--block_change --code --permute --refine_ghost --plot_freq --report_perf --blocking_send --max_blocks --target_* --inbalance --reorder` | reference knobs | `param.h` | ✓ parsed; `code`, `refine_ghost`, `stencil` are honoured, the rest are stored and mostly unread |
-| `--lb_opt` | load balancing (0 none / 1 each refine / 2 each phase) | 0 | ⚠ parsed; `FNC_loadbalance`/`FNC_redistributeblocks` exist but the default 0 never reaches them |
+| `--lb_hinted` | load balancing (0 none / 1 each refine / 2 each phase) | 0 | ⚠ parsed; `FNC_loadbalance`/`FNC_redistributeblocks` exist but the default 0 never reaches them |
 | `VERIFICATION_RUN` | deterministic cell initialization | **defined** by the ARTS build | ✗ compile-time (`benchmarks/apps/CMakeLists.txt`) |
 | `USE_STATIC_SCHEDULER` | use the static-scheduler fork | not defined | ✗ compile-time |
 | `USE_LAZY_DB_HINT` | tag payload DBs with `OCR_HINT_DB_LAZY` | not defined | ✗ compile-time |
@@ -184,10 +184,10 @@ checksum timestep, which drives a full octree reduction and a `2V`-EDT
 serial print chain on the sequential-rank-0 block; and every refinement round,
 which is an intent reduction plus a parent-and-eight-children RW join.
 
-## Placement (as-born)
+## Placement (base)
 
 No `OCR_APP_OPTIMIZED_PLACEMENT` guard exists in this port — the placement below
-*is* the as-born program, and it is fully explicit.
+*is* the base program, and it is fully explicit.
 
 - `forkSpmdEdts_Cart3D` (`ocrAppUtils.c:341`) splits the policy domains into a
   3-D grid via `splitDimension_Cart3D`, partitions the `npx × npy × npz` rank grid
@@ -202,7 +202,7 @@ No `OCR_APP_OPTIMIZED_PLACEMENT` guard exists in this port — the placement bel
 - Consequence: a block's data is always local to the tasks that touch it, and the
   only cross-node traffic is halo events and reduction edges on partition
   boundaries — exactly the MPI-like pattern the port is imitating. There is no
-  migration and no rebalancing (`lb_opt` defaults to 0), so a refinement wave
+  migration and no rebalancing (`lb_hinted` defaults to 0), so a refinement wave
   concentrated in one octant loads one node.
 - The one placement the app does not control: the labeled halo/reduction GUID
   ranges are reserved round-robin by the shim, so the *event* for a boundary face

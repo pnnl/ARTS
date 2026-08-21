@@ -131,7 +131,7 @@ reduction is a global barrier `2⌈log₁₀N⌉` hops deep; an iteration is 11
 exchange barriers plus 3 reduction barriers. Serial points: `mainEdt`'s spawn
 loop and the single `wrapUpEdt`.
 
-## Placement (as-born)
+## Placement (base)
 
 This is **not** a NULL-hint program, and no `OCR_APP_OPTIMIZED_PLACEMENT`
 layer exists in the source — what follows is as published. `mainEdt` calls

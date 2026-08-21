@@ -160,13 +160,13 @@ bounds how much machine a rung keeps busy is the *narrowest* wide stage,
 line-by-line write.  Stage boundaries are hard barriers, so no two tile
 families overlap and every serial head is fully exposed.
 
-## Placement (as-born)
+## Placement (base)
 
 Every `ocrEdtCreate` passes `NULL_HINT`, and every DB is created through
 `bsm/dram/spad_malloc`, which pass `NULL_HINT` too (`rag_ocr.c:22-24`).  The
 five tile-EDT creates route their hint through `ragTileEdtHint()`, guarded by
-`OCR_APP_OPTIMIZED_PLACEMENT` and returning `NULL_HINT` as-born (the
-`sar_tiny_opt` family compiles it in — the catalog's `optimized: true`).  So:
+`OCR_APP_OPTIMIZED_PLACEMENT` and returning `NULL_HINT` base (the
+`sar_tiny_hinted` family compiles it in — the catalog's `hinted: true`).  So:
 **EDTs** → the shim passes `ARTS_HINT_ANY_RANK` → runtime round-robin, and all
 24 tile tasks plus every stage head land on arbitrary ranks; **DBs** →
 home = creating rank, and since `mainEdt` runs on rank 0 all 14 global blocks
@@ -178,10 +178,24 @@ Consequence: tiles spread uniformly over all `n` ranks, so every large
 read-only block must materialise on every rank that runs a tile, and the
 whole-image block a family writes changes owner on nearly every one of its
 per-tile RW acquisitions.  The algorithm has ideal tile locality (disjoint
-output tiles over shared read-only pulse data) and the as-born program
+output tiles over shared read-only pulse data) and the base program
 expresses none of it — not merely because hints are absent, but because a
 stage's entire output is one datablock, so no placement could let two ranks
 write it concurrently.
+
+## Placement (hinted)
+
+Every parallel family in this pipeline tiles ONE whole-image block acquired
+`DB_MODE_RW`.  Write permission is exclusive at rank granularity, so tiles
+placed on different ranks cannot overlap in time anyway — they can only hand
+the whole image around, one rank at a time, paying a full-image transfer per
+hand-off.  Scattering buys no parallelism and costs the image each turn.
+
+The layer (`ragTileEdtHint` in `rag_ocr.h`) therefore pins each tile family to
+the PD that already holds the blocks its parent acquired (`ocrAffinityGetCurrent`),
+keeping the pipeline's single mutable image resident.  `pdCount <= 1` returns
+`NULL_HINT`.  This is containment of a structurally broadcast-bound program,
+not a scaling fix — the multinode story for SAR is the size ladder, not spread.
 
 ## Sizing
 

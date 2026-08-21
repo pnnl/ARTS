@@ -86,7 +86,7 @@ initial ONCE events too, not just DBs and EDTs), `N` parallel chains each a
 `O(N)`-deep serialized finalization wave. Total critical-path depth ≈
 `T + N`.
 
-## Placement (as-born)
+## Placement (base)
 
 `NULL_HINT` everywhere, no affinity code outside the dead `#ifdef PARALLEL`
 block — identical effective policy to `stencil1D_sticky`/`stencil1D_guid`:
@@ -94,7 +94,7 @@ EDT creates round-robin per-call (chain identity and rank are unrelated
 across generations), DBs home at rank 0 (all created inside
 `mainEdt`/`realMainEDT`). Same consequence: essentially every RW acquire a
 clone performs is a remote round-trip to rank 0 — worst-case fine-grain
-coherence stress, no algorithmic locality expressed in the as-born program.
+coherence stress, no algorithmic locality expressed in the base program.
 
 ## Sizing
 

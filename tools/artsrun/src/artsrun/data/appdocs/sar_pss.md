@@ -195,13 +195,13 @@ bottlenecks in cost order: the two 134 MB `ReadData` file reads, the
 `post_CFAR`'s line-by-line write.  Stage boundaries are hard barriers, so no
 two tile families overlap and every serial head is fully exposed.
 
-## Placement (as-born)
+## Placement (base)
 
 Every `ocrEdtCreate` passes `NULL_HINT`, and every DB is created through
 `bsm/dram/spad_malloc`, which pass `NULL_HINT` too (`rag_ocr.c:22-24`).  The
 five tile-EDT creates route their hint through `ragTileEdtHint()`, guarded by
-`OCR_APP_OPTIMIZED_PLACEMENT` and returning `NULL_HINT` as-born (the
-`sar_pss_opt` family compiles it in — the catalog's `optimized: true`).  So:
+`OCR_APP_OPTIMIZED_PLACEMENT` and returning `NULL_HINT` base (the
+`sar_pss_hinted` family compiles it in — the catalog's `hinted: true`).  So:
 **EDTs** → the shim passes `ARTS_HINT_ANY_RANK` → runtime round-robin, and all
 5880 tile tasks plus every stage head land on arbitrary ranks; **DBs** →
 home = creating rank, and since `mainEdt` runs on rank 0 all 14 global blocks
@@ -217,7 +217,7 @@ compiled-in sizes do not have: `ReadData_edt` is round-robin like everything
 else, so the 134 MB file read happens on an arbitrary rank and the freshly
 filled `X` then has to reach every other rank's backprojection tiles.  The
 algorithm has ideal tile locality (disjoint output tiles over shared read-only
-pulse data) and the as-born program expresses none of it — not merely because
+pulse data) and the base program expresses none of it — not merely because
 hints are absent, but because a stage's entire output is one datablock, so no
 placement could let two ranks write it concurrently.
 

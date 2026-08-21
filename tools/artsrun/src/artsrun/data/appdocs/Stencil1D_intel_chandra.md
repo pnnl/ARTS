@@ -135,7 +135,7 @@ independently launches its reduction; both trees converge on rank 0's
 dependence releases are not truncated by shutdown, then a final `shutdown`
 EDT calls `ocrShutdown()`.
 
-## Placement (as-born)
+## Placement (base)
 
 This port is NOT a NULL-hint program: `ENABLE_EXTENSION_AFFINITY` is defined
 project-wide for every ARTS benchmark build (`OCR_EXT_DEFINES` in

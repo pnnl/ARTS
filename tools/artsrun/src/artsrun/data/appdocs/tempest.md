@@ -133,11 +133,11 @@ without a successor, the finish scope drains, `wrapup` shuts down. Nothing is
 destroyed anywhere in the program — no `ocrDbDestroy`, no `ocrEventDestroy` —
 so every object created stays live to the end.
 
-## Placement (as-born)
+## Placement (base)
 
 Every create passes `NULL_HINT`: the `makePatchEdtHint`/`makeLocalEdtHint`
 helpers return `NULL_HINT` unless `OCR_APP_OPTIMIZED_PLACEMENT` is defined (the
-`_opt` build), and there is no affinity use outside that guard — the as-born
+`_hinted` build), and there is no affinity use outside that guard — the base
 program never calls `ocrAffinity*` at all. Effective policy: **EDTs
 round-robin, DB home = creating rank.** Hence:
 
@@ -158,9 +158,24 @@ round-robin, DB home = creating rank.** Hence:
   rendezvous.
 
 The algorithm has textbook nearest-neighbour locality on the sphere and the
-as-born program expresses none of it: no two objects of a patch are placed
+base program expresses none of it: no two objects of a patch are placed
 together, and re-placing the chain every generation means locality can never
 even accumulate.
+
+## Placement (hinted)
+
+As-born is placement-blind: each timestep's patch EDT lands round-robin, so a
+patch's halo exchange partners are arbitrary ranks and its persistent halo
+blocks (created once at setup, reused every generation) are acquired remotely
+almost every turn.
+
+The layer (`patchHomeRank`) maps the cube-sphere's 6 x k x k patches onto a
+P x Q rank grid chosen from the divisors of the rank count to minimise the cut
+(the number of patch edges crossing rank boundaries), unrolling the six faces
+along one axis; each patch EDT is pinned to its patch's home rank every
+generation (`OCR_HINT_EDT_AFFINITY`).  With EDTs stationary, the reused halo
+blocks' ownership settles on the consumer's rank after the first turn.  Below
+6 ranks the map degenerates to contiguous patch bands.
 
 ## Sizing
 

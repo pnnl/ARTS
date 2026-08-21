@@ -103,11 +103,11 @@ border arrays. Parallel width at diagonal step `k = i+j`
 `≈ W·H/(W+H-1)`, well under the peak. Completion is implicit in the last
 tile's own dependency join — no separate barrier phase.
 
-## Placement (as-born)
+## Placement (base)
 
 There is no `OCR_APP_OPTIMIZED_PLACEMENT` guard anywhere in this source —
 every `ocrEdtCreate`/`ocrDbCreate` call passes `NULL_HINT` directly, and
-the catalog correctly carries no `optimized` flag for this app. Effective
+the catalog correctly carries no `hinted` flag for this app. Effective
 policy:
 
 - **EDTs**: NULL hint → round-robin (`ARTS_HINT_ANY_RANK`) —
@@ -123,6 +123,22 @@ remote acquire of a small (≤400 B) block — the algorithm's real locality
 (adjacent tiles) is never expressed by placement — layered under one
 large, always-resident, RO-fan-out params DB (homed once at rank 0,
 read-shared everywhere, never migrated).
+
+## Placement (hinted)
+
+As-born scatters the W x H wavefront round-robin, so a tile's three inputs
+(West's right column, North's bottom row, NW's corner) almost always live on
+three different remote ranks (see above).
+
+The layer (`swBandEdtHint` in `smithwaterman.c`, the single create loop) is
+the same contiguous row-band map as LCS_all: tile (i,j) pins to rank
+`((i-1) * nranks) / n_tiles_height`.  A tile's West neighbour shares its row
+and therefore its rank, North/NW share its band on all but the nranks-1
+band-boundary rows, so the dominant row-to-row payload stays rank-local while
+the anti-diagonal frontier still reaches every band once it is a band tall.
+The border/output DBs keep `NULL_HINT` — creator home puts each output on its
+producer's band rank, which is its consumer's rank for the in-band edges.
+`nranks <= 1` returns `NULL_HINT` (verified: 1-node run PASSED, score 80).
 
 ## Sizing
 

@@ -64,7 +64,7 @@ a clean exit.
 | `--refine_ghost` | include ghost cells in the refinement test | off | ✓ (flag) |
 | `--plot_freq` | plot every N timesteps (0 = none) | 0 | ✓ |
 | `--report_perf` | perf report level | 4 | ⚠ parsed, stored, never read — the profiling path is commented out (`//PROFILE:`) throughout |
-| `--max_blocks --target_active --target_max --target_min --inbalance --lb_opt --reorder --init_x/y/z --blocking_send` | present in the reference miniAMR | — | ✗ not parsed here; an unknown flag is a hard error |
+| `--max_blocks --target_active --target_max --target_min --inbalance --lb_hinted --reorder --init_x/y/z --blocking_send` | present in the reference miniAMR | — | ✗ not parsed here; an unknown flag is a hard error |
 | `MAX_NUM_UNREFINED_BLOCKS` | cap on `npx·npy·npz` (one `rootClone` dependence slot each) | 1000 | ✗ `#define` in `root.h:38`; exceeding it prints advice and SIGSEGVs |
 | `SIZEOFSTACK` | per-block continuation stack | 1024 B | ✗ `#define` in `clone.h:45` |
 
@@ -205,15 +205,15 @@ neighbour-consensus protocol (`refine.c` alone has 11 suspension points) that
 must converge before any block proceeds; (c) `rootInit`'s single-EDT loop
 creating all `B` block launchers.
 
-## Placement (as-born)
+## Placement (base)
 
 Every `gasket__ocrEdtCreate` passes its hint through `amrEdtHintForBlock` /
-`amrEdtHintForPD` (`util.c:107`), whose `#else` branch — the as-born build —
-returns `NULL_HINT`. The optimized flavour maps a block's (x,y,z,level) onto a
+`amrEdtHintForPD` (`util.c:107`), whose `#else` branch — the base build —
+returns `NULL_HINT`. The hinted flavour maps a block's (x,y,z,level) onto a
 3-D policy-domain grid; that layer is out of scope here. Datablocks are always
 created with `NULL_HINT` in both flavours.
 
-Effective as-born policy: **EDT → runtime round-robin**, **DB → home = creating
+Effective base policy: **EDT → runtime round-robin**, **DB → home = creating
 rank**. Consequences at multinode:
 
 - A base block's four datablocks are homed wherever its `blockLaunch` happened to
@@ -230,7 +230,19 @@ rank**. Consequences at multinode:
   round, from wherever that block last ran.
 
 The algorithm has textbook spatial locality (a 3-D neighbour graph, refinement
-strictly within a parent's octant) and the as-born program expresses none of it.
+strictly within a parent's octant) and the base program expresses none of it.
+
+## Placement (hinted)
+
+The layer (`amrBlockHomePD` / `amrEdtHintForPD` in `util.c`) places a block's
+EDTs by the block's spatial position: the rank count is factored into a
+near-cubic PDx x PDy x PDz grid, a block at (x,y,z) on refinement level L is
+mapped through the effective mesh (npx<<L, npy<<L, npz<<L) onto that grid, and
+the block's tasks pin there.  Neighbouring blocks — including parents and
+children across refinement levels, whose coordinates nest — land on the same
+or adjacent ranks, so halo exchange and refine/coarsen transfers stay mostly
+rank-local.  EDT affinity only; block DBs keep their creator home and settle
+with the pinned tasks.
 
 ## Sizing
 

@@ -19,7 +19,7 @@ REQUIRED_SECTIONS = [
     "## Structure",
     "## Wiring",
     "## Flow",
-    "## Placement (as-born)",
+    "## Placement (base)",
     "## Sizing",
 ]
 

@@ -116,7 +116,7 @@ finalization by satisfying its right-send event — an `O(N)`-deep purely
 serial tail after the `T`-deep parallel body, so total critical-path depth
 is `T + N`, dominated by `T` at any realistic size.
 
-## Placement (as-born)
+## Placement (base)
 
 The source passes `NULL_HINT` on every `ocrEdtCreate`/`ocrDbCreate` call —
 no affinity code exists outside the dead `#ifdef PARALLEL` block. Effective
@@ -135,7 +135,7 @@ own private DB, plus the two halo buffers) is a remote round-trip back to
 rank 0, since the executing clone is round-robin-scattered while the DBs it
 touches are permanently pinned there. Locality (each chain's data belongs
 together, and neighbor chains are cheap to co-locate) exists in the
-algorithm but the as-born program expresses none of it — this is a
+algorithm but the base program expresses none of it — this is a
 worst-case fine-grain coherence stress by construction, structurally
 identical in spirit to fibonacci's remote-4-byte-block pattern but shaped as
 a long, narrow (`N`-wide) pipeline instead of a wide recursive tree.

@@ -135,7 +135,7 @@ creation loop has run; between batches there is no overlap — batch `g+1`'s
 `mainEdt`'s four top-level FINISH phases (`settingsInit → globalInit →
 globalCompute → globalFinalize`) never overlap either.
 
-## Placement (as-born)
+## Placement (base)
 
 Every `ocrEdtCreate` and `ocrDbCreate` in this port passes `NULL_HINT` — there
 is no affinity/labeling code at all. Effective policy: **EDT → runtime
@@ -153,6 +153,21 @@ only ever needs one material's handful-to-few-hundred nuclides — is never
 expressed in placement, the same "worst-case coherence stress by
 construction" shape as `fibonacci`, but at per-nuclide-DB (KB-scale) rather
 than 4-byte granularity.
+
+## Placement (hinted)
+
+As-born round-robins every link of every lookup independently: rankLookup
+lands somewhere, spawns macroxs there, which lands somewhere else, which spawns
+the aggregator on a third rank — each chain's intermediate results cross the
+wire twice for nothing (see above).
+
+The layer (`mcChainEdtHint` in `main.c`) pins the two SPAWNED links of each chain
+to the rank the chain's first link landed on.  The first link stays
+round-robin — that IS the load balance across independent lookups — so the
+distribution across ranks is untouched and only the chain's interior becomes
+local.  The nuclide/energy grids are read-only and replicate per rank on
+first touch, so chain locality, not data placement, is what a hint can win
+here.  `pdCount <= 1` returns `NULL_HINT`.
 
 ## Sizing
 

@@ -113,7 +113,7 @@ Same shape as `stencil1D_stickyLG`/`stencil1D_oncePI`: parallel
 chain (now with the grandchild-ahead lookahead), and a true `N`-way join
 via `wrapupEdt`. Critical-path depth ≈ `T`.
 
-## Placement (as-born)
+## Placement (base)
 
 `NULL_HINT` everywhere. Same effective policy as the other parallel-init
 variants: DB homes scatter across whichever rank each chain's

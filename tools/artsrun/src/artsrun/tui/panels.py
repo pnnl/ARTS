@@ -429,7 +429,7 @@ class BenchsetPanel(VerticalScroll):
 
         with Horizontal(classes="bench-row head"):
             yield Label("", classes="bench-name")
-            for column in ("as-born", "optimized", "restructured"):
+            for column in ("as-born", "hinted", "restructured"):
                 yield Label(column, classes="bench-col-head")
             yield Label("arguments", classes="bench-args-head")
 
@@ -462,7 +462,7 @@ class BenchsetPanel(VerticalScroll):
                     # The row stays visible — the document and the reason are
                     # the point — but its boxes cannot be taken: the program
                     # needs semantics the runtime does not implement.
-                    for version in (Version.ASBORN, Version.OPTIMIZED,
+                    for version in (Version.BASE, Version.HINTED,
                                     Version.RESTRUCTURED):
                         if version not in app.own_versions:
                             yield Static("·", classes="bench-cell blank")
@@ -478,7 +478,7 @@ class BenchsetPanel(VerticalScroll):
                     box.disabled = True
                     yield box
                     continue
-                for version in (Version.ASBORN, Version.OPTIMIZED, Version.RESTRUCTURED):
+                for version in (Version.BASE, Version.HINTED, Version.RESTRUCTURED):
                     if version not in app.own_versions:
                         yield Static("·", classes="bench-cell blank")
                     else:

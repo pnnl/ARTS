@@ -28,7 +28,7 @@ other two variants, `CHECK_RESULTS`/`PRINT` are commented out in this
 file, so there is **no internal native-recomputation self-check** — the
 binary just prints `LCS length: N`; correctness for this row depends
 entirely on the external harness comparing that scalar against the
-catalog's pinned `expect`. The catalog marks this row `optimized: true`
+catalog's pinned `expect`. The catalog marks this row `hinted: true`
 (a companion `OCR_APP_OPTIMIZED_PLACEMENT`-guarded build exists; see
 Placement) — DAG shape depends only on `N`/`base`, never on string
 content.
@@ -42,7 +42,7 @@ content.
 
 `GAP_PENALTY` is compile-time only. `LCS_ROW_BANDS_PER_RANK` and the
 `OCR_APP_OPTIMIZED_PLACEMENT`-guarded hint helpers (`scoreIdx`,
-`blockRowHint`) belong to the optimized-placement build only — see
+`blockRowHint`) belong to the hinted-placement build only — see
 Placement.
 
 ## Structure
@@ -135,14 +135,14 @@ the tile grid's antidiagonals the way a standard tiled-DP wavefront
 does. Phase 3: `shutDownEdt` prints the scalar with no
 internal verification (`CHECK_RESULTS` undefined in this file).
 
-## Placement (as-born)
+## Placement (base)
 
 An `OCR_APP_OPTIMIZED_PLACEMENT` guard exists in this file
 (`scoreIdx`/`blockRowHint`, re-encoding a score tile's label index and
 computing an `EDT_AFFINITY` hint from the tile's row band) for the
-companion `_opt` build; the as-born (`#else`) branches make both
+companion `_hinted` build; the base (`#else`) branches make both
 functions no-ops: `scoreIdx` returns the identity index, `blockRowHint`
-returns `NULL_HINT`. So as-born, every create in this file — `InitEdt`,
+returns `NULL_HINT`. So base, every create in this file — `InitEdt`,
 `recLCSEdt`, `seqLCSEdt`, and `baseEdt` alike — passes `NULL_HINT`, same
 as the other two variants. But (as established for `LCS_distributed_ST`)
 **labeled GUIDs place differently from ordinary ones regardless of
@@ -163,15 +163,15 @@ the GUID itself. Effective policy:
 
 Consequence: this is the one LCS variant where the data genuinely lands
 distributed (score tiles spread round-robin by grid index, not
-concentrated anywhere) — but as-born EDT placement is still an
+concentrated anywhere) — but base EDT placement is still an
 independent round-robin, uncorrelated with a tile's `index % nranks`
 home, so a leaf's RW acquire of its own "current" tile (let alone its
-three RO neighbors) is remote far more often than not. The `_opt` build
+three RO neighbors) is remote far more often than not. The `_hinted` build
 exists specifically to close this gap by deriving `EDT_AFFINITY` from
 the same row-band arithmetic that decides a tile's home, so the EDT and
-its data agree on a rank; as-born, they don't.
+its data agree on a rank; base, they don't.
 
-## Placement (optimized)
+## Placement (hinted)
 
 As-born is wavefront work fed from labeled-GUID score blocks whose homes
 round-robin on the raw linear label index — neighbours in the block grid land
@@ -201,7 +201,7 @@ onto one rank.
 
 e2e seconds, both versions:
 
-| arm | asborn 1n/2n/4n/8n | optimized 1n/2n/4n/8n |
+| arm | base 1n/2n/4n/8n | hinted 1n/2n/4n/8n |
 |---|---|---|
 | val_wb | 1.03 / 2.79 / 3.28 / 3.34 | 1.02 / 1.65 / 2.05 / 2.34 |
 | val_wb_comb | 1.09 / 2.80 / 3.30 / 3.36 | 1.08 / 1.66 / 2.06 / 2.34 |
@@ -209,8 +209,8 @@ e2e seconds, both versions:
 | excl_retain | 1.02 / 7.76 / 6.70 / 5.86 | 1.01 / 1.79 / 2.29 / 2.64 |
 
 At the calibrated workload (`131072 1024`, L=128) the sweep reads
-asborn 41.6 / 57.6 / 52.7 / 40.7 s and optimized 41.7 / 45.2 / 31.4 /
-19.0 s across 1/2/4/8 nodes: as-born never beats its own single node,
+base 41.6 / 57.6 / 52.7 / 40.7 s and hinted 41.7 / 45.2 / 31.4 /
+19.0 s across 1/2/4/8 nodes: base never beats its own single node,
 while the band placement does scale INSIDE the wiring cap — 2.2x at 8
 nodes against the `(4/3)^7 = 7.5x` span bound, helped by NO_ACQUIRE
 spreading the eager table's materialization across the nodes' homes.
@@ -258,7 +258,7 @@ constraint this variant has and the other two do not:
   way, keep `N/base` a power of two.
 
 Measured on the Dane-mirror geometry (1 node, 108w+4p, Release,
-optimized): `131072 1024` = 41-42 s (68 GB eager table, slab
+hinted): `131072 1024` = 41-42 s (68 GB eager table, slab
 prepopulation included), and one step up
 (`196608 1024`, 155 GB) already exceeds a 570 s ceiling — the per-tile
 overhead grows with tile count on top of the serial floor.  The

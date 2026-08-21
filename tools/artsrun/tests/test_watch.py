@@ -34,7 +34,7 @@ def _profile(launcher: str = "local") -> Profile:
 def _cell(entry_key: str, nodes: int = 1, repeat: int = 1,
           cfg: Path | None = None) -> Cell:
     app = ResolvedApp(
-        name="app", version=Version.ASBORN, binary="app", cls=AppClass.TASK,
+        name="app", version=Version.BASE, binary="app", cls=AppClass.TASK,
         marker=r"RESULT", scalar_re=r"RESULT\s*=\s*([\d.]+)",
         scalar_kind=ScalarKind.FLOAT,
     )
@@ -72,7 +72,7 @@ def _finished(cell: Cell, scalar: str, status: str = "ok") -> dict:
 def test_the_manifest_round_trips_cells_and_their_invocations(tmp_path):
     cells = [_cell("arts_val_wb"), _cell("arts_excl_retain", nodes=2)]
     _write(tmp_path, cells,
-           skipped=[Skipped("arts_val_wb", "other:asborn", 2, "why not")])
+           skipped=[Skipped("arts_val_wb", "other:base", 2, "why not")])
     manifest = Manifest.load(tmp_path)
     assert manifest is not None
     assert [c.key for c in manifest.cells] == [c.key for c in cells]
@@ -201,19 +201,19 @@ def test_a_partial_track_line_waits_for_its_newline(tmp_path):
 
 def test_a_run_without_a_manifest_replays_from_its_track_alone(tmp_path):
     _track(tmp_path, [{"t": 1.0, "event": "finished",
-                       "cell": "graph500:asborn@2n/arts_inv_wb#3",
+                       "cell": "graph500:base@2n/arts_inv_wb#3",
                        "status": "ok", "rc": 0, "wall_s": 26.5, "note": ""}])
     state = RunState(tmp_path)
-    view = state.views["graph500:asborn@2n/arts_inv_wb#3"]
+    view = state.views["graph500:base@2n/arts_inv_wb#3"]
     assert view.app_name == "graph500"
-    assert view.version == "asborn"
+    assert view.version == "base"
     assert view.entry_key == "arts_inv_wb"
     assert view.nodes == 2
     assert view.repeat == 3
     assert view.status is Status.OK
     assert view.verdict is None  # no metadata to vote with
     assert view.log_path is not None
-    assert view.log_path.name == "graph500.asborn.arts_inv_wb.2n.r3.log"
+    assert view.log_path.name == "graph500.base.arts_inv_wb.2n.r3.log"
 
 
 def test_the_manifest_may_arrive_after_the_track(tmp_path):
@@ -285,14 +285,14 @@ def test_a_pre_rename_track_still_lands_on_its_cell(tmp_path):
 
     cell = _cell("arts_val_wb")
     cell = Cell(entry=cell.entry,
-                app=cell.app.model_copy(update={"version": Version.OPTIMIZED}),
+                app=cell.app.model_copy(update={"version": Version.HINTED}),
                 nodes=1, repeat=1, binary=cell.binary, args=cell.args,
                 timeout_s=cell.timeout_s)
-    assert cell.key == "app:optimized@1n/arts_val_wb#1"
+    assert cell.key == "app:hinted@1n/arts_val_wb#1"
     _write(tmp_path, [cell])
     state = RunState(tmp_path)
     _track(tmp_path, [{"t": 1.0, "event": "finished",
-                       "cell": "app:hinted@1n/arts_val_wb#1", "status": "ok",
+                       "cell": "app:optimized@1n/arts_val_wb#1", "status": "ok",
                        "rc": 0, "wall_s": 2.0, "note": "", "scalar": "1.0"}])
     state.refresh()
     assert len(state.order) == 1

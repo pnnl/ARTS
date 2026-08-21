@@ -154,10 +154,10 @@ Amdahl ceiling near 25× however many workers are added. `mainEdt` also runs
 `makea` natively on the rank-0 worker: an `O(n·k²)` insertion-sorted fill,
 serial, and the only phase that touches the matrix.
 
-## Placement (as-born)
+## Placement (base)
 
 This application carries no `OCR_APP_OPTIMIZED_PLACEMENT` layer and has no
-`_opt` target: every `ocrEdtCreate` and `ocrDbCreate` in the tree passes
+`_hinted` target: every `ocrEdtCreate` and `ocrDbCreate` in the tree passes
 `NULL_HINT`. Effective policy is therefore **EDT → runtime round-robin**, **DB
 → home = creating rank**.
 
@@ -177,7 +177,21 @@ that EDT landed. At multinode:
   ~233k over the run, all on the critical path.
 
 The algorithm has obvious locality (a row block and its result belong
-together; the matrix never changes) and the as-born program expresses none.
+together; the matrix never changes) and the base program expresses none.
+
+## Placement (hinted)
+
+As-born homes every row-block DB on rank 0 and round-robins the per-block
+rowvec tasks, so a block is read from a different rank every iteration and its
+payload never settles anywhere.
+
+The layer (`cgBandEdtHint` in `cg_edt.c`, the rowvec spawn loop inside
+`spmv_edt`) pins block e to the fixed band rank `(e * nranks) / nblocks` every
+iteration.  A block's reader is now the same rank in every spMv, so the block
+is fetched once and every later acquire is a local hit; the p-vector still
+broadcasts (that is CG's structure).  The gather EDT and the whole-vector ops
+(square/alphas/daxpy) stay base — single EDTs on the critical path with
+nothing to distribute.  `nranks <= 1` returns `NULL_HINT`.
 
 ## Sizing
 

@@ -102,7 +102,7 @@ tracking away from `mainLet`; the real cross-thread join is the explicit
 consumed by the single `finalize` EDT. `mainEdt`'s `preamble()` runs once,
 natively, before any EDT exists.
 
-## Placement (as-born)
+## Placement (base)
 
 Every DB and EDT create in this source uses `NULL_HINT`, and `mainLet` is
 additionally given an inert `OCR_HINT_EDT_DISPERSE`/`NEAR` hint — the shim's

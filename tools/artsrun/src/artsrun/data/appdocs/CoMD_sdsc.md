@@ -126,7 +126,7 @@ all native code on the rank-0 worker before any parallelism exists (10 648
 `ocrDbCreate` calls and 186 624 atom placements at the calibrated size).
 `end_edt` likewise destroys all `B` cells serially.
 
-## Placement (as-born)
+## Placement (base)
 
 There is no `OCR_APP_OPTIMIZED_PLACEMENT` layer in this port and no affinity
 call anywhere: every `ocrDbCreate`/`ocrEdtCreate` passes `NULL_HINT`.
@@ -147,6 +147,22 @@ which round-robin placement makes a `(nodes−1)/nodes` fraction remote before a
 reuse, on top of a write grant on the simulation block that migrates `2B` times
 per step.  Treat this port as a worst-case coherence stress, not a scaling
 benchmark.
+
+## Placement (hinted)
+
+As-born homes every cell on rank 0 and lands each cell's force/energy/advance
+task on an arbitrary — and each step a different — rank, so every box's atoms
+travel every timestep.
+
+The layer (`comdSlabEdtHint` in `cells.h`; applied at the force-pair spawn in
+`lj.c` and the kinetic-energy / advance-velocity / advance-position loops in
+`timestep.c`) places box b's tasks on the band rank `(b * nranks) / boxes_num`.
+Boxes are linearized x-fastest, so a contiguous index band is a slab of whole
+x-y planes: a box's 26 neighbours are in its own or an adjacent plane, i.e.
+the same or the neighbouring band — each box's RW data and most of its
+neighbour reads stay on one rank, step after step.  EDT affinity only; the
+box DBs keep `NULL_HINT` and settle with their pinned tasks.  The global
+reductions stay base.  `nranks <= 1` returns `NULL_HINT`.
 
 ## Sizing
 

@@ -166,11 +166,11 @@ the `spmdJoin` reduction; only after all `NR` tiles have joined does the
 dedicated `shutdownEdt` (created once, from `mainEdt`, gated on
 `EVT_OUT_spmdJoin_reduction`) call `ocrShutdown()`.
 
-## Placement (as-born)
+## Placement (base)
 
 Not a NULL-hint program, and not gated by any hint-layer guard (this
 source carries no `OCR_APP_OPTIMIZED_PLACEMENT` code at all — there is no
-`_opt` build). `forkSpmdEdts_Cart2D` (`ocrAppUtils.c`, shared with the
+`_hinted` build). `forkSpmdEdts_Cart2D` (`ocrAppUtils.c`, shared with the
 chandra port's hand-rolled equivalent) queries
 `ocrAffinityCount(AFFINITY_PD, …)` — the ARTS run's actual node count,
 independent of the app's own `NR` — factors it into a `PD_X×PD_Y` grid via
@@ -188,7 +188,7 @@ it does not change the steady-state locality story.
 
 ## Family shape (measured, 15w+1p x 1/2/4/8 nodes, `6144 768 200`)
 
-asborn (there is no `_opt` — the port's own affinity layer IS the
+base (there is no `_hinted` — the port's own affinity layer IS the
 placement), e2e seconds, counters all off:
 
 | arm | 1n | 2n | 4n | 8n |
@@ -239,4 +239,4 @@ rounds is ever preferred. Peak object load is bounded by the frontier, not
 the run: the only per-round survivor is one runtime-minted FINISH/output
 event per tile-round (measured slope exactly 1.0), ≈5.5 M events ≈
 single-digit GB at the calibrated size — no Dane budget concern, uniform
-across coherence arms, so the as-born source is left untouched.
+across coherence arms, so the base source is left untouched.

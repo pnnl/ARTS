@@ -126,7 +126,7 @@ trees converge on rank 0's `summary` (output-event-gated so its own
 dependence releases aren't truncated), then a dedicated `shutdown` EDT
 calls `ocrShutdown()`.
 
-## Placement (as-born)
+## Placement (base)
 
 Not a NULL-hint program: `ENABLE_EXTENSION_AFFINITY` is on project-wide
 (`OCR_EXT_DEFINES`), and the source uses it unconditionally.

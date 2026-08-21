@@ -14,7 +14,7 @@ concurrent same-node moves then race the cells' non-commuting counter/compact
 updates.  The sibling ports cover the same physics without EW —
 `CoMD_sdsc` (one serial redistribute task) and `CoMD_intel_chandra_tiled`
 (message-passing halos) are the family's contrasting pair, and future
-optimized/restructured CoMD work starts from the tiled port.
+hinted/restructured CoMD work starts from the tiled port.
 
 Intel's OCR port of the ExMatEx CoMD proxy: FCC copper, velocity Verlet,
 Lennard-Jones.  Its decomposition is the extreme of the family — the *link cell
@@ -212,7 +212,7 @@ creations on one worker, followed by `B` cells each creating 27 labeled events,
 27 blocks and 81 channel events — 1.4 M blocks and 5.5 M events of pure
 bootstrap at the calibrated size, before any physics runs.
 
-## Placement (as-born)
+## Placement (base)
 
 There is no `OCR_APP_OPTIMIZED_PLACEMENT` layer in this port; the placement
 below is the program's own and is compiled in.  `main1Edt` calls

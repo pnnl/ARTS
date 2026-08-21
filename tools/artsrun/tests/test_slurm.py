@@ -38,7 +38,7 @@ def _entry(kind: RuntimeKind) -> SelectionEntry:
 
 def _cell(kind: RuntimeKind, nodes: int, cfg: Path | None = None) -> Cell:
     app = ResolvedApp(
-        name="app", version=Version.ASBORN, binary="app", cls=AppClass.TASK,
+        name="app", version=Version.BASE, binary="app", cls=AppClass.TASK,
         marker="X", scalar_re="X",
     )
     return Cell(entry=_entry(kind), app=app, nodes=nodes, repeat=1,

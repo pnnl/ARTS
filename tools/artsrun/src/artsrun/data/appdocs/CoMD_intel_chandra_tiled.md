@@ -222,7 +222,7 @@ instead, and that print is then created the way the last step's is (finish
 scope, timer-reduction block RW) because it is the one launching the timer
 reduction the epilogue consumes and destroys.
 
-## Placement (as-born)
+## Placement (base)
 
 No `OCR_APP_OPTIMIZED_PLACEMENT` layer exists here; everything below is the
 program's own and is compiled in.  `mainEdt` calls `forkSpmdEdts_Cart3D`, which

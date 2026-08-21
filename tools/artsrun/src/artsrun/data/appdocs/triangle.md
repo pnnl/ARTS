@@ -31,7 +31,7 @@ solutions (checked in-source against a `PASS`/`FAIL` literal).
 | `argv[2]` = `rounds` | repeat the full (fresh, independent) search this many times, sequentially | 1 | ✓ parsed in `mainEdt`, carried via paramv through `wrapupTask`/`launch_round` — multinode-safe |
 | `argv[3]` = `rows` | board rows: absent = the author's 5-row board driven by the author's hand table; given (5 included) = the jump-table generator drives, holes = rows(rows+1)/2, full solve = holes-2 moves; generator checked against the author's table on the 5-row board | absent (author mode) | ✓ parsed in `mainEdt`, geometry carried via paramv (`holes`, `nmoves`) to every task — multinode-safe |
 | `BOARDSIZE` / `MOVESIZE` / `BOTTOM` | the author's-board instances of the geometry (15 holes, 36 jumps, 13-move full solve) | 15 / 36 / 13 | now derived from `rows` when one is given; the `#define`s remain the author-mode values and the generator's oracle |
-| `TRIANGLE_SCATTER_LEVELS` | optimized-placement-only: top levels scattered by a deterministic hash of the board bitmask (a pure function of the position — not round-robin, not random) | 3 | ✗ compile-time; read only inside the `OCR_APP_OPTIMIZED_PLACEMENT` guard, dead in as-born |
+| `TRIANGLE_SCATTER_LEVELS` | hinted-placement-only: top levels scattered by a deterministic hash of the board bitmask (a pure function of the position — not round-robin, not random) | 3 | ✗ compile-time; read only inside the `OCR_APP_OPTIMIZED_PLACEMENT` guard, dead in base |
 
 ## Structure
 
@@ -97,10 +97,10 @@ search wave. `mainEdt`/`realmainTask`/`launch_round` are a short rank-0
 preamble; `rounds > 1` chains independent full searches serially through
 `wrapupTask`, so rounds never overlap.
 
-## Placement (as-born)
+## Placement (base)
 
 `OCR_APP_OPTIMIZED_PLACEMENT` gates `triChildEdtHint`/`triLocalEdtHint`;
-as-born both collapse to `NULL_HINT` on every `triangleTask`/`sumCountsTask`
+base both collapse to `NULL_HINT` on every `triangleTask`/`sumCountsTask`
 create. Effective policy: EDT → runtime round-robin (per-creating-rank
 counter), DB → home = creating rank. Consequence: a node's `once` broadcast
 delivers its own board DB (homed on whichever rank the node itself was
@@ -109,10 +109,10 @@ arbitrary ranks, so almost every child's `oldboard` read is a remote CONST
 acquire; the same is true of `pmovesDb` (homed wherever `launch_round` ran,
 effectively rank 0) against a tree scattered across every rank. Locality the
 puzzle's tree structure would allow (keeping a subtree together) is never
-expressed as-born — why the app is a strong RO-fan-in coherence stress case,
+expressed base — why the app is a strong RO-fan-in coherence stress case,
 and why read combining measurably helps it.
 
-## Placement (optimized)
+## Placement (hinted)
 
 As-born is placement-blind: tree tasks round-robin, each node's board DB homes
 with its creating parent, so a child usually reads its board from another rank
@@ -129,7 +129,7 @@ this one-shot class needs (tri 58s->21s at the time it was an explicit pin).
 
 ## Family shape (measured, 15w+1p x 1/2/4/8 nodes, `7 1 7`)
 
-optimized, e2e seconds — VAL alone anti-scales (the whole tree re-validates
+hinted, e2e seconds — VAL alone anti-scales (the whole tree re-validates
 the one move-table DB homed at rank 0 on every acquire, the family's
 defining read cost), request combining erases exactly that, and INV/EXCL
 are structurally immune (covering read / retained copy):
@@ -141,10 +141,10 @@ are structurally immune (covering read / retained copy):
 | inv_wb | 0.5 | 0.3 | 0.2 | 0.1 |
 | excl_retain | 0.6 | 0.3 | 0.2 | 0.1 |
 
-as-born anti-scales on EVERY arm (2n: val 24.5 / comb 30.3 / inv 73.4 /
+base anti-scales on EVERY arm (2n: val 24.5 / comb 30.3 / inv 73.4 /
 excl 39.1) — each tree node's board is a fresh remote datablock, a cold-read
 storm no coherence family can serve locally, and INV pays its directory on
-top.  At the calibrated size the as-born multinode cells are therefore
+top.  At the calibrated size the base multinode cells are therefore
 reported as censored points (TIMEOUT, or the OOM kill an unbounded in-flight
 backlog produces under VAL), never shrunk to fit.
 

@@ -21,7 +21,7 @@ fine-grain data movement, not arithmetic.
 | `argv[1]` = `n` | recursion input; sizes the whole graph exponentially | 10 (with a usage note) | ✓ parsed in `mainEdt` via `ocrGetArgv`, propagated through the argument DB — multinode-safe |
 
 No other runtime knobs.  `FIB_RR_LEVELS` (= 11) is a compile-time constant of
-the *optimized* placement layer only; the as-born build does not read it.
+the *hinted* placement layer only; the base build does not read it.
 
 ## Structure
 
@@ -73,7 +73,7 @@ unfolds: the active frontier grows ~×1.6 per level down to the leaves
 of `complete` EDTs folds values back up over `n` levels.  Parallelism is
 never the constraint; per-task runtime overhead is the entire cost.
 
-## Placement (as-born)
+## Placement (base)
 
 The source passes `NULL_HINT` on every create.  Effective policy:
 
@@ -86,8 +86,24 @@ Consequence at multinode: a child EDT rarely lands where its 4-byte argument
 DB was created, and a `complete` rarely lands where any of its three DBs
 live, so nearly **every dependence edge is a remote acquire of a 4-byte
 block**.  The app is a worst-case fine-grain coherence stress by
-construction; locality exists in the algorithm (subtrees) but the as-born
+construction; locality exists in the algorithm (subtrees) but the base
 program never expresses it.
+
+## Placement (hinted)
+
+As-born every create is `NULL_HINT`: EDTs round-robin (each recursion child on
+an arbitrary rank), the 4-byte argument DBs home on their creating rank.  The
+work itself is negligible per task, so the whole cost of the program is
+wherever the tree's edges cross ranks.
+
+The layer (`OCR_APP_OPTIMIZED_PLACEMENT` in `fib.c`) makes the crossing edges a
+prefix of the tree: children at level <= `FIB_RR_LEVELS` (default 11,
+`#ifndef`-overridable for calibration) scatter round-robin keyed on the child's
+deterministic path id; every deeper child pins to its creating rank, so each
+scattered subtree runs wire-free below its root.  The `complete` (sum) EDT pins
+to the creating rank.  The argument DBs stay `NULL_HINT` deliberately: the
+runtime's no-hint DB home is the creator, which is exactly the one-shot
+small-DB placement the 2026-07-10 pin experiments showed this class needs.
 
 ## Sizing
 

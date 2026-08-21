@@ -106,7 +106,7 @@ consumed by the single `finalize` EDT (`depc = 32`). `mainEdt`'s
 `preamble()` (banner + size printout) runs once, natively, before any EDT
 exists.
 
-## Placement (as-born)
+## Placement (base)
 
 All DB and EDT creates in this source use `NULL_HINT`, and `mainLet` is
 additionally given an `OCR_HINT_EDT_DISPERSE`/`NEAR` hint that the shim

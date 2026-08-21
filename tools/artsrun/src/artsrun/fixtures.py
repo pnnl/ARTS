@@ -44,6 +44,24 @@ def _identity_tiles_bin(path: Path, n: int, ts: int) -> None:
                 fh.write(diag if i == j else zero_tile)
 
 
+def _acgt_pair(path: Path, which: int, lens=(515000, 517000),
+               seed=20260819) -> None:
+    # The two alignment inputs are one seeded ACGT stream split at lens[0];
+    # regenerating either file alone must not restart the stream, so one
+    # call derives both and writes the sibling (atomically) when absent.
+    import random
+
+    rng = random.Random(seed)
+    both = ["".join(rng.choice("ACGT") for _ in range(n)) for n in lens]
+    path.write_text(both[which])
+    sibling_name = ["string1-huge.txt", "string2-huge.txt"][1 - which]
+    sibling = path.parent / sibling_name
+    if not sibling.exists():
+        tmp = sibling.with_name(sibling.name + ".staging")
+        tmp.write_text(both[1 - which])
+        tmp.replace(sibling)
+
+
 def _counting_file(path: Path) -> None:
     # basicIO reads u64 values one per line; 0..9 gives a fixed checksum.
     path.write_text("\n".join(str(i) for i in range(10)) + "\n")
@@ -55,6 +73,14 @@ GENERATORS = {
     "cholesky_perf7k5.mat": lambda p: _identity_matrix(p, 7500),
     "cholesky_perf5k_ts100.bin": lambda p: _identity_tiles_bin(p, 5000, 100),
     "cholesky_perf7k5_ts100.bin": lambda p: _identity_tiles_bin(p, 7500, 100),
+    "cholesky_perf28k.mat": lambda p: _identity_matrix(p, 28000),
+    "cholesky_perf40k_ts100.bin": lambda p: _identity_tiles_bin(p, 40000, 100),
+    "string1-huge.txt": lambda p: _acgt_pair(p, 0),
+    "string2-huge.txt": lambda p: _acgt_pair(p, 1),
+    # The alignment's expected global score for the pair above, computed by an
+    # independent sequential reference of the same DP (border = gap*position,
+    # match 2 / transition -2 / transversion -4 / gap -1, no zero clamp).
+    "score-huge.txt": lambda p: p.write_text("318128\n"),
     "basicIO_test.dat": _counting_file,
 }
 

@@ -30,9 +30,9 @@ task/event/DB churn and measuring real backtracking compute.
 | `argv[2]` = `cutoff` | queens-placed depth at which an EDT switches from spawning children to a single sequential subtree search; asserted `cutoff < n` | none (required) | ✓ same paramv path — multinode-safe |
 | `argv[3]` = `rounds` (optional) | repeats the whole search that many times, chained through `shutdownEdt`; only the final round prints/times | 1 | ✓ but ⚠ a value `< 1` is silently coerced back to 1 (no error) |
 
-`NQUEENS_RR_LEVELS` (= 3) is a compile-time constant of the *optimized*
+`NQUEENS_RR_LEVELS` (= 3) is a compile-time constant of the *hinted*
 placement layer only (round-robins the top 3 levels of the tree, pins the
-rest local); the as-born build never reads it.
+rest local); the base build never reads it.
 
 ## Structure
 
@@ -98,10 +98,10 @@ folds counts back up. `shutdownEdt` is the only serial join point; with
 since the search is deterministic) tree for each subsequent round before
 the final one prints and calls `ocrShutdown()`.
 
-## Placement (as-born)
+## Placement (base)
 
 Both hint helpers (`nqPlaceEdtHint`, `nqLocalEdtHint`) return `NULL_HINT`
-outside `OCR_APP_OPTIMIZED_PLACEMENT`; there is no as-born affinity usage
+outside `OCR_APP_OPTIMIZED_PLACEMENT`; there is no base affinity usage
 to report. Effective policy:
 
 - **EDTs**: NULL hint → shim passes `ARTS_HINT_ANY_RANK` → runtime
@@ -116,6 +116,22 @@ argument (arguments travel via paramv, so this costs nothing), but a
 remote rank holding an 8-byte DB — the same fine-grain coherence stress
 pattern as the app's sibling recursive tree-of-tasks benchmarks, at
 N-Queens's combinatorial (not Fibonacci) growth rate.
+
+## Placement (hinted)
+
+As-born is placement-blind (see above): `findSolutionsEdt` scatter round-robin
+with no relation to their subtree, and every 8-byte result DB homes wherever
+its producer landed, so the summing side acquires almost everything remotely.
+
+The layer (`nqPlaceEdtHint` in `nqueens.c`) uses the column bitmask as a
+distinct per-subtree key and its popcount as the tree level: levels below
+`NQUEENS_RR_LEVELS` (default 3, `#ifndef`-overridable for calibration) scatter
+round-robin on `mixKey(cols) % nranks`, deeper tasks pin to the creating rank
+(`nqLocalEdtHint` likewise pins the sum EDTs), so each scattered subtree — its
+spawn tree, its result DBs, and its sums — stays on one rank.  Result DBs keep
+`NULL_HINT`: the runtime's creator-home default gives the one-shot 8-byte
+blocks the local home the 2026-07-09 A/B (2n 48s->250s without it) showed they
+must have.
 
 ## Sizing
 

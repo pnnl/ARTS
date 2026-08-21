@@ -14,7 +14,7 @@ lines; `simulation.c` builds the graph, `timestep.c` + `lj.c` run it,
 deliberately does not implement (EW maps onto per-node RW).  The family's
 selectable pair is `CoMD_sdsc` (serial redistribute) and
 `CoMD_intel_chandra_tiled` (message-passing halos); future
-optimized/restructured CoMD work starts from the tiled port.
+hinted/restructured CoMD work starts from the tiled port.
 
 SDSC's second OCR port of the ExMatEx CoMD proxy — same physics as `CoMD_sdsc`
 (FCC copper, velocity Verlet, Lennard-Jones), same `Final energy` scalar, a
@@ -35,7 +35,7 @@ different program.  What changed, in the order it matters:
 - **The shared simulation header is read-only in the hot path**, not `RW` on
   every force EDT.
 - **The program places itself**: it queries the policy-domain count and maps the
-  cell grid onto a 3-D grid of ranks (see Placement) — as-born, not an added
+  cell grid onto a 3-D grid of ranks (see Placement) — base, not an added
   hint layer.
 - **`-N` is exact** (`CoMD_sdsc` quantizes it to `--period`), and **EAM is
   not implemented** (`eam.c` is an empty shell that says so and fails).
@@ -189,7 +189,7 @@ datablocks, `B` initializer EDTs and three trees in a single task; and
 block — about 1.7 M `ocrAddDependence` calls at the calibrated size, on one
 worker.  A small `--period` multiplies that cost.
 
-## Placement (as-born)
+## Placement (base)
 
 There is no `OCR_APP_OPTIMIZED_PLACEMENT` layer here; the placement below is
 the program's own and is compiled in.  `init_simulation` asks for the

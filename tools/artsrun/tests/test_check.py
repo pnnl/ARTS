@@ -11,7 +11,7 @@ from artsrun.run.types import Cell, CellResult, Status
 
 def _app(**over) -> ResolvedApp:
     base = dict(
-        name="app", version=Version.ASBORN, binary="app", cls=AppClass.TASK,
+        name="app", version=Version.BASE, binary="app", cls=AppClass.TASK,
         marker=r"RESULT", scalar_re=r"RESULT\s*=\s*([\d.]+)",
         scalar_kind=ScalarKind.FLOAT, args=["1"],
     )

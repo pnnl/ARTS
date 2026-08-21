@@ -138,7 +138,7 @@ finishes, so peak instantaneous width across the run is `max_k
 (t-1-k)(t-k)/2 = t(t-1)/2` at `k=0`, decaying roughly quadratically as `k`
 grows.
 
-## Placement (as-born)
+## Placement (base)
 
 `choleskyTileHint` (a 2-D block-cyclic, ScaLAPACK-style owner map) is
 guarded by `OCR_APP_OPTIMIZED_PLACEMENT` and returns `NULL_HINT` on every
@@ -163,6 +163,22 @@ never expressed by placement, and the widest read fan-out (up to `t-1`
 simultaneous RO acquires of one DB) lands wherever that single DB's home
 happens to be — a worst-case coherence stress layered on top of genuine
 FLOPS.
+
+## Placement (hinted)
+
+As-born is placement-blind: every kernel EDT scatters round-robin, so at 2
+ranks half of all tile acquires cross the wire (measured 2026-08-19, 2x(15w+1p):
+51.0% of 65,026 acquires remote, 0.92 GB payload crossed).
+
+The layer (`choleskyTileHint`) is a 2-D block-cyclic (ScaLAPACK) owner map:
+factor the rank count into a near-square P x Q grid, place tile (row,col) on
+rank `(row % P) * Q + (col % Q)`, and key every kernel EDT on the coordinate of
+the single tile it WRITES — potrf/trsm/gemm each co-locate with their RW
+output, so the per-tile ownership acquire settles locally and stays there
+across generations.  Two independent mod axes keep the active trailing
+submatrix spread over all ranks instead of folding a frontier onto one.  DB
+hints are not used (ownership follows the pinned EDTs).  `nranks <= 1` returns
+`NULL_HINT` so a single-node run is bit-identical to base.
 
 ## Sizing
 

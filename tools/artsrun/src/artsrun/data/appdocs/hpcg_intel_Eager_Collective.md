@@ -143,7 +143,7 @@ structure: three per iteration, each a global barrier. The coarse MG levels
 remain full-width, paying 26 messages for `1/512` of the level-0 work. Serial
 points: `mainEdt`'s spawn loop and `wrapUpEdt`.
 
-## Placement (as-born)
+## Placement (base)
 
 No `OCR_APP_OPTIMIZED_PLACEMENT` layer exists here either; what follows is as
 published. `mainEdt` reads `ocrAffinityCount(AFFINITY_PD, …)` (the ARTS node

@@ -117,7 +117,7 @@ element loops compute — materially cheaper per call at the same `ts`, so
 the same peak-width formula (`t(t-1)/2` at `k=0`, decaying quadratically)
 carries proportionally less wall-clock weight per level here.
 
-## Placement (as-born)
+## Placement (base)
 
 Same hint story as `cholesky`: `choleskyTileHint`'s 2-D block-cyclic map is
 guarded by `OCR_APP_OPTIMIZED_PLACEMENT` and returns `NULL_HINT` here; every
@@ -134,6 +134,22 @@ nearly every dependence edge is still a remote acquire — the level-0
 factors remain the widest (`t-1`-reader) contention point — but the
 specific remote target for a given tile is deterministic (rank 0) rather
 than scattered across whichever rank last wrote it.
+
+## Placement (hinted)
+
+As-born is placement-blind: every kernel EDT scatters round-robin, so at 2
+ranks half of all tile acquires cross the wire (measured 2026-08-19, 2x(15w+1p):
+50.7% of 216,601 acquires remote, 2.94 GB payload crossed).
+
+The layer (`choleskyTileHint`) is a 2-D block-cyclic (ScaLAPACK) owner map:
+factor the rank count into a near-square P x Q grid, place tile (row,col) on
+rank `(row % P) * Q + (col % Q)`, and key every kernel EDT on the coordinate of
+the single tile it WRITES — potrf/trsm/gemm each co-locate with their RW
+output, so the per-tile ownership acquire settles locally and stays there
+across generations.  Two independent mod axes keep the active trailing
+submatrix spread over all ranks instead of folding a frontier onto one.  DB
+hints are not used (ownership follows the pinned EDTs).  `nranks <= 1` returns
+`NULL_HINT` so a single-node run is bit-identical to base.
 
 ## Sizing
 

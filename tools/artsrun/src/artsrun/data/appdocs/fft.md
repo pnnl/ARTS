@@ -92,7 +92,7 @@ to up to `2^(d-L-1)` slaves. `mainEdt` itself is a short rank-0-only preamble
 (allocate, zero, seed the impulse, create templates); there is no other
 serial bottleneck once the tree is launched.
 
-## Placement (as-born)
+## Placement (base)
 
 The source passes `NULL_HINT` on every EDT and DB create — there is no
 `OCR_APP_OPTIMIZED_PLACEMENT` guard anywhere in `fft.c` (unlike the held-back
@@ -106,6 +106,32 @@ applies at those few points, not per-node. Consequence: nearly every
 block's home, so nearly every RW acquire of that one 12N-byte block is a
 remote, whole-DB migration — the app never expresses the locality that exists
 in principle (each subtree only touches a disjoint slice).
+
+## Placement (hinted)
+
+**No `hinted` variant is offered (decision 2026-08-19).**  With one
+per-node-exclusive RW block, the only thing a hint layer can do is refuse to
+distribute — and that number is already on every plot, because at one node all
+versions coincide: the containment performance at N nodes IS the base
+1-node cell.  A horizontal line derivable from the base curve adds nothing,
+so the guard code stays in the source but no `_hinted` target is built; the
+restructured version carries the distribution story.
+
+As-born is placement-blind, and for this program that is structurally fatal at
+multinode: the entire recursion slices ONE shared data block acquired
+`DB_MODE_RW` (see Wiring), write permission is exclusive at rank granularity,
+and a round-robin-scattered tree therefore cannot compute in parallel across
+ranks — it can only hand the whole 12N-byte block from rank to rank, paying a
+full transfer per hop.
+
+The layer (`fftHereEdtHint` in `fft.c`, 7 create sites) pins every
+`fftStartEdt` / `fftEndEdt` / `fftEndSlaveEdt` to the creating rank, keeping
+the tree — and with it the block's ownership — on one rank.  This is
+CONTAINMENT, not scaling: hints cannot give this program a multinode
+decomposition, because the single-RW-block structure is the program.  A real
+distributed FFT is the `restructured` version's job (`fft_dist`, held out of
+the catalog until its source lands).  `pdCount <= 1` returns `NULL_HINT`, so a
+single-node run is bit-identical to base (verified: power=10 PASSED).
 
 ## Sizing
 

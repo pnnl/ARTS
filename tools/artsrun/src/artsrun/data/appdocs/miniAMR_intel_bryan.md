@@ -53,7 +53,7 @@ again after packing.
 | `--ny --nz` | — | 10 | ⚠ parsed into `params[5]`/`params[6]`, never read |
 | `--num_objects` | allocates the object array and enables `--object` | 0 | ⚠ reachable and copied into every block, but the refinement decision that would read it is compiled out (see below) |
 | `--object t b cx cy cz mx my mz sx sy sz ix iy iz` | one object; must follow `--num_objects` | — | ⚠ same |
-| `--num_refine --uniform_refine --block_change --num_vars --comm_vars --init_x/y/z --reorder --max_blocks --target_* --inbalance --lb_opt --report_diffusion --error_tol --stages_per_ts --checksum_freq --stencil --permute --report_perf --plot_freq --code --blocking_send --refine_ghost` | reference miniAMR knobs | see `param.h` | ⚠ all parsed and packed into `params[]`, none read by any EDT |
+| `--num_refine --uniform_refine --block_change --num_vars --comm_vars --init_x/y/z --reorder --max_blocks --target_* --inbalance --lb_hinted --report_diffusion --error_tol --stages_per_ts --checksum_freq --stencil --permute --report_perf --plot_freq --code --blocking_send --refine_ghost` | reference miniAMR knobs | see `param.h` | ⚠ all parsed and packed into `params[]`, none read by any EDT |
 | `MAX_REF` | maximum refinement level (`block_t.maxRefLvl`) | 1 | ✗ `#ifndef` in `mainOCR.c:26`; the ARTS build passes no `-DMAX_REF`, so blocks refine at most one level |
 | `OBJECT_DRIVEN` | selects the real, object-geometry refinement test in `willRefineEdt` | **not defined** | ✗ compile-time. Undefined, the `#else` branch runs: *block id 10 always refines*, and blocks descended from id 10 refine again at timesteps 100/200/300/400. Refinement is a fixed test hook, not a moving object |
 
@@ -171,10 +171,10 @@ finish event of every descendant before `wrapupEdt` runs. Blocks are otherwise
 free-running — there is no timestep barrier across the mesh, only the pairwise
 channel dependences, so blocks drift apart by up to `maxGen = 2` generations.
 
-## Placement (as-born)
+## Placement (base)
 
 There is no `OCR_APP_OPTIMIZED_PLACEMENT` layer in this port; the placement below
-*is* the as-born program, and it is explicit rather than defaulted.
+*is* the base program, and it is explicit rather than defaulted.
 
 - The initial fork distributes: `forkSpmdEdts_Cart3D` (`ocrAppUtils.c:341`, built
   with `ENABLE_EXTENSION_AFFINITY`) splits the policy domains into a 3-D grid,

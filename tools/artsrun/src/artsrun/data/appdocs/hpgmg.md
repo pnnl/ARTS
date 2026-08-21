@@ -176,9 +176,9 @@ iterations inside one EDT on one box; (3) the single-box tail; (4)
 `finalize_edt` over all level-0 boxes; (5) `top_loop`'s body, which issues all
 993 level creates and ~2 000 `ocrAddDependence` calls itself.
 
-## Placement (as-born)
+## Placement (base)
 
-Unusually for this catalog the as-born program places things explicitly —
+Unusually for this catalog the base program places things explicitly —
 `ENABLE_EXTENSION_AFFINITY` is on for every benchmark build and most of the
 affinity code sits *outside* the `OCR_APP_OPTIMIZED_PLACEMENT` guard.  (The
 guarded layer exists: it swaps the box home for a spatial 3-D partition and adds
@@ -206,6 +206,24 @@ homes all nine level DBs (77 k RO acquires, and the norm collector's RW turn)
 and all nine constant boxes (34 k RO acquires).  The locality the
 algorithm has — spatial adjacency within a level, parent/child nesting across
 levels — is real and completely unexpressed.
+
+## Placement (hinted)
+
+As-born already places — box DBs home round-robin (`box_num % affinityCount`)
+through the app's own `ENABLE_EXTENSION_AFFINITY` code — but round-robin
+scatters both the intra-level neighbourhoods and the inter-level ladder: a
+coarse box almost never lands with the fine boxes it restricts from / prolongs
+to, so every V-cycle rung crosses ranks.
+
+The layer replaces the map, not the mechanism: `boxHomePD` partitions the unit
+cube once into a near-cubic PX x PY x PZ rank grid and sends every level's box
+through THAT one partition by its normalized (i,j,k)/S position — neighbouring
+boxes of a level co-locate AND a coarse box lands on the rank of its fine
+children, so inter-level transfers stay rank-local.  EDTs follow their box via
+`ocrAffinityQuery(box)` (`mg_edt.c`), keeping compute with data.  This is the
+spatial box-home design adopted in the 2026-08-07 anti-scale verdicts; the
+residual granularity amplification (~400x) is structural and out of a hint's
+reach.
 
 ## Sizing
 

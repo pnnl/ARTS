@@ -210,17 +210,17 @@ endif() # TARGET ocr_vdm_mpi
 #       [EXTRA_DEFINES <def> ...]       # additional compile definitions
 #       [EXTRA_LINK_LIBS <lib> ...]     # extra link libraries (e.g. m)
 #       [OCRVX_SKIP]                    # suppress _ocrvx target (app uses unsupported OCR extensions)
-#       [OPTIMIZED_PLACEMENT]           # source carries a placement hint layer
+#       [HINTED_PLACEMENT]           # source carries a placement hint layer
 #   )
 #
 # Creates, per backend, <name>_arts_<suffix> (one per coherence configuration),
-# <name>_xsocr and (when compatible) <name>_ocrvx.  With OPTIMIZED_PLACEMENT the
-# same set is created a second time under the name <name>_opt, compiled with the
+# <name>_xsocr and (when compatible) <name>_ocrvx.  With HINTED_PLACEMENT the
+# same set is created a second time under the name <name>_hinted, compiled with the
 # hint layer enabled — so both placement settings coexist in one build tree and
 # neither is a property of the build directory.
 # ==========================================================================
 function(add_benchmark_app)
-    cmake_parse_arguments(APP "OCRVX_SKIP;OPTIMIZED_PLACEMENT" "NAME;DIR;SRC_SUBDIR" "SOURCES;LIBS;EXTRA_INCLUDES;EXTRA_DEFINES;EXTRA_LINK_LIBS" ${ARGN})
+    cmake_parse_arguments(APP "OCRVX_SKIP;HINTED_PLACEMENT" "NAME;DIR;SRC_SUBDIR" "SOURCES;LIBS;EXTRA_INCLUDES;EXTRA_DEFINES;EXTRA_LINK_LIBS" ${ARGN})
 
     set(APP_DIR "${OCR_APPS_ROOT}/${APP_DIR}")
     if(APP_SRC_SUBDIR)
@@ -258,18 +258,18 @@ function(add_benchmark_app)
     set(COMMON_DEFINES ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE} ${APP_EXTRA_DEFINES})
 
     # Placement flavors.  The base name compiles the application as born, with
-    # its hint layer left out; the _opt name compiles that layer in.  A flavor
+    # its hint layer left out; the _hinted name compiles that layer in.  A flavor
     # differs only by a define in the shared application source, so every
     # backend below sees the same setting — placement is a property of the
     # program, never of one runtime.
     set(_flavors base)
-    if(APP_OPTIMIZED_PLACEMENT)
-        list(APPEND _flavors opt)
+    if(APP_HINTED_PLACEMENT)
+        list(APPEND _flavors hinted)
     endif()
 
     foreach(_flavor ${_flavors})
-        if(_flavor STREQUAL opt)
-            set(_app "${APP_NAME}_opt")
+        if(_flavor STREQUAL hinted)
+            set(_app "${APP_NAME}_hinted")
             set(_flavor_define OCR_APP_OPTIMIZED_PLACEMENT)
         else()
             set(_app "${APP_NAME}")
@@ -364,7 +364,7 @@ endfunction()
 add_benchmark_app(NAME fibonacci
     DIR fibonacci/ocr
     SOURCES fib.c
-    OPTIMIZED_PLACEMENT
+    HINTED_PLACEMENT
 )
 
 add_benchmark_app(NAME printf
@@ -391,7 +391,7 @@ add_benchmark_app(NAME nqueens
     DIR nqueens/refactored/ocr
     SOURCES nqueens.c
     LIBS timer
-    OPTIMIZED_PLACEMENT
+    HINTED_PLACEMENT
 )
 
 add_benchmark_app(NAME smithwaterman
@@ -470,7 +470,7 @@ add_benchmark_app(NAME curvefit
 add_benchmark_app(NAME triangle
     DIR triangle/refactored/ocr/intel
     SOURCES triangle.c
-    OPTIMIZED_PLACEMENT
+    HINTED_PLACEMENT
     # COUNTED_EVENTS states the completion events' true consumer counts (the
     # program knows both before creating them).  The OCR spec destroys a ONCE
     # once its consumers are satisfied, so declaring the count changes nothing
@@ -484,7 +484,7 @@ add_benchmark_app(NAME triangle
 add_benchmark_app(NAME tempest
     DIR tempest/refactored/ocr/intel-bryan
     SOURCES tempestCommunication.c
-    OPTIMIZED_PLACEMENT
+    HINTED_PLACEMENT
 )
 
 # ==========================================================================
@@ -495,7 +495,7 @@ add_benchmark_app(NAME cholesky
     DIR cholesky/ocr
     SOURCES cholesky.c
     EXTRA_LINK_LIBS m
-    OPTIMIZED_PLACEMENT
+    HINTED_PLACEMENT
 )
 
 # The app tree's standalone input/output converters — plain host C, no OCR.
@@ -515,7 +515,7 @@ add_benchmark_app(NAME cholesky_blas
     DIR cholesky/ocr-mkl
     SOURCES ocr_mkl_cholesky.c
     EXTRA_LINK_LIBS arts::openblas m
-    OPTIMIZED_PLACEMENT
+    HINTED_PLACEMENT
 )
 
 add_benchmark_app(NAME fft
@@ -707,7 +707,7 @@ add_benchmark_app(NAME p2p
     DIR p2p/refactored/ocr/intel
     SOURCES p2p.c wtime.c
     LIBS reduction
-    OPTIMIZED_PLACEMENT
+    HINTED_PLACEMENT
 )
 
 add_benchmark_app(NAME reduction_intel
@@ -733,7 +733,7 @@ add_benchmark_app(NAME hpgmg
     SOURCES hpgmg.c init.c utils.c mg.c mg_edt.c solve_edt.c test_edt.c
     residual_edt.c restrict_edt.c smooth_edt.c interpolate_edt.c
     EXTRA_LINK_LIBS m
-    OPTIMIZED_PLACEMENT
+    HINTED_PLACEMENT
 )
 
 
@@ -753,7 +753,7 @@ add_benchmark_app(NAME miniAMR_intel
     SOURCES block.c chksum.c comm.c clone.c init.c move.c parent.c plot.c
     stencil.c refine.c root.c util.c wtime.c
     EXTRA_LINK_LIBS m
-    OPTIMIZED_PLACEMENT
+    HINTED_PLACEMENT
 )
 
 add_benchmark_app(NAME miniAMR_intel_bryan
@@ -834,7 +834,7 @@ add_benchmark_app(NAME RSBench_intel_sharedDB
 )
 
 add_benchmark_app(NAME XSBench_intel
-    OPTIMIZED_PLACEMENT
+    HINTED_PLACEMENT
     DIR XSBench/refactored/ocr/intel
     SRC_SUBDIR src
     SOURCES Main.c io.c CalculateXS.c XSutils.c Materials.c qsort.c timers.c
@@ -895,7 +895,7 @@ add_benchmark_app(NAME LCS_all_db_distributed
     DIR LCS/refactored/ocr/intel-jesmin-lcs_all_db_distributed
     SOURCES lcs_distributed.cpp
     EXTRA_LINK_LIBS m
-    OPTIMIZED_PLACEMENT
+    HINTED_PLACEMENT
 )
 
 # Wavefront restructuring of the same computation: boundary strips travel on
@@ -1251,13 +1251,13 @@ if(HAS_CRLIBM)
             EXTRA_INCLUDES ${SAR_SRC_DIR} ${CRLIBM_DIR}
             EXTRA_DEFINES ${SAR_SIZE_DEFINES}
             EXTRA_LINK_LIBS m ocr_lib_crlibm
-            OPTIMIZED_PLACEMENT
+            HINTED_PLACEMENT
         )
         # Link the per-size data objects (image_*, platform_*, pulse_*
         # symbols emitted from the sar_dataImage / .incbin pipeline) into
         # the executable.  Without this the link fails with "undefined
         # reference to image_0/platform_0/pulse_0/...". */
-        foreach(_sa sar_${sar_size} sar_${sar_size}_opt)
+        foreach(_sa sar_${sar_size} sar_${sar_size}_hinted)
             if(TARGET ${_sa}_xsocr)
                 target_link_libraries(${_sa}_xsocr PRIVATE
                     ${SAR_DATA_${sar_size}_OBJECTS})
@@ -1293,7 +1293,7 @@ if(HAS_CRLIBM)
                 EXTRA_INCLUDES ${SAR_SRC_DIR} ${CRLIBM_DIR}
                 EXTRA_DEFINES ${SAR_RT_DEFINES}
                 EXTRA_LINK_LIBS m ocr_lib_crlibm
-                OPTIMIZED_PLACEMENT
+                HINTED_PLACEMENT
             )
         endif()
     endforeach()

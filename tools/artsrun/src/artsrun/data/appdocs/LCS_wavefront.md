@@ -62,10 +62,10 @@ order as their strips arrive, width ramps 1→L→1.  The last tile's corner
 event feeds the wrapup (prints the scalar), and shutdown runs in its own
 EDT behind the wrapup's completion.
 
-## Placement (as-born)
+## Placement (base)
 
 Row-band, baked in (a restructured program owns its placement, so its
-as-born form IS the placed form — there is no `_opt` flavour): block-row `bi` maps to `band(bi-1)`, leaves are hinted
+base form IS the placed form — there is no `_hinted` flavour): block-row `bi` maps to `band(bi-1)`, leaves are hinted
 there, and strip/S-tile homes follow through labeled-index re-encoding
 (`band + nranks·idx`).  West strips are always band-local; north/corner
 strips cross ranks only at band boundaries; T tiles stay round-robin (a

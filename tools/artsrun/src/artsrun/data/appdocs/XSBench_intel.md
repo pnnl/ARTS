@@ -152,7 +152,7 @@ Sizing.
 `mainEdt`'s only native (non-EDT) work is `read_CLI`/`print_inputs`, which is
 negligible; everything else, including grid construction, runs as EDTs.
 
-## Placement (as-born)
+## Placement (base)
 
 Every `ocrEdtCreate`/`ocrDbCreate` in this port passes `NULL_HINT`.
 Effective policy: **EDTs** → shim round-robin (`ARTS_HINT_ANY_RANK`, atomic
@@ -176,7 +176,7 @@ stress, by construction, with the intact-but-unexploited locality of the
 algorithm (a lookup only ever touches its own material's nuclides) never
 expressed in placement.
 
-## Placement (optimized)
+## Placement (hinted)
 
 As-born round-robins every link of every lookup independently: rankLookup
 lands somewhere, spawns macroxs there, which lands somewhere else, which spawns
@@ -184,7 +184,7 @@ the aggregator on a third rank — each chain's intermediate results cross the
 wire twice for nothing (see above).
 
 The layer has two halves, both compiled only under
-`OCR_APP_OPTIMIZED_PLACEMENT` (`Main.c`; as-born resolves every call to
+`OCR_APP_OPTIMIZED_PLACEMENT` (`Main.c`; base resolves every call to
 `NULL_HINT`):
 
 - **Chain pinning** (`mcChainEdtHint`): pins the two SPAWNED links of each
@@ -193,7 +193,7 @@ The layer has two halves, both compiled only under
   the distribution across ranks is untouched and only the chain's interior
   becomes local.
 - **Home spreading** (`mcSpreadDbHint`/`mcSpreadEdtHint`): the readers are
-  uniformly random, so no placement can make the reads local — but as-born
+  uniformly random, so no placement can make the reads local — but base
   every grid object is homed on the one rank that ran its init EDT, which
   then serves the whole machine.  The layer spreads the per-gridpoint plane
   and the nuclide grids round-robin (`i % N`), co-locates each gridpoint's
@@ -239,23 +239,25 @@ multinode the `U`-wide alignment fan-out acquires remotely, so init is
 `-g 96` keeps a 34K-DB plane while holding init inside the 600 s bentley
 ceiling with the compute phase still the majority of the worst cell.
 
-## Family shape (measured, 15w+1p × 1/2/4/8 nodes, `-s large -g 96 -l 300000`)
+## Family shape (measured, 15w+1p × 1/2/4/8 nodes, `-s large -g 96 -l 300000 -b 3456`)
 
-optimized, e2e seconds (compute seconds in parentheses; e2e−compute ≈ the
-init phase). All lookups discarded by design; the checksum pin held in every
-cell:
+hinted, e2e seconds (compute seconds in parentheses; e2e−compute ≈ the
+init phase). All lookups discarded by design; the checksum pin held in
+every cell:
 
 | arm | 1n | 2n | 4n | 8n |
 |---|---|---|---|---|
-| val_wb | 3.1 (1.2) | 317.8 (167.7) | 364.2 (206.4) | 413.4 (252.3) |
-| val_wb_comb | 3.1 (1.2) | 176.9 (29.7) | 182.7 (38.4) | 218.1 (57.5) |
-| inv_wb | 4.0 (1.4) | 91.3 (18.0) | 132.5 (26.2) | 166.1 (32.9) |
-| excl_retain | 5.4 (1.8) | 105.4 (30.1) | 143.7 (38.5) | 186.3 (52.3) |
+| val_wb | 3.0 (1.1) | 349.7 (186.0) | 360.2 (199.1) | 398.7 (238.4) |
+| val_wb_comb | 3.0 (1.1) | 172.6 (26.7) | 176.8 (33.1) | 205.5 (45.0) |
+| inv_wb | 4.0 (1.3) | 87.2 (18.8) | 132.5 (26.0) | 169.3 (32.9) |
+| excl_retain | 5.8 (1.8) | 103.4 (26.9) | 136.8 (31.6) | 171.5 (39.0) |
 
-as-born val_wb: 379.3 (230.8) / 403.8 (256.0) / 434.7 (283.4) at 2/4/8n —
-the optimized layer wins 1.1-1.4× on val (and 6.1× on inv, probed).
-A Dane-geometry single node (108w+4p) runs the instance in 4.0 s (compute
+base val_wb: 376.7 (229.7) / 390.0 (241.4) / 420.7 (274.6) at 2/4/8n —
+the hinted layer wins 1.15-1.24× on val here (and 6.1× on inv, probed).
+A Dane-geometry single node (108w+4p) runs the instance in 3.9 s (compute
 1.9 s). The arm separations are the row's point: on write-once data at 8
-nodes, VAL's re-validate-per-acquire costs 7.7× INV's covering reads;
-combining recovers VAL to 4.4× better; EXCL sits between. Every arm is
+nodes, VAL's re-validate-per-acquire costs 7.2× INV's covering reads;
+combining recovers VAL to 5.3× better; EXCL sits near INV. Every arm is
 mildly anti-scaling — the wiring plane, not the data, sets the wall.
+Width-ladder evidence (1024/3456/8192/13824 all measured): every cell
+moves within ~7%, the window is never the binder.

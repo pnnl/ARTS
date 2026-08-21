@@ -26,7 +26,7 @@ all seven, it explicitly **places** its `N` chains via
 contiguous block partition across the actual run's rank count, and pins
 every subsequent clone to stay on that same rank via self-affinity
 (`ocrAffinityGetCurrent`) — the only one of the seven Stencil1D variants
-that expresses real locality in its as-born placement (see Placement).
+that expresses real locality in its base placement (see Placement).
 Termination combines a clean `EDT_PROP_FINISH`/output-event join (`realMain`
 launched as a finish EDT, `wrapupEdt` depending on its output event) with a
 left-to-right serialized print relay riding the same per-boundary channels,
@@ -122,11 +122,11 @@ descendant EDT of every chain (including every report) has actually
 finished, not merely once the report relay has been kicked off. Critical
 path ≈ `T + N` (steady state plus the report relay's `N`-deep tail).
 
-## Placement (as-born)
+## Placement (base)
 
 This is the one Stencil1D variant with genuine, non-`NULL_HINT` placement
 outside any `OCR_APP_OPTIMIZED_PLACEMENT` guard (that guard does not appear
-in this file at all — this is as-born behavior, always on):
+in this file at all — this is base behavior, always on):
 
 - `realMainEdt` computes `bucket = ceil(N / affinityCount)` where
   `affinityCount = ocrAffinityCount(AFFINITY_PD, …)` = the run's actual
@@ -152,7 +152,7 @@ acquires are **local** — a chain's private/buffer DBs live on the same
 rank as the chain's own executing EDT for the chain's entire lifetime.
 Cross-rank traffic is confined to the boundaries that fall on a bucket
 seam (at most `nodes-1` of the `N-1` internal boundaries), not every single
-dependence edge. This is a genuine, deliberate locality-aware as-born
+dependence edge. This is a genuine, deliberate locality-aware base
 design — the opposite conclusion from the other six rows in this
 directory.
 

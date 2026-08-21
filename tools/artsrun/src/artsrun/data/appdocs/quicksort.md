@@ -111,7 +111,7 @@ each recursive call also opens — has completed; that drain fires `outEvt`
 more (wherever it round-robin-lands) to print the first `min(arraySize, 30)`
 elements.
 
-## Placement (as-born)
+## Placement (base)
 
 All `ocrEdtCreate`/`ocrDbCreate` calls pass `NULL_HINT`; there is no
 `OCR_APP_OPTIMIZED_PLACEMENT` layer in this source. Effective policy:
@@ -127,6 +127,28 @@ scatters round-robin while the DB's home stays pinned to rank 0, most RW
 hand-offs cross ranks, and every hand-off moves the whole array — this is
 by construction close to the worst achievable coherence traffic pattern
 for an in-place sort.
+
+## Placement (hinted)
+
+**No `hinted` variant is offered (decision 2026-08-19).**  With one
+per-node-exclusive RW block, the only thing a hint layer can do is refuse to
+distribute — and that number is already on every plot, because at one node all
+versions coincide: the containment performance at N nodes IS the base
+1-node cell.  A horizontal line derivable from the base curve adds nothing,
+so the guard code stays in the source but no `_hinted` target is built; the
+restructured version carries the distribution story.
+
+As-born combines the two worst placements this program can have (see above):
+execution scatters round-robin while the single array block homes on rank 0,
+so most RW hand-offs cross ranks and each one moves the whole array.
+
+The layer (`qsHereEdtHint` in `quicksort.c`, both recursion children plus the
+root and finish EDTs) pins the whole task chain to the creating rank, keeping
+the block's ownership where the work is.  Like fft, this is CONTAINMENT of a
+single-RW-block structure, not a scaling fix — hints cannot decompose the
+array; that is the restructured version's job (`quicksort_dist`, held out of
+the catalog until its source lands).  `pdCount <= 1` returns `NULL_HINT`
+(verified: 1-node run bit-identical, sorts and shuts down cleanly).
 
 ## Sizing
 

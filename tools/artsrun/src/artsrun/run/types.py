@@ -26,11 +26,12 @@ class Status(StrEnum):
 def modern_key(key: str) -> str:
     """A recorded cell key, under today's version names.
 
-    Track files carry the version by its name at the time of writing, and the
-    optimized version was once named "hinted"; a reader matching old records
-    against freshly expanded cells has to speak one language.
+    Track files carry the version by its name at the time of writing, and
+    the tiers have been renamed ("asborn" -> "base", "optimized" ->
+    "hinted"); a reader matching old records against freshly expanded cells
+    has to speak one language.
     """
-    return key.replace(":hinted@", ":optimized@")
+    return key.replace(":optimized@", ":hinted@").replace(":asborn@", ":base@")
 
 
 @dataclass(frozen=True)

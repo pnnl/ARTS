@@ -33,7 +33,7 @@ what this kernel is built to probe.
 | `argv[3]` = `n` | rows per rank | 1000 | ✓ same path |
 | `argv[4]` = `t` | timesteps (`t+1` total generations counting one untimed warm-up timestep) | 100 | ✓ same path |
 | `argv[5]` = `gf` | group factor: rows processed per phase before a boundary send | 1 | ✓ optional 5th arg; same path |
-| `BLOCK` / `AFFINITY` | compile-time `#define`s (unguarded, always on as-born): `BLOCK` = contiguous-block PD assignment for the `p` ranks (vs `WRAP` = round-robin); `AFFINITY` = actually apply the computed `EDT_AFFINITY` hints (vs `NULL_HINT`, which the source's own comment says gives "bad performance regardless") | both defined | ✗ compile-time — unlike fibonacci/fft/triangle, this app ships its own real as-born placement logic outside the optimized-placement guard |
+| `BLOCK` / `AFFINITY` | compile-time `#define`s (unguarded, always on base): `BLOCK` = contiguous-block PD assignment for the `p` ranks (vs `WRAP` = round-robin); `AFFINITY` = actually apply the computed `EDT_AFFINITY` hints (vs `NULL_HINT`, which the source's own comment says gives "bad performance regardless") | both defined | ✗ compile-time — unlike fibonacci/fft/triangle, this app ships its own real base placement logic outside the hinted-placement guard |
 
 `argc` must be exactly 1, 5, or 6 (program name plus 0, 4, or 5 args); any
 other count is a hard `bomb()`/shutdown.
@@ -107,21 +107,37 @@ generation returns without cloning; a dedicated `p2pShutdownEdt` waits on
 that generation's own output event, which fires only after its dependence
 releases complete, so print/shutdown never truncates the measured run).
 
-## Placement (as-born)
+## Placement (base)
 
 Unlike fibonacci/fft/triangle, p2p's placement is *not* NULL_HINT-throughout
-as-born: `BLOCK`/`AFFINITY` are plain, unguarded `#define`s (not gated by
+base: `BLOCK`/`AFFINITY` are plain, unguarded `#define`s (not gated by
 `OCR_APP_OPTIMIZED_PLACEMENT`), so `realMainEdt` explicitly computes a BLOCK
 partition (`myPD = i / block`) and creates each rank's `initEdt` with an
 explicit `EDT_AFFINITY` hint pinning it there; `initEdt`/`initp2pEdt`
 propagate `ocrAffinityGetCurrent()` downward so each rank's *entire* chain
 (all `G` generations) stays pinned to the PD it was born on — real,
-load-bearing as-born locality, by design. The one genuinely
+load-bearing base locality, by design. The one genuinely
 `OCR_APP_OPTIMIZED_PLACEMENT`-gated piece is `p2pBufHint` (home the boundary
-DB at its consumer instead of its creator); as-born it returns `NULL_HINT`,
+DB at its consumer instead of its creator); base it returns `NULL_HINT`,
 so `bufferOutDBK` homes at the sender (creator/first-touch) and the receiving
 rank's acquire is always a one-hop remote fetch from its immediate left
 neighbor — exactly the point-to-point traffic the benchmark is named for.
+
+## Placement (hinted)
+
+As-born already ships real placement (unguarded `BLOCK`/`AFFINITY` defines pin
+each rank's chain EDT to its PD; see Parameters).  What it does not place is
+the 16-byte boundary block each rank mints per generation for its right
+neighbour — `NULL_HINT` homes it on the CREATOR, so every consumer acquire
+pays a remote directory round on the critical path of the chain.
+
+The layer adds exactly one thing: a consumer-home `OCR_HINT_DB_AFFINITY` for
+those boundary blocks (`p2pBufHint`).  Each rank has a single fixed consumer
+(myRank+1, wrapping to 0), so the hint is invariant and computed once in
+`initp2pEdt`, mirroring realMain's BLOCK/WRAP rank->PD map.  This is the
+measured one-shot/high-frequency/small-DB exception to the EDT-only rule
+(2026-07-10 A/B: consumer-home recovered 2n 7.4x / 4n 6.3x, and consumer beats
+producer-home by ~35%).
 
 ## Sizing
 

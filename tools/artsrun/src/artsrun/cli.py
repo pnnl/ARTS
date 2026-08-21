@@ -52,7 +52,7 @@ def _split(value: str | None) -> list[str]:
 
 
 def _parse_apps(spec: str | None, catalog, benchset) -> dict[str, list[Version]]:
-    """`--apps quicksort,nqueens:optimized,fft:asborn+restructured` -> versions."""
+    """`--apps quicksort,nqueens:hinted,fft:base+restructured` -> versions."""
     if not spec:
         return {
             a.name: benchset.versions_for(a)
@@ -183,7 +183,7 @@ def show_apps(
     # The binary usually repeats the name; showing it only when it differs
     # keeps the version columns from being squeezed out of the table.
     table.add_column("binary", no_wrap=True)
-    for column in ("as-born", "optimized", "restructured"):
+    for column in ("as-born", "hinted", "restructured"):
         table.add_column(column, justify="center", no_wrap=True)
     table.add_column("args", max_width=36, overflow="ellipsis")
 
@@ -210,14 +210,14 @@ def show_apps(
                      else "[dim]micro[/dim]")
             table.add_row(
                 name, label, entry.cls.value, binary,
-                mark(Version.ASBORN), mark(Version.OPTIMIZED),
+                mark(Version.BASE), mark(Version.HINTED),
                 mark(Version.RESTRUCTURED),
                 " ".join(entry.args) or "[dim]none[/dim]",
             )
     console.print(table)
     console.print(
         "[dim]as-born = the application as published, its own hints included "
-        "· optimized = structure untouched, EDT/DB placement hints added or "
+        "· hinted = structure untouched, EDT/DB placement hints added or "
         "changed as far as hints alone can carry it · restructured = its "
         "decomposition redesigned as a separate target[/dim]"
     )
@@ -549,7 +549,7 @@ def _binary_of_cell(run_dir: Path, slug: str) -> Path | None:
         candidate = (
             build_dir.expanduser().resolve()
             / "benchmarks" / "apps"
-            / entry.binary(app_row.binary, optimized=False)
+            / entry.binary(app_row.binary, hinted=False)
         )
     except Exception:
         return None
@@ -885,7 +885,7 @@ def benchset_set(
     app_name: str = typer.Argument(..., metavar="APP"),
     args: str = typer.Option(None, "--args", help="override the calibration"),
     versions: str = typer.Option(None, "--versions",
-                                 help="asborn,optimized,restructured"),
+                                 help="base,hinted,restructured"),
     enabled: bool = typer.Option(None, "--enable/--disable"),
 ) -> None:
     """Change one application's entry in a benchmark set."""

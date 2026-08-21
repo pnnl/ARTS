@@ -61,9 +61,9 @@ class SelectionEntry(BaseModel):
     def is_reference(self) -> bool:
         return self.kind is not RuntimeKind.ARTS
 
-    def binary(self, app_binary: str, *, optimized: bool) -> str:
+    def binary(self, app_binary: str, *, hinted: bool) -> str:
         """Executable name this entry runs a given application under."""
-        stem = f"{app_binary}_opt" if optimized else app_binary
+        stem = f"{app_binary}_hinted" if hinted else app_binary
         if self.kind is RuntimeKind.ARTS:
             return f"{stem}_arts_{self.variant}"
         return f"{stem}_{self.kind.value}"

@@ -134,11 +134,11 @@ lanes, so the lanes are balanced by construction and wall time tracks
 (loop-completion latch → `launchReductionEdt` → `summaryEdt`) is the one
 whole-rank barrier, at the very end.
 
-## Placement (as-born)
+## Placement (base)
 
 `forkSpmdEdts_Cart1D` hints each of the `p` SPMD rank-EDTs (`initEdt`) with a
 genuine `OCR_HINT_EDT_AFFINITY` from `ocrAffinityGetAt(AFFINITY_PD,
-getPolicyDomainID_Cart1D(i, {p}, {affinityCount}), …)` — a real as-born
+getPolicyDomainID_Cart1D(i, {p}, {affinityCount}), …)` — a real base
 (not `OCR_APP_OPTIMIZED_PLACEMENT`-gated; that guard does not exist in this
 port at all) cart-1D spread of SPMD ranks across policy domains. At the
 calibrated `p=1` this places the sole rank on PD 0 and contributes no spread

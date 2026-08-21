@@ -121,7 +121,7 @@ wave — all `N` chains can reach their last timestep concurrently and
 `wrapupEdt` fires once all have. Critical-path depth ≈ `T` (the
 initialization and join stages add `O(1)` depth each, not `O(N)`).
 
-## Placement (as-born)
+## Placement (base)
 
 `NULL_HINT` on every create — no affinity code in this file. Effective
 policy differs from lineage A in one structural respect: **DB homes are no
