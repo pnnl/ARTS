@@ -19,6 +19,7 @@ from artsrun.paths import repo_root
 class AppClass(StrEnum):
     TASK = "task"
     SPMD = "spmd"
+    MW = "mw"
     BW = "bw"
 
 

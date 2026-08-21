@@ -41,18 +41,19 @@ held back in the catalog (commented out) pending a real port.
 | `-g <gridpoints>` | overrides `n_gridpoints` per nuclide | 11303 | ✓ |
 | `-l <lookups>` | number of XS lookups (`L`) | 15000 | ✓ |
 | `-t <threads>` | printed as "Threads:" and fed into `estimate_mem_usage`'s neighbourhood, but never changes decomposition — every lookup gets exactly one 3-EDT chain regardless of this value | 1 | ⚠ parsed but has no effect on parallelism or task count; passing `-t` prints a one-line warning that it has no effect in this port |
+| `-b <batch>` | lookups per compute-phase sync batch (`NL_SYNC`); the batch is a FINISH scope and the next batch starts only when it drains, so this is the compute phase's in-flight width — the program's standing offer of concurrency to the machine | 1024 | ✓ parsed and carried through the `Inputs` copy chain (paramv slot 5 → `settingsInit` → `init_InputsH`). The calibrated args pass 3456 — the Master/Worker width rule, calibrated once at the largest geometry: the pool is the work count (`-l`, already ≫ workers) and the window covers the machine exactly (32×108 total workers), so the row's anti-scaling is attributable to the central serial production, never to an under-provisioned window.  Throughput is insensitive to the width within ~7% (1024↔13824 probed: <3% at one node, −7% at 2 nodes, +5% at 8) — production, not the window, is the cap |
 | *(no flag)* `nprocs` | number of "rank" domains | — | ✗ `FNC_settingsInit` unconditionally sets `nprocs=1`; there is no `-p` in this port (contrast `XSBench_intel_sharedDB`, which has one). The whole program is always a single logical rank, at any node count |
-| `NL_SYNC` (= 1024) | lookups per compute-phase sync batch | 1024 | ✗ compile-time literal in `FNC_globalComputeSpawner`/`FNC_rankCompute`, not a `#define` and not user-reachable |
 
 `n_mats` is fixed at 12 (hardcoded, matches H-M's material count either size).
 `print_CLI_error`'s "Default is equivalent to" line now names the defaults the
-code actually applies (`-s small -l 15000`); it previously advertised `-s large
--l 15000000`, neither half of which was true.
+code actually applies (`-s small -l 15000 -b 1024`); it previously advertised
+`-s large -l 15000000`, neither half of which was true.
 
 ## Structure
 
 Let `N_i` = n_isotopes, `N_g` = n_gridpoints, `U = N_i·N_g` (unionized grid
-points), `L` = lookups, `NB = ⌈L / 1024⌉` (compute-phase sync batches).
+points), `L` = lookups, `NB = ⌈L / b⌉` (compute-phase sync batches, `b` =
+`-b`; calibrated args use 3456 → `NB=87`).
 
 | object | count | size |
 |--------|-------|------|
@@ -89,14 +90,15 @@ output+finish events, once per sync batch. `init_uEnergy_i`,
 carry no FINISH scope, so the per-lookup and per-gridpoint fan-out contributes
 zero events regardless of `U` or `L`.
 
-For the calibrated args (`-s small -g 1000 -l 400000`): `N_i=68`, `N_g=1000`,
-`U=68000`, `L=400000`, `NB=391`. DBs ≈ `41+68+68000 = 68,109` (the `uEnergy_grid`
-fan-out dominates DB count at ~18.5 MB total; the 68 nuclide grids total
-~3.3 MB). EDTs ≈ `15+68000+782+1,200,000 = 1,268,797`, overwhelmingly the
-per-lookup chains. Events ≈ `22+3·391 = 1,195`, staying in the low thousands
-regardless of `L` (only `NB` moves it, and `NB` saturates at `⌈L/1024⌉`).
-`-l` growth is pure EDT churn (no DB growth); `-g`/`-s` growth grows DB count
-*and* size together.
+For the calibrated args (`-s large -g 96 -l 300000 -b 3456`): `N_i=355`,
+`N_g=96`, `U=34080`, `L=300000`, `NB=87`. DBs ≈ `41+355+34080 = 34,476`
+(each `uEnergy_grid` leaf is `N_i·4 B = 1.4 KB` — ~48 MB of plane total; the
+355 nuclide grids are `96×48 B` each, ~1.6 MB total). EDTs ≈
+`15+34080+174+900,000 = 934,269`, overwhelmingly the per-lookup chains.
+Events ≈ `22+3·87 = 283`, staying small regardless of `L` (only `NB` moves
+it). `-l` growth is pure EDT churn (no DB growth); `-g`/`-s` growth grows DB
+count *and* size together, and `-s` additionally multiplies the aggregator
+fan-in (`num_nucs[fuel]`: 34 small / 321 large).
 
 Counter cross-check: verified (1 node, `-s small -g 3 -l 10` vs `-s small -g 5
 -l 20`): predicted absolutes 252/314/25 and 418/450/25 (`NUM_EDT_CREATE` /
@@ -138,13 +140,14 @@ Three sequential program-level phases, each gated by a `FINISH` join:
 **init** (single logical rank; ends with a `U`-wide parallel fan-out of
 `init_uEnergy_i` grid-alignment tasks under one `FINISH` scope) → **compute**
 → **finalize**. The compute phase is `NB` strictly serial sync batches: each
-`rankMultiLookupSpawner` is a `FINISH` EDT covering up to 1024 lookup chains
-(up to `1024×3` EDTs in flight at the batch's peak); the *next* batch's
+`rankMultiLookupSpawner` is a `FINISH` EDT covering up to `b` lookup chains
+(up to `b×3` EDTs in flight at the batch's peak); the *next* batch's
 `rankCompute` only starts once the previous batch's `FINISH` scope — every
-descendant of all 1024 chains — has fully drained. For the calibrated args
-that is 391 hard synchronization barriers. `NL_SYNC` is a compile-time
-constant, so no argument raises the in-flight width above ~1024 chains; more
-nodes/workers beyond that only shortens each batch, not the barrier count.
+descendant of all `b` chains — has fully drained. For the calibrated args
+that is 87 hard synchronization barriers. Within a batch the chains are
+spawned serially by the one spawner EDT (create + 8 dependence registrations
+per lookup, ~4 µs each), which is the single-node throughput cap — see
+Sizing.
 
 `mainEdt`'s only native (non-EDT) work is `read_CLI`/`print_inputs`, which is
 negligible; everything else, including grid construction, runs as EDTs.
@@ -173,22 +176,86 @@ stress, by construction, with the intact-but-unexploited locality of the
 algorithm (a lookup only ever touches its own material's nuclides) never
 expressed in placement.
 
-## Sizing
+## Placement (optimized)
 
-`-l` (`L`) is the only parameter that scales *parallel work* — each +1 lookup
-adds exactly 3 EDTs and zero DBs. `-g`/`-s` (`N_g`, `N_i`, via `U=N_i·N_g`)
-scale the *one-time* grid-construction DB fan-out (count and size together);
-oversizing the grid inflates a largely single-node-homed, one-time cost far
-out of proportion to the repeatable, embarrassingly-parallel lookup phase.
+As-born round-robins every link of every lookup independently: rankLookup
+lands somewhere, spawns macroxs there, which lands somewhere else, which spawns
+the aggregator on a third rank — each chain's intermediate results cross the
+wire twice for nothing (see above).
 
-Guidance for N nodes × C workers: pick `L` so `3·L ≫ N·C` (thousands of
-lookup-EDTs per worker keeps every deque busy across the run), independent of
-node count — since `NL_SYNC=1024` caps in-flight concurrency per batch
-regardless of cluster size, more workers only help once `1024` exceeds
-`N·C`'s working set per generation, which holds comfortably at both 1 node ×
-15 workers and 8 nodes × 120 workers. Keep `-g`/`-s` modest (the grid build
-does not parallelize across nodes — it is always homed on one node) and grow
-`-l` to scale wall time. The calibrated strong-scaling args (`-g 1000 -l
-400000`) size the grid to a moderate ~68K-DB, ~22 MB one-time fan-out and the
-lookup phase to ~1.27M EDTs, large enough that the per-hop remote-acquire tax
-described above — not raw worker count — dominates wall time at multinode.
+The layer has two halves, both compiled only under
+`OCR_APP_OPTIMIZED_PLACEMENT` (`Main.c`; as-born resolves every call to
+`NULL_HINT`):
+
+- **Chain pinning** (`mcChainEdtHint`): pins the two SPAWNED links of each
+  chain to the rank the chain's first link landed on.  The first link stays
+  round-robin — that IS the load balance across independent lookups — so
+  the distribution across ranks is untouched and only the chain's interior
+  becomes local.
+- **Home spreading** (`mcSpreadDbHint`/`mcSpreadEdtHint`): the readers are
+  uniformly random, so no placement can make the reads local — but as-born
+  every grid object is homed on the one rank that ran its init EDT, which
+  then serves the whole machine.  The layer spreads the per-gridpoint plane
+  and the nuclide grids round-robin (`i % N`), co-locates each gridpoint's
+  alignment (writer) EDT with its block, spreads the 24 material tables
+  (`mat % N`), and puts each of the per-lookup handle singletons
+  (`InputsH`/`templatesH`/`dataH`/the GUID arrays) on a different rank —
+  a singleton cannot be split, but the SET's aggregate serving load can be.
+
+Rejected while designing the layer: sending `macroxs` to its gridpoint DB's
+home (a remote EDT creation plus six remote dependence registrations costs
+more than the one 1.4 KB remote fetch it saves), and pinning the spawner
+chain (three acquires per batch — negligible).  Measured effect at 2 nodes
+(`-s large -g 192 -l 65536`): inv_wb compute 28.4→4.66 s (6.1×), val_wb
+50.0→37.6 s (1.33×) — under VAL the spread homes still charge a
+re-validation round trip per acquire, which is the arm's structural cost,
+not the placement's.
+
+## Sizing (measured)
+
+Single-node compute throughput is **spawn-limited**, not worker-limited: the
+one live spawner EDT emits a lookup chain every ~4 µs, so 15 workers do
+~260K lookups/s while 108 workers do 152K/s — MORE workers are slower,
+because the idle workers' steal traffic interferes with the one spawning
+worker. `-t` cannot change this (no-op) and the batch width moves it only
+marginally (1024↔8192: <3% at one node, −7% at 2 nodes, +5% at 8 —
+production, not the window, binds; the calibrated 3456 is the Master/Worker
+window rule — cover the largest machine — not a tuning device). Multinode collapses
+~100× further: each chain's
+creation and its ~dozens of dependence registrations cross the wire, and
+this control-plane traffic — not the grid payload — is the bill. That makes
+the app a wiring-plane worst case in every arm, mildly anti-scaling with
+node count.
+
+Parameter roles, measured: `-l` is the only pure work dial (linear, zero DB
+growth). `-s` selects the H-M configuration — large (the benchmark's
+canonical case) changes no structure and not the 1-node rate (261K vs 256K
+lookups/s vs small), but sets the fuel fan-in (321 vs 34) and multiplies
+init's dependence registrations (`N_i²·g`). `-g` scales the exploded plane
+and init linearly and leaves the compute rate untouched at one node; at
+multinode the `U`-wide alignment fan-out acquires remotely, so init is
+~150 s at 2-8 nodes for `-s large -g 96` (roughly flat in node count,
+2× that at g=192, minutes-to-hours at g≥1000 under large). The calibrated
+`-g 96` keeps a 34K-DB plane while holding init inside the 600 s bentley
+ceiling with the compute phase still the majority of the worst cell.
+
+## Family shape (measured, 15w+1p × 1/2/4/8 nodes, `-s large -g 96 -l 300000`)
+
+optimized, e2e seconds (compute seconds in parentheses; e2e−compute ≈ the
+init phase). All lookups discarded by design; the checksum pin held in every
+cell:
+
+| arm | 1n | 2n | 4n | 8n |
+|---|---|---|---|---|
+| val_wb | 3.1 (1.2) | 317.8 (167.7) | 364.2 (206.4) | 413.4 (252.3) |
+| val_wb_comb | 3.1 (1.2) | 176.9 (29.7) | 182.7 (38.4) | 218.1 (57.5) |
+| inv_wb | 4.0 (1.4) | 91.3 (18.0) | 132.5 (26.2) | 166.1 (32.9) |
+| excl_retain | 5.4 (1.8) | 105.4 (30.1) | 143.7 (38.5) | 186.3 (52.3) |
+
+as-born val_wb: 379.3 (230.8) / 403.8 (256.0) / 434.7 (283.4) at 2/4/8n —
+the optimized layer wins 1.1-1.4× on val (and 6.1× on inv, probed).
+A Dane-geometry single node (108w+4p) runs the instance in 4.0 s (compute
+1.9 s). The arm separations are the row's point: on write-once data at 8
+nodes, VAL's re-validate-per-acquire costs 7.7× INV's covering reads;
+combining recovers VAL to 4.4× better; EXCL sits between. Every arm is
+mildly anti-scaling — the wiring plane, not the data, sets the wall.

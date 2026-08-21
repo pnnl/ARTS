@@ -587,7 +587,8 @@ apps:
     provenance: 'RSBench multipole cross-section proxy (ANL)'
     marker: 'Lookups:'
     scalar_kind: bool
-    args: ['-l', '400000']
+    args: ['-l', '31000000']
+    optimized: true
 
   RSBench_intel_sharedDB:
     binary: RSBench_intel_sharedDB
@@ -596,9 +597,21 @@ apps:
     marker: 'RS_CHECKSUM'
     scalar_re: 'RS_CHECKSUM:\s+([0-9]+)'
     scalar_kind: int
-    expect: '17079'
-    expect_args: ['-l', '100']
-    args: ['-l', '7500000', '-t', '128']
+    # Dormant pin: measured at the retired per-node ladder ('-l 245000000
+    # -t 3456 -p 1'); it does not fire at the fixed args below and the
+    # RSBench cycle re-pins at them (the checksum depends on the
+    # per-instance lookup ranges).
+    expect: '321587046369'
+    expect_args: ['-l', '245000000', '-t', '3456', '-p', '1']
+    # Strict sweep invariant (same convention as XSBench_intel_sharedDB,
+    # same fork-SPMD code family): every logical count is node-invariant —
+    # 32 instances, 108 chains each (1x the campaign node's persistent
+    # workers), 7,656,250 lookups per instance = a constant 245M aggregate
+    # (the old one-node total, so cell durations stay in the calibrated
+    # range).  The fork's block partition maps the 32 instances onto
+    # however many PDs the run has.  The RSBench cycle re-audits the
+    # values; the FORM is settled.
+    args: ['-l', '7656250', '-t', '108', '-p', '32']
 
   sar_pss:
     binary: sar_problem_size_scaling
@@ -733,9 +746,17 @@ apps:
     marker: 'STREAM_RESULT'
     scalar_re: 'STREAM_RESULT a\[0\] = ([0-9.eE+-]+)'
     tolerance: 0.001
-    expect: '2.321060036183137e+07'
-    expect_args: []
-    args: ['1000000', '48', '750']
+    # Dormant pin: measured at the retired per-node ladder ('100000000 54
+    # 2100'); it does not fire at the fixed args below and re-pinning at
+    # them is queued (a[0] depends on the iteration count).
+    expect: '1.370277069331697e+15'
+    expect_args: ['100000000', '54', '2100']
+    # Strict sweep invariant: the chain count and iteration count are
+    # node-invariant, fixed at the largest geometry's calibration — 1728
+    # chains (the BW rule's 1x: 54 per node x 32 nodes; a measured harm
+    # from raising width at fixed array size is why BW stays at 1x, not
+    # the task floor's 4x) and 4200 iterations everywhere.
+    args: ['100000000', '1728', '4200']
     restructured_as: stream_dist
 
   stream_dist:
@@ -834,33 +855,54 @@ apps:
     args: ['-dcpu']
     default_enabled: false
 
-  # Held back with the target: the program's source is not carried by the
-  # application submodule yet, so the build has no target for it.  Restore
-  # this entry, and its parent's restructured_as, with the registration in
-  # benchmarks/apps/CMakeLists.txt once the submodule carries the source.
-  #XSBench_dist:
-  #binary: xsbench_dist
-  #class: spmd
-  #provenance: 'XSBench (ANL); distributed SPMD rewrite'
-  #marker: 'XS_CHECKSUM'
-  #scalar_re: 'XS_CHECKSUM\s*=\s*(\d+)'
-  #scalar_kind: int
-  #expect: '486159'
-  #expect_args: ['-s', 'small', '-g', '10', '-l', '100']
-  #args: ['-s', 'small', '-g', '1000', '-l', '875000000', '-t', '15']
-  #restructured_from: XSBench_intel
-
   XSBench_intel:
     binary: XSBench_intel
-    class: spmd
+    # Master/Worker over a task-parallel map: one central producer chain
+    # spawns every lookup as a transient task; the SPMD member of the pair
+    # is the sharedDB sibling — same algorithm, two implementation
+    # structures, which is the whole ablation.
+    class: mw
     provenance: 'XSBench Monte Carlo neutron-transport proxy (ANL)'
     marker: 'Lookups/s'
     scalar_re: 'XSBench grid checksum:\s+(\d+)'
     scalar_kind: int
-    expect: '16088953243632067443'
-    expect_args: ['-s', 'small', '-g', '3', '-l', '30']
-    args: ['-s', 'small', '-g', '1000', '-l', '400000']
-    # restructured_as: XSBench_dist   # held back — see the entry below
+    expect: '5538757267561331960'
+    expect_args: ['-s', 'large', '-g', '96', '-l', '300000', '-b', '3456']
+    # The compute plane is wire-bound and mildly anti-scaling in every arm
+    # (each lookup is a spawned three-task chain whose aggregator fans in
+    # one nuclide-grid DB per nuclide of the drawn material), so this is an
+    # exhibition row sized by the worst cell against the 600 s bentley
+    # ceiling; a Dane-geometry single node runs it in seconds, the accepted
+    # shape for an anti-scaling row.  The grid checksum depends only on
+    # -s/-g, so the pin survives -l changes.
+    # -s large is the benchmark's canonical configuration (355 isotopes,
+    # 321-nuclide fuel fan-in; small is its reduced fresh-fuel subset) and
+    # changes no structure — one-node rate is identical (261K lookups/s).
+    # What large multiplies is init's dependence registrations
+    # (n_isotopes^2 x g), so -g compensates: g=96 keeps a 34K-DB exploded
+    # plane while holding init to ~150 s at multinode (measured 2n
+    # optimized val_wb: 148 s init; g=192 doubles it, g=1000 is minutes to
+    # hours).  Resolution below the official 11303 is disclosed either way;
+    # the lookup structure does not depend on it.
+    # -b is the in-flight window (lookup chains per sync batch) — this
+    # variant's width knob.  Master/Worker width rule, calibrated once at
+    # the largest geometry: the pool is the work count (-l, already far
+    # above the worker count) and the WINDOW covers the machine exactly —
+    # 3456 = the 32x108 campaign's total workers — so the row's
+    # anti-scaling is attributable to the program's central serial
+    # production, never to an under-provisioned window.  Measured
+    # throughput is insensitive to the width (within ~7% across
+    # 1024..13824), which is itself evidence that production, not the
+    # window, binds.
+    args: ['-s', 'large', '-g', '96', '-l', '300000', '-b', '3456']
+    optimized: true
+    # No restructured version, by decision: any distribution-friendly rebuild
+    # of this program converges on the sibling XSBench_intel_sharedDB (its
+    # own catalog row) — per-lookup tasking pays more runtime work per lookup
+    # than the kernel itself, so the only way up is coarse inline chains over
+    # a per-instance replica, which is exactly what that sibling already is
+    # (and what the shelved Main_dist.c driver was).  The pair IS the
+    # decomposition ablation; a restructured row would duplicate it.
 
   sar_large:
     binary: sar_large
@@ -922,13 +964,16 @@ apps:
     marker: 'Workload\s+\(unit\):'
     scalar_re: 'Workload\s+\(unit\):\s+(\d+)'
     scalar_kind: int
-    expect: '100'
-    expect_args: ['-s', 'small', '-g', '10', '-l', '100']
-    args: ['-s', 'small', '-g', '10', '-l', '100']
-    # This port really pins its ranks: without -p every rank lands on node 0
-    # regardless of the run's node count, so multinode cells must scale -p.
-    args_by_nodes:
-      2: ['-s', 'small', '-g', '10', '-l', '100', '-p', '2']
-      4: ['-s', 'small', '-g', '10', '-l', '100', '-p', '4']
-      8: ['-s', 'small', '-g', '10', '-l', '100', '-p', '8']
-    default_enabled: false
+    expect: '50000000'
+    expect_args: ['-s', 'large', '-g', '96', '-l', '50000000', '-t', '108', '-p', '32']
+    # -s/-g match XSBench_intel (same physics table; the set convention is
+    # that the table is identical and only the decomposition differs).
+    # The sweep invariant is the TOTAL logical quantity, realized in its
+    # strict form: every count is literally node-count-invariant — 32 SPMD
+    # instances, 108 chains each (1x the campaign node's persistent
+    # workers, the SPMD width rule), 50M lookups per instance = a constant
+    # 1.6G aggregate.  The application never names the machine: the fork's
+    # block partition maps the 32 instances onto however many PDs the run
+    # has (every campaign node count divides 32, so the packing is exactly
+    # even), one instance per node at the calibration geometry.
+    args: ['-s', 'large', '-g', '96', '-l', '50000000', '-t', '108', '-p', '32']

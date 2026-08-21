@@ -75,16 +75,19 @@ event pair (`ocrEdtCreate(...,EDT_PROP_FINISH,...,&iterationsPerThreadOEVT)`
 → output + finish) plus `createEventHelper`'s `OCR_EVENT_COUNTED_T` join —
 the original `2·P·T·G` term missed the third.
 
-For the catalog's args (`-s small -g 10 -l 100`, no `-p`/`-t` ⇒ `P=T=1`):
-`N_i=68`, `N_g=10`, `U=680`, `G=⌈100/1000⌉=1`. EDTs ≈ `2+8+2 = 12`. DBs ≈
-`2+(15+2+3) = 22`. Events ≈ `1+2+3 = 6`. The dominant DB is `DBK_xs_grid` at
-`N_i·U·4 B ≈ 185 KB`; `DBK_nuclide_grids` and `DBK_uEnergy_grid` are each
-`U·48 B ≈ 32.6 KB` (`DBK_uEnergy_grid` is allocated at `NuclideGridPoint`
-size — 48 B/point — but only ever indexed as the 16-byte `GridPoint`, so
-two-thirds of that buffer is never addressed; harmless, just wasted). This is
-a debug-sized smoke configuration (see notes/Findings), not a scaling
-workload — everything above is O(10) objects, in contrast to
-`XSBench_intel`'s calibrated ~1.27M EDTs.
+Smoke-sized example (`-s small -g 10 -l 100`, `P=T=1`): `N_i=68`, `N_g=10`,
+`U=680`, `G=⌈100/1000⌉=1`. EDTs ≈ `2+8+2 = 12`. DBs ≈ `2+(15+2+3) = 22`.
+Events ≈ `1+2+3 = 6`. The dominant DB is `DBK_xs_grid` at `N_i·U·4 B`;
+`DBK_nuclide_grids` and `DBK_uEnergy_grid` are each allocated at `U·48 B`
+(`DBK_uEnergy_grid` is allocated at `NuclideGridPoint` size — 48 B/point —
+but indexed as the 8-byte energy-only `GridPoint`, so most of that buffer is
+never addressed; harmless, just wasted). For the calibrated args (`-s large
+-g 96 -l 50000000 -t 108 -p 32`, fixed at every node count): per instance,
+`U=34080` puts `xs_grid` at ~48 MB (well out of cache) and the grids at
+~1.6 MB each; the compute plane is 32 instances × 108 chains ×
+`G=⌈50M/(1000·108)⌉=463` generations — coarse-grain (1000 inline lookups
+per generation EDT), in contrast to `XSBench_intel`'s per-lookup 3-EDT
+chains, and identical at every node count.
 
 Counter cross-check: verified (1 node, `-s small -g 3 -l 100` vs `-s small -g
 5 -l 2500`): predicted absolutes 13/23/6 and 17/29/12 (`NUM_EDT_CREATE` /
@@ -158,34 +161,64 @@ node I'm running on right now") — so a rank's grid, materials, and lookup
 EDTs are co-located on one node by construction: real locality, unlike
 `XSBench_intel`'s scatter.
 
-The catalog's calibrated args do **not** pass `-p`, so `nprocs=1`: with a
-single rank, the block partition always resolves to policy-domain 0 — **all
-work lands on node/rank 0 regardless of how many nodes the run launches**;
-every other node does nothing. Multinode scaling requires the user to pass
-`-p <node_count>` explicitly; it is not automatic (see notes/Findings).
+Without `-p` the block partition resolves every rank to policy-domain 0 —
+all work on one node no matter how many the run launches — so the catalog's
+`args_by_nodes` scales `-p` to the cell's node count (the same arrangement
+as `RSBench_intel_sharedDB`).
 
-## Sizing
+## Sizing (measured)
 
-Two independent axes: `-p` spreads work *across* nodes (one rank pinned per
-node, up to node count; beyond that ranks share a node via the block
-partition). `-t` spreads work *within* a rank across concurrent
-generation-chains. `-g`/`-s` scale the one-time per-rank init cost *and*
-memory footprint, replicated `P` times (unlike `XSBench_intel`'s single
-shared grid instance).
+Every input is fixed at the largest geometry's calibration and held across
+the node sweep (the campaign convention, shared with the tiled rank grids):
+`-p 32` instances, `-t 108` chains each, `-l 50M` per instance — an
+aggregate of 1.6G lookups, a constant program at every node count.  At 32
+nodes the fork's block partition puts one instance per node; at fewer
+nodes the same 32 instances pack evenly (e.g., 32 on one node at 1n, like
+a fixed rank grid).  `-l` is **per instance** (each instance is an
+independent MC replica); `-g`/`-s` scale the per-instance replica and its
+one-time init, replicated 32 times.
 
-Guidance for N nodes × C workers: set `-p N` (one rank per node, matching the
-as-born affinity mapping) and `-t` up to roughly `C` (too far above starves
-at each generation barrier from oversubscription, too far below leaves
-workers idle); pick `-l` large enough that `G=⌈L/(1000·T)⌉` spans several
-generations, or the run is dominated by the one-time serial `set_grid_ptrs`
-cost, which does not shrink with more nodes or workers. Worked examples: 1
-node × 15 workers → `-p 1 -t 12..15`; 8 nodes × 120 workers → `-p 8 -t 14`
-(one rank per node, leaving headroom for the progress thread) — but note
-that even at 8 ranks, each rank still pays the *full* serial `set_grid_ptrs`
-cost for its own grid copy, so wall time is bounded below by that per-rank
-serial cost regardless of N.
+`-t` is a logical chain count, not a thread count — nothing an app passes
+can change the runtime's rank or worker count. The calibrated `-t 108`
+follows the campaign's SPMD width rule at the calibration geometry:
+exactly 1× the node's persistent workers, one chain per worker at 32
+nodes — oversubscription only adds churn. The knob is real and measured:
+`-t 1` → 2.55M lookups/s single-chain, `-t 15` on 15 workers → 28M/s;
+widths from 15 to 3456 on 15 workers measure within noise of each other.
 
-The catalog's calibrated args (`-s small -g 10 -l 100`, no `-p`/`-t`) run
-`P=1, T=1` — the same tiny configuration as the correctness `expect_args`,
-not a scaling workload; treat it as a smoke config rather than tuned for the
-reference machine (see notes/Findings).
+The port originally kept a pointer field (`xs_ptrs`) inside the shared
+unionized-grid DB and had every generation EDT re-derive it — ~544 KB of
+identical-value stores into RO-acquired memory per generation, because a
+DB's mapping is acquire-relative. Those concurrent same-line stores
+ping-ponged across NUMA domains and froze per-worker scaling (9.1M lookups/s
+at 15 workers ≈ 10.4M/s at 108). The field is gone — the kernel indexes the
+flat `xs_grid` arithmetically — and the wall went with it: 20.1M/s at 15
+workers, **131.5M/s at 108** (91% per-worker efficiency, `-g 1000` small),
+2.2× and 12.6× over the pointer-fixup form.
+
+`-g` sets the table size and thus how memory-bound the inline kernel is; at
+the calibrated `-s large -g 96` the kernel runs ~1.2-1.3 µs/lookup at 15
+workers (14.8M/s). `-l` is per instance and int-typed (2³¹ cap); the node
+ladder divides it to hold the aggregate at 1.6G, which sizes the 1-node
+bentley-geometry cell at ~108 s and lets the high-node cells shrink as the
+row's near-perfect scaling dictates.
+
+## Family shape (measured, 15w+1p × 1/2/4/8 nodes, `-s large -g 96`, aggregate `-l` 1.6G)
+
+e2e seconds — near-perfect strong scaling, arms indistinguishable (the
+decomposition shares nothing across instances, so no coherence arm has
+anything to do):
+
+| arm | 1n | 2n | 4n | 8n |
+|---|---|---|---|---|
+| val_wb | 108.4 | 60.0 | 32.3 | 16.5 |
+| val_wb_comb | 108.4 | 60.1 | 32.3 | 16.5 |
+| inv_wb | 108.3 | 60.1 | 32.5 | 16.6 |
+| excl_retain | 107.8 | 60.0 | 32.3 | 16.5 |
+
+Speedup 1.81 / 3.36 / 6.57 at 2/4/8 nodes (efficiency 84-90%; the residual
+is the per-instance init replica each node pays). A Dane-geometry single
+node (108w+4p) runs the full 1.6G in 20.6 s. Contrast `XSBench_intel`: the
+same benchmark, exploded-DB dataflow decomposition, is wire-bound and
+anti-scaling with 7.7× separation between coherence arms — this pair is the
+decomposition ablation of the set.
