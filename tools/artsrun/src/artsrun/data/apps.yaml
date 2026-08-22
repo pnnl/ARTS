@@ -584,31 +584,57 @@ apps:
 
   RSBench_intel:
     binary: RSBench_intel
-    class: spmd
+    # Master/Worker over a task-parallel map, the same central-producer
+    # batch chain as XSBench_intel (nprocs is hardcoded to 1); the SPMD
+    # member of the pair is the sharedDB sibling.
+    class: mw
     provenance: 'RSBench multipole cross-section proxy (ANL)'
     marker: 'Lookups:'
-    scalar_kind: bool
-    args: ['-l', '31000000']
+    scalar_re: 'RSBench pole checksum:\s+(\d+)'
+    scalar_kind: int
+    # The pole-data checksum depends on -s/-p/-w/numL only (fixed rand()
+    # sequence, no srand anywhere), so the pin survives -l changes.
+    expect: '8991421287304279555'
+    expect_args: ['-s', 'large', '-l', '150000', '-b', '3456']
+    # Same shape and rules as XSBench_intel: central serial production caps
+    # the row (~98K lookups/s at 15 workers, LESS at 108 — spawn-limited),
+    # multinode is wire-bound (~0.6-0.7K lookups/s at 2 nodes), init is
+    # negligible (the exploded plane is only ~3 DBs per nuclide).  -l is
+    # sized by the worst cell (hinted val_wb at 8 bentley nodes ≈ 330 s
+    # against the 600 s ceiling); -b 3456 is the Master/Worker window rule
+    # (cover the largest machine); -s/-p/-w stay at the benchmark's
+    # canonical defaults (H-M large, 1000 poles, 100 windows; this port has
+    # no nprocs, so -p is the poles flag here — only sharedDB renamed it -a).
+    # -s large IS the port's default — named explicitly so the selection is
+    # self-documenting, unlike XSBench_intel whose default is small.
+    args: ['-s', 'large', '-l', '150000', '-b', '3456']
     hinted: true
 
   RSBench_intel_sharedDB:
     binary: RSBench_intel_sharedDB
     class: spmd
     provenance: 'RSBench (ANL); shared-datablock form'
-    marker: 'RS_CHECKSUM'
-    scalar_re: 'RS_CHECKSUM:\s+([0-9]+)'
+    marker: 'Simulation complete\.'
+    scalar_re: '(?m)^\s*(?:\[\d+\]\s*)?Lookups:\s*(?:\[\d+\]\s*)?([0-9]+)\s*$'
     scalar_kind: int
-    expect: '9732682317'
-    expect_args: ['-l', '7656250', '-t', '108', '-p', '32']
+    expect: '1000000'
+    expect_args: ['-s', 'large', '-l', '1000000', '-t', '108', '-p', '32']
+    # The scalar is the workload echo (completion-level), the same convention
+    # as XSBench_intel_sharedDB: the app's computed answer (the slow-Faddeeva
+    # counters) is delivered through its labeled-GUID reduction-tree library,
+    # and that delivery is observably nondeterministic under this runtime's
+    # labeled semantics (create replaces) — 17 sweep cells printed 17 distinct
+    # sums on identical inputs — so no computed value can be pinned.  The
+    # anchored regex skips the startup "XS Lookups:" echo.
     # Strict sweep invariant (same convention as XSBench_intel_sharedDB,
     # same fork-SPMD code family): every logical count is node-invariant —
     # 32 instances, 108 chains each (1x the campaign node's persistent
-    # workers), 7,656,250 lookups per instance = a constant 245M aggregate
-    # (the old one-node total, so cell durations stay in the calibrated
-    # range).  The fork's block partition maps the 32 instances onto
-    # however many PDs the run has.  The RSBench cycle re-audits the
-    # values; the FORM is settled.
-    args: ['-l', '7656250', '-t', '108', '-p', '32']
+    # workers), 1,000,000 lookups per instance = a constant 32M aggregate,
+    # sized to ~127 s at one 15-worker bentley node (the multipole kernel
+    # runs ~250K lookups/s there — two orders below XSBench's).  The
+    # fork's block partition maps the 32 instances onto however many PDs
+    # the run has.
+    args: ['-s', 'large', '-l', '1000000', '-t', '108', '-p', '32']
 
   sar_pss:
     binary: sar_problem_size_scaling

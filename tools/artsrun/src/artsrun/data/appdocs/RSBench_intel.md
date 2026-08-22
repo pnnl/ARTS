@@ -1,10 +1,10 @@
 # RSBench_intel
 
 *Every one of the `-l` lookups gets its own three-EDT chain and its own slice
-of the cross-section dataset (355 nuclides → 3×355 small datablocks); nothing
-is reduced or checked at the end — see `RSBench_intel_sharedDB` for the
-opposite design (one big DB per array, coarse per-thread EDTs, an actual
-verified checksum).*
+of the cross-section dataset (355 nuclides → 3×355 small datablocks); the
+lookup results are discarded by design, and the pinned scalar is a checksum
+of the deterministic pole data itself — see `RSBench_intel_sharedDB` for the
+opposite design (one big DB per array, coarse per-thread EDTs).*
 Source: `third_party/ocr-apps/apps/RSBench/refactored/ocr/intel/src/` (7 C
 files, ~880 lines; `main.c` builds and drives the whole graph, `init.c` /
 `material.c` generate the synthetic cross-section data, `rs_kernel.c` is the
@@ -22,20 +22,22 @@ their own small DB — 3×355 of them at default sizing) and turns every one of
 the `-l` lookups into an independent `rankLookup → macroxs → microxsAggregator`
 EDT chain that computes a macroscopic cross-section vector and **discards
 it** — `macro_xs` is a stack-local accumulator in `FNC_microxsAggregator`,
-never written to a DB, never reduced, never printed. The completion marker
-`Lookups:` (from the results banner) only proves the run reached the end;
-`scalar_kind: bool` and no `expect` mean the catalog uses this app as a
-**liveness / scheduler probe**, not a correctness oracle — it stresses
-task-creation churn and fine-grain remote-DB-acquire traffic, not verified
-arithmetic.
+never written to a DB, never reduced, never printed. Because no lookup result
+is observable, the pinned scalar is `RSBench pole checksum:` — a bit-exact
+sum over the IEEE-754 bit patterns of the generated pole data (`init.c`,
+printed once from the serial `init_dataH` phase). It verifies that the
+fixed-seed dataset every lookup reads is identical on every configuration —
+not the lookup arithmetic itself, which the app deliberately discards. Every
+family-sweep cell held the pin.
 
 ## Parameters
 
 | flag | meaning | default | CLI reachability |
 |------|---------|---------|-------------------|
 | `-l <lookups>` | XS lookups; sizes the whole graph (3 EDTs each) | 10,000,000 | ✓ parsed in `mainEdt`, carried inside the `Inputs` datablock to every consumer — multinode-safe |
+| `-b <batch>` | lookups per compute-phase sync batch (`NL_SYNC`) — the in-flight width of the whole compute phase, since each batch is a FINISH scope and the next starts only when it drains | 1024 | ✓ parsed, validated `≥1`, carried in the `Inputs` datablock through both settings-init hops — multinode-safe |
 | `-s small\|large` | H-M benchmark size; `small` also forces `n_nuclides=68` | large (355 nuclides) | ✓ |
-| `-n <n>` | nuclide count, overrides whatever `-s` set | 355 (68 with `-s small`) | ✓ — validated: the H-M material tables hold fixed nuclide IDs, so only 68 (small) or ≥355 (large) is accepted; other values used to index the per-nuclide arrays out of bounds |
+| `-n <n>` | nuclide count, overrides whatever `-s` set | 355 (68 with `-s small`) | ✓ parsed (only `≥1` checked) — ⚠ the H-M material tables hold fixed nuclide IDs (up to 67 for small, 354 for large) and the tables are picked by count alone, so any value other than exactly 68 or ≥355 indexes the per-nuclide arrays out of bounds in the kernel; the campaign only ever reaches this through `-s` |
 | `-p <poles>` | average poles per nuclide — sizes each pole DB | 1000 | ✓ |
 | `-w <windows>` | average windows per nuclide — sizes each window DB | 100 | ✓ |
 | `-d` | disable Doppler broadening (skip the temperature-dependent Faddeeva kernel) | Doppler ON | ✓ |
@@ -46,9 +48,9 @@ arithmetic.
 ## Structure
 
 Let `n` = `n_nuclides`, `m` = `n_mats` (=12), `L` = `lookups`, and
-`G = ⌈L / 1024⌉` (`NL_SYNC`, the hardcoded per-rank sync-batch size). `nprocs`
-is hardcoded to 1 in `FNC_settingsInit` regardless of any parameter — this
-port has no rank-partitioning axis at all.
+`G = ⌈L / batch⌉` (`NL_SYNC`, the `-b` sync-batch width, default 1024).
+`nprocs` is hardcoded to 1 in `FNC_settingsInit` regardless of any parameter —
+this port has no rank-partitioning axis at all.
 
 | object | count | size |
 |--------|-------|------|
@@ -78,9 +80,9 @@ event for each, and `arts_event_create` increments `NUM_EVENT_CREATE`
 regardless of whether the call came from `ocrEventCreate` or from
 `ocrEdtCreate`'s own output/finish-event machinery.
 
-Worked numbers at the calibrated `-l 400000` (all else default: `n=355`,
-`m=12`): **1,108 DBs**, **1,200,795 EDTs** (`G=391`), **1,193 events**
-(`20+3·391`). Est. cross-section payload ≈26.7 MB (the app's own `Est. Memory
+Worked numbers at the calibrated `-l 150000 -b 3456` (all else default:
+`n=355`, `m=12`): **1,108 DBs**, **450,101 EDTs** (`G=44`), **152 events**
+(`20+3·44`). Est. cross-section payload ≈26.7 MB (the app's own `Est. Memory
 Usage` print, ~25.5 MiB), fragmented across the 1,065 per-nuclide/per-material
 DBs above — independent of `-l`.
 
@@ -101,10 +103,10 @@ calls `generate_n_poles`/`generate_poles`/`generate_window_params`/
 TS_globalCompute(FINISH: TS_globalComputeSpawner + TS_timer) →
 TS_globalFinalize(FINISH)`. Inside `TS_globalComputeSpawner`, one
 `rankCompute` EDT is created (`nprocs=1`); each `rankCompute` spawns one
-`rankMultiLookupSpawner` (FINISH) covering up to 1024 lookups and, if more
+`rankMultiLookupSpawner` (FINISH) covering up to `batch` lookups and, if more
 remain, chains to the next `rankCompute` — the sync batches are **sequential**,
 not spawned in parallel. Inside a batch, `rankMultiLookupSpawner`'s own C loop
-creates up to 1024 independent `rankLookup → macroxs → microxsAggregator`
+creates up to `batch` independent `rankLookup → macroxs → microxsAggregator`
 triples with no dependence on each other.
 
 Every per-nuclide/per-material DB is written exactly once (during
@@ -112,12 +114,12 @@ Every per-nuclide/per-material DB is written exactly once (during
 writer ever returns. `microxsAggregator` RO-acquires the pole/window/K0RS DBs
 of every nuclide in its lookup's material (`num_nucs[mat]` of them, 5–321
 depending on which material `pick_mat` drew). Because sync batches serialize,
-**at most 1024 lookups are ever in flight** per rank; within that window a
+**at most `-b` lookups are ever in flight** per rank; within that window a
 given nuclide's DBs see concurrent RO readers in proportion to how many live
 lookups picked a material containing that nuclide — the fuel material
 (`num_nucs[0]=321`, picked with probability 0.14) drives the highest fan-out,
-on the order of `1024×0.14≈140` concurrent readers, further capped by worker
-count. No single DB is a contention point — the per-nuclide fragmentation
+on the order of `3456×0.14≈480` concurrent readers at the calibrated width,
+further capped by worker count. No single DB is a contention point — the per-nuclide fragmentation
 trades a hot DB for EDT/DB churn instead (contrast `RSBench_intel_sharedDB`,
 which makes the opposite trade).
 
@@ -127,9 +129,9 @@ Setup (`settingsInit`→`globalInit`→its rank-init chain) is a strict
 FINISH-scoped serial pipeline on one worker producing the fixed `6+13+3n+2m`
 DBs. The lookup phase is `G` sequential sync batches — a hard serialization
 point independent of `-l`'s absolute size, since batch width is capped at
-`NL_SYNC=1024` regardless of workload or worker count. Within one batch, max
-concurrent EDTs is on the order of `min(3×1024, workers)` once
-`rankMultiLookupSpawner`'s own (single-worker, sequential) 1024-iteration
+`-b` regardless of workload or worker count. Within one batch, max
+concurrent EDTs is on the order of `min(3·batch, workers)` once
+`rankMultiLookupSpawner`'s own (single-worker, sequential) `batch`-iteration
 creation loop has run; between batches there is no overlap — batch `g+1`'s
 `rankCompute` depends on batch `g`'s `rankMultiLookupSpawner` output event.
 `mainEdt`'s four top-level FINISH phases (`settingsInit → globalInit →
@@ -161,32 +163,71 @@ lands somewhere, spawns macroxs there, which lands somewhere else, which spawns
 the aggregator on a third rank — each chain's intermediate results cross the
 wire twice for nothing (see above).
 
-The layer (`mcChainEdtHint` in `main.c`) pins the two SPAWNED links of each chain
-to the rank the chain's first link landed on.  The first link stays
-round-robin — that IS the load balance across independent lookups — so the
-distribution across ranks is untouched and only the chain's interior becomes
-local.  The nuclide/energy grids are read-only and replicate per rank on
-first touch, so chain locality, not data placement, is what a hint can win
-here.  `pdCount <= 1` returns `NULL_HINT`.
+The layer (in `rsbench.h`, because the creates span several files) is the
+same two-part recipe as `XSBench_intel`'s. **Chain pinning**
+(`mcChainEdtHint`): the two SPAWNED links of each chain pin to the rank the
+chain's first link landed on; the first link stays round-robin — that IS the
+load balance across independent lookups — so the distribution across ranks
+is untouched and only the chain's interior becomes local. **Home spreading**
+(`mcSpreadDbHint`): every dataset object is created inside the one
+`init_dataH` task and would otherwise be homed on that single rank, which
+then serves the whole machine's reads — the per-nuclide pole/window/K0RS
+blocks spread round-robin by nuclide (one nuclide's three blocks
+co-located), the material tables by material, and the ten handle/index
+singletons every lookup acquires each land on a different rank.
+`pdCount <= 1` returns `NULL_HINT` for both.
+
+Measured A/B of the two parts (chain-pin-only vs chain-pin+spread, single
+runs): spreading is ≈ neutral here — val 8n improved 331.0→318.7 s but most
+other multinode cells moved 0 to +12% — unlike the chain pinning, which
+carries the layer's whole win over base. The likely reason spreading buys
+less than the serving-load argument suggests: the binder is the requesting
+side's per-acquire latency and the serial spawner, not the home's serving
+throughput. The layer keeps both parts — they are what hints alone can
+express in this structure.
 
 ## Sizing
 
-`-l` is the only lever that matters — `-t` is dead (see Parameters).
-Doubling `-l` linearly doubles EDT count (`3` per lookup, `+2` per additional
-1024-lookup batch) and wall time; DB count and memory are fixed by
+`-l` sets total work and `-b` the in-flight width — `-t` is dead (see
+Parameters). Doubling `-l` linearly doubles EDT count (`3` per lookup, `+2`
+per additional batch) and wall time; DB count and memory are fixed by
 `-s`/`-n`/`-p`/`-w` alone and never move with `-l`.
 
-- **1 node × 15 workers**: `-l 50000`–`200000` gives 150k–600k EDTs — several
-  hundred per worker live within a batch, enough to keep 15 workers busy for
-  tens of seconds. Heavier `-l` mostly lengthens the sequential batch chain
-  (`G`) rather than widening per-batch parallelism, since batch width is
-  capped at 1024 regardless of `-l` or worker count.
-- **8 nodes × 120 workers**: the same `-l` scaling applies, but `nprocs` stays
-  pinned at 1 — the one-time, one-rank data-generation phase never spreads
-  across nodes, and a 1024-wide batch leaves 120 workers comfortably fed but
-  gains nothing from more nodes beyond spreading the remote-acquire traffic
-  described in Placement.
-- The calibrated `-l 400000` (≈1.2M EDTs, 391 sequential batches) is sized for
-  a multi-minute 1-node run. Because there is no work-partitioning axis across
-  nodes at all, treat multinode runs of this app as testing remote-acquire /
-  fine-grain-churn cost, not throughput scaling — unlike `_sharedDB`'s `-t`.
+- The campaign runs `-l 150000 -b 3456` at every node count (the sweep
+  invariant: total logical quantity fixed). `-b 3456 = 32×108` is the
+  master/worker window rule — one in-flight batch spanning the full campaign
+  machine (32 nodes × 108 workers, the Dane anchor) — so the nominal width
+  can occupy every worker at the largest geometry; smaller runs simply hold
+  more of the window per worker.
+- Throughput is spawn-serial-capped: the single `rankMultiLookupSpawner` loop
+  creates chains at ~4 µs/lookup, so a batch's tail is creation-bound before
+  it is compute-bound (~98 K lookups/s at 15 workers, ~88 K/s at 108 — more
+  workers do not help a serial spawner). `-l 150000` is sized from that cap
+  for a minutes-scale ceiling on the slowest arm×geometry.
+- Because `nprocs` is hardcoded to 1, there is no work-partitioning axis
+  across nodes at all: the one-time, one-rank data-generation phase never
+  spreads, and multinode runs measure remote-acquire / wiring cost, not
+  throughput scaling — unlike `_sharedDB`'s fork axis.
+
+## Family shape (measured, 15w+1p × 1/2/4/8 nodes, `-l 150000 -b 3456`)
+
+hinted, e2e seconds (kernel `Runtime:` ≈ e2e here — init is a fixed ~0.1 s).
+The pole-checksum pin held in all 21 cells:
+
+| arm | 1n | 2n | 4n | 8n |
+|---|---|---|---|---|
+| val_wb | 1.6 | 218.8 | 247.7 | 318.7 |
+| val_wb_comb | 1.5 | 30.1 | 22.4 | 44.3 |
+| inv_wb | 1.8 | 10.5 | 15.1 | 19.1 |
+| excl_retain | 1.8 | 17.6 | 19.6 | 36.4 |
+
+base val_wb: 234.3 / 302.6 / 342.2 at 2/4/8n — the hinted layer wins
+1.07-1.22× on val. A Dane-geometry single node (108w+4p) runs it in 1.5 s.
+The arm separations dwarf the hint deltas: on this write-once,
+read-fine-grained dataset at 8 nodes, VAL's re-validate-per-acquire costs
+**16.7×** INV's covering reads (318.7 vs 19.1) and 8.8× EXCL; combining
+recovers VAL to 7.2× better than plain VAL but still 2.3× behind INV. Every
+arm is anti-scaling 2n→8n — one rank's serial spawner feeds all nodes, so
+extra nodes only add wire distance. The 1n→2n cliff (1.6 s → 10.5-218.8 s)
+is the fine-grain remote-acquire regime switching on: per-nuclide KB-scale
+DBs, up to 963 acquires per fuel-material lookup.

@@ -2,9 +2,10 @@
 
 *The opposite design from `RSBench_intel`: one contiguous datablock per array
 across ALL nuclides (not one per nuclide), coarse per-thread-per-chunk EDTs
-(not one triple per lookup), real policy-domain-affinity placement (not
-`NULL_HINT` round-robin), and an actual verified `RS_CHECKSUM` (not a
-completion marker only).*
+(not one triple per lookup), and real policy-domain-affinity placement (not
+`NULL_HINT` round-robin). The pinned scalar is the workload echo — the app's
+computed counters travel through its reduction-tree library, whose delivery
+is not deterministic under this runtime (see Overview).*
 Source:
 `third_party/ocr-apps/apps/RSBench/refactored/ocr/intel-sharedDB/src/` (7 C
 files + `config.tpl`, ~1.1k lines; `main.c` runs the SPMD-fork / per-thread /
@@ -24,13 +25,24 @@ ONE contiguous datablock per array (`DBK_poles`, `DBK_windows`,
 `CHUNK_SIZE=1000`-lookup slice at a time and computes all of it inside one
 EDT body's C loop before creating its own successor lane. Two counters —
 `abrarov` (how often the slow Abrarov/Faddeeva path is taken) and `alls`
-(every Doppler-broadened pole evaluated) — accumulate per-thread and fold
-through an `ARITY=10` reduction tree (`libs/src/reduction/reduction.c`) into
-`RS_CHECKSUM: <abrarov> <alls>`. Both are pure functions of the fixed seed
-(`srand(42)` for data generation, `42+1+tid` per thread for lookups) and of
-associative integer addition, so the catalog pins `expect: 17079` at
-`expect_args: -l 100` (nthreads=1, nprocs=1) as an actual correctness oracle
-— unlike the plain port's marker-only check.
+(every Doppler-broadened pole evaluated) — accumulate per-lane and fold
+through an `ARITY=10` reduction tree (`libs/src/reduction/reduction.c`).
+The counters themselves are pure functions of the fixed seeds (`srand(42)`
+for data generation, `42+1+tid` per lane for lookups), but their **delivery
+is not deterministic on this runtime**: the reduction library's rendezvous
+rides labeled-GUID event creation, and this runtime's labeled semantics is
+create-replaces (racing creators install over each other), so the folded
+sums come out different on every run — a family sweep printed 17 distinct
+values in 17 cells on identical inputs, and the per-lane accumulation also
+re-adds its running prefix each lookup (`*g += abrarov` inside the loop),
+so even a faithful delivery would not equal the true count. The catalog
+therefore pins the **workload echo** (`Lookups:` from the results banner,
+`expect: 1000000`) — the same completion-level convention as
+`XSBench_intel_sharedDB` — and the verified data-side oracle lives in the
+plain port's pole checksum instead. The same caveat applies to the results
+banner's `Runtime:` line (an `F8_MAX` allreduce over instances through the
+same library): treat it as a lower bound, and use the runtime's own `[E2E]`
+stamp for measurement.
 
 ## Parameters
 
@@ -40,7 +52,7 @@ associative integer addition, so the catalog pins `expect: 17079` at
 | `-p <procs>` | SPMD "rank" replication count — each rank independently runs the FULL `-l` lookups, not a partition | 1 | ✓ reachable, but **replicates** the run rather than partitioning it — see Sizing. Validated `≥ 1` (0 previously hung the SPMD fork, a negative value previously wrapped to a huge rank count) |
 | `-l <lookups>` | XS lookups *per rank* | 10,000,000 | ✓ |
 | `-s small\|large` | H-M size, `small` forces `n_nuclides=68` | large (355) | ✓ |
-| `-n <n>` | nuclide count | 355 | ✓ but constrained: `load_num_nucs`/`load_mats` pick the H-M material tables by this count alone (exactly 68 → small tables, highest nuclide ID 67; anything else → large tables, highest ID 354), and every per-nuclide array is sized `n_nuclides`, so only `68` or `≥ 355` is legal. Other values are rejected at parse — they used to index `pseudo_K0RS`/`windows`/`poles` out of bounds in the lookup kernel |
+| `-n <n>` | nuclide count | 355 | ✓ parsed (only `≥1` checked) — ⚠ constrained in practice: `load_num_nucs`/`load_mats` pick the H-M material tables by this count alone (exactly 68 → small tables, highest nuclide ID 67; anything else → large tables, highest ID 354), and every per-nuclide array is sized `n_nuclides`, so only `68` or `≥ 355` avoids out-of-bounds indexing in the lookup kernel; the campaign only ever reaches this through `-s` |
 | `-a <poles>` | average poles per nuclide | 1000 | ✓ own flag, distinct from `-p` (was previously a second, unreachable `-p` branch shadowed by the nprocs match — see notes) |
 | `-w <windows>` | average windows per nuclide | 100 | ✓ |
 | `-d` | disable Doppler broadening | ON | ✓ |
@@ -76,15 +88,15 @@ are pinned by measurement at `t=2` (see Counter cross-check below) but their
 general-`t` scaling is not statically closed-formed (the `ARITY=10` tree's
 depth grows with `t`; see notes).
 
-Worked numbers at the calibrated `-l 7500000 -t 128` (`p=1`, `n=355` default):
-`G=59` → base terms (excluding the reduction-tree fringe, negligible at this
-scale) give **≈38.4K DBs**, **≈15.1K EDTs**, **≈22.7K events** — the event
-figure is markedly higher than a `2tGp`-slope estimate would give, because
-the per-(thread,generation) event count is 3, not 2 (see the table above).
-Contrast the plain port's 1,200,795 EDTs at `-l 400000`: **three orders of
-magnitude coarser task granularity** for ~19× the lookups. Shared-array
-payload ≈26.7 MB per rank (same total bytes as the plain port's fragmented
-1,065 DBs, now 13 DBs).
+Worked numbers at the calibrated `-l 1000000 -t 108 -p 32` (`n=355`
+default): per instance `G=⌈10⁶/(1000·108)⌉=10` → base terms (excluding the
+reduction-tree fringe, negligible at this scale) give per instance ≈576 DBs
+(`18+5t+5tG`), ≈2.2K EDTs (`9+2tG`), ≈3.2K events (`4+3tG`) — ×32 instances
+≈**18.4K DBs**, **70K EDTs**, **104K events** for the whole run. Contrast
+the plain port's 450,101 EDTs at `-l 150000`: **~30× coarser task
+granularity** for ~213× the lookups (32M aggregate). Shared-array payload
+≈26.7 MB **per instance** (same total bytes as the plain port's fragmented
+1,065 DBs, now 13 DBs), ≈854 MB across the 32 instances.
 
 Counter cross-check: verified (1 node, `-s small -t 2 -l 30` vs `-l 2500`,
 both `p=1`, `G=1` vs `G=2`): measured absolutes EDT 22/26, DB 44/54, EVT
@@ -106,7 +118,7 @@ the same body) and runs the `CHUNK_SIZE`-lookup C loop. On a lane's last
 generation it calls `reductionLaunch` into the loop-completion tree and
 decrements `loopCompletionLatchEVT` (a LATCH counting down from `t`) →
 `launchReductionEdt` (waits on the latch) launches the perf-timer reduction →
-`summaryEdt` (RO on both reduction output events) prints `RS_CHECKSUM`,
+`summaryEdt` (RO on both reduction output events) prints the results banner,
 destroys the shared arrays, satisfies `finalOnceEVT` → `wrapUpEdt` shuts down.
 
 DB concurrency: the 8 shared-array DBs are written exactly once (during
@@ -141,62 +153,84 @@ genuine `OCR_HINT_EDT_AFFINITY` from `ocrAffinityGetAt(AFFINITY_PD,
 getPolicyDomainID_Cart1D(i, {p}, {affinityCount}), …)` — a real base
 (not `OCR_APP_OPTIMIZED_PLACEMENT`-gated; that guard does not exist in this
 port at all) cart-1D spread of SPMD ranks across policy domains. At the
-calibrated `p=1` this places the sole rank on PD 0 and contributes no spread
-by itself. Inside that rank, `getAffinityHintsForDBandEdt` snapshots
+calibrated `p=32` the fork's block partition maps 32 instances onto however
+many PDs the run has (8n → 4 per node; 1n → all 32 on the node). Inside
+each instance, `getAffinityHintsForDBandEdt` snapshots
 `ocrAffinityGetCurrent()` (wherever `initEdt` landed) into
 `rankH_t.myEdtAffinityHNT`/`myDbkAffinityHNT`, and every same-rank object
 thereafter — `channelSetupEdt`, `FNC_xsbenchMain`, `rankDataH_t`, and all 13
 of `initSimulation`'s DBs — is explicitly pinned there (not `NULL_HINT`), so
-the whole ~26.7 MB shared dataset is deliberately homed on one rank.
+each instance's ~26.7 MB shared dataset is deliberately homed on the rank
+its fork slot chose.
 
-The one exception is the per-thread lane: `SINGLE_RUN_ACROSS_PD` is now
-compiled in (`benchmarks/apps/CMakeLists.txt`'s `OCR_EXT_DEFINES` — historically
-missing, which pinned every lane to rank 0 regardless of node count; fixed as
-of this writing), so `lookUpKernelEdt` re-hints each `lookUpKernelPerThreadEdt`
-(and everything it spawns) with `ocrAffinityGetAt(AFFINITY_PD,
+The one exception is the per-thread lane: with `SINGLE_RUN_ACROSS_PD`
+compiled in (`benchmarks/apps/CMakeLists.txt`'s `OCR_EXT_DEFINES`),
+`lookUpKernelEdt` re-hints each `lookUpKernelPerThreadEdt` (and everything it
+spawns) with `ocrAffinityGetAt(AFFINITY_PD,
 getPolicyDomainID_Cart1D(tid, {t}, {affinityCount}), …)`, where
-`affinityCount` is the **live** `ocrAffinityCount(AFFINITY_PD, …)` queried at
-run time — every thread lane spreads round-robin across however many ARTS
-ranks the run actually has, independent of `p`. So the calibrated `-l 7500000
--t 128` self-scales: the same binary spreads its 128 lanes over 1 node or 8
-nodes without re-tuning `-t`, while the shared dataset stays resident on rank
-0's node only. The resulting pattern is a genuine broadcast-once/
-compute-everywhere shape: a lane on a non-owning node pays one remote RO
-acquire per shared array it touches, then (protocol-dependent) reuses its
-node-local cached copy for the rest of its `G` generations. The 5 ephemeral
-per-generation "ptrs" DBs use `NULL_HINT`, so they are homed wherever the
-compute EDT itself runs — always local, never remote.
+`affinityCount` is the **live** `ocrAffinityCount(AFFINITY_PD, …)` queried
+at run time — so EVERY instance spreads its `t` lanes across ALL the run's
+ranks, independent of where the instance's own dataset lives. At the
+calibrated `-p 32 -t 108` on 8 nodes this makes a deliberate broadcast
+texture: an instance's lanes run machine-wide and ~7/8 of them
+remote-RO-acquire that instance's arrays from its home rank; every node's
+cache ends up holding copies of many instances' datasets (protocol-dependent
+reuse across a lane's `G` generations). At 1n the Cart1D collapses and
+everything is local. The 5 ephemeral per-generation "ptrs" DBs use
+`NULL_HINT`, so they are homed wherever the compute EDT itself runs — always
+local, never remote. There is nothing left for a hint layer to add — every
+create already carries an explicit affinity or is deliberately creator-local —
+so this app has no `hinted` flavor.
 
 ## Sizing
 
-`-t` and `-p` are independent levers that do **not** compose the way MPI
-ranks × OpenMP threads would:
+The campaign fixes `-l 1000000 -t 108 -p 32` at every node count — the
+strict sweep invariant (every logical count node-invariant, same convention
+as `XSBench_intel_sharedDB`):
 
-- **`-t` (nthreads)** is both the intra-rank task-fan-out axis AND (via
-  `SINGLE_RUN_ACROSS_PD`) the cross-node placement axis — set it to roughly
-  the total worker count across the whole job (e.g. `-t 120`–`128` for an
-  8-node×15-worker run) so one lane lands near each worker; `-l` then sets how
-  many generations (`G=⌈L/(1000t)⌉`) each lane works through.
-- **`-p` (nprocs)** replicates the entire `-l`-lookup run once per rank rather
-  than partitioning it — each rank regenerates the identical fixed-seed
-  dataset and independently runs the full lookup count. Raising `-p`
-  multiplies total work and memory (`p`× the ~26.7 MB dataset, one full copy
-  per rank) without changing any single rank's task grain — it is a "run `p`
-  independent replicas, one per PD" knob, not a strong-scaling knob. Leave it
-  at the default `1` unless independent-replica behavior is actually wanted.
-- **1 node × 15 workers**: `p=1`, `-t` ≈15–30 (a few lanes per worker), `-l`
-  large enough that `G` gives each lane several generations — e.g. `-l 500000
-  -t 16` (`G≈32`) — for a run of tens of seconds.
-- **8 nodes × 120 workers**: `p=1`, `-t 120`–`128` so `SINGLE_RUN_ACROSS_PD`
-  spreads one lane per worker across all 8 nodes; the calibrated `-l 7500000
-  -t 128` (`G=59`) is sized for a multi-minute 1-node run and self-spreads
-  unchanged at 8 nodes since placement re-queries `affinityCount` at run time.
+- **`-p 32`** is the SPMD instance count, 1× the largest campaign geometry
+  (32 nodes); the fork's block partition maps the 32 instances onto however
+  many PDs the run has, so smaller runs pack more instances per node instead
+  of changing any count. Each instance regenerates the identical fixed-seed
+  dataset and runs its own full `-l` — total work is a constant 32M-lookup
+  aggregate.
+- **`-t 108`** lanes per instance, 1× a campaign node's persistent workers
+  (the SPMD width rule); `G=⌈10⁶/(1000·108)⌉=10` generations per lane.
+- **`-l 1000000`** per instance sizes a ~2-minute 1-node ceiling at 15
+  workers (~260K lookups/s end-to-end there — two orders below XSBench's
+  rate, the multipole kernel being that much heavier) and shrinks toward
+  ~17 s at 8 nodes.
 - Memory is dominated by the ~26.7 MB shared dataset (`n_nuclides=355`,
-  `avg_n_poles=1000` by default, now settable with `-a`) resident once per
-  rank; `-n`/`-s`/`-w`/`-a` are the only levers that move it, and none of them
-  scale with node count in this port. `DBK_poles`/`DBK_windows` are allocated
-  at exactly `n_nuclides·avg_n_poles` / `n_nuclides·avg_n_windows` slots, while
-  the per-nuclide counts are a random multinomial draw with a "bump any zero
-  bin up to 1" floor; both now sum the actual counts first and reject a run
-  whose distribution would overflow the allocation (reachable at very small
-  `-a`/`-w`, not at the sizes above).
+  `avg_n_poles=1000` by default, settable with `-a`) resident once per
+  instance — ≈854 MB total at `-p 32`, plus protocol-dependent per-node
+  cached copies from the lane spread; `-n`/`-s`/`-w`/`-a` are the only levers
+  that move it. `DBK_poles`/`DBK_windows` are allocated at exactly
+  `n_nuclides·avg_n_poles` / `n_nuclides·avg_n_windows` slots, while the
+  per-nuclide counts are a random multinomial draw with a "bump any zero bin
+  up to 1" floor — the draw conserves the total, so the allocation can only
+  overflow when the zero-bin floor injects extras, i.e. at very small
+  `-a`/`-w`, unreachably far from the sizes above.
+
+## Family shape (measured, 15w+1p × 1/2/4/8 nodes, `-l 1000000 -t 108 -p 32`)
+
+base (this app has no hinted flavor), e2e seconds. All cells completed;
+the counter sums differed per cell as described in Overview, which is why
+the pin is the workload echo:
+
+| arm | 1n | 2n | 4n | 8n |
+|---|---|---|---|---|
+| val_wb | 121.6 | 76.1 | 46.2 | 22.2 |
+| val_wb_comb | 124.8 | 62.7 | 34.2 | 16.9 |
+| inv_wb | 116.4 | 63.0 | 33.6 | 17.1 |
+| excl_retain | 116.2 | 65.8 | 33.5 | 16.3 |
+
+A Dane-geometry single node (108w+4p) runs it in 74.6 s. Unlike its
+`XSBench_intel_sharedDB` sibling (arm-indifferent to <1%), the arms separate
+mildly here at 2–4n (val_wb trails the pack by up to ~1.2×): the
+`SINGLE_RUN_ACROSS_PD` lane spread makes every instance's lanes
+remote-acquire its arrays machine-wide, so the read path is exercised
+cross-node even though the datasets are block-homed. All four arms scale
+5.5–7.1× from 1n to 8n — the ~60 s serial-init floor (32 instances
+regenerating datasets) parallelizes with nodes along with the kernel. The
+banner's `Runtime:` line is not used for any of this (see Overview); the
+numbers above are the runtime's `[E2E]` stamp.
