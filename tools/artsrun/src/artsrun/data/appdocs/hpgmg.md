@@ -52,8 +52,11 @@ halving boxes and starts merging 8 into 1; and legitimately fixed:
 `mg_build` derives the level table: halve `box_dim` while it exceeds 8, then
 halve `boxes_in_i` (8:1 agglomeration) until one box remains, then halve
 `box_dim` again down to 1 — for a power-of-two `boxes_in_i` this always ends in a
-**four-level single-box tail** with `box_dim` 8, 4, 2, 1.  With `args:
-['5','512']` → `box_dim = 32`, `boxes_in_i = 8`, `L = 9`:
+**four-level single-box tail** with `box_dim` 8, 4, 2, 1.  The worked example
+below uses `['5','512']` (`box_dim = 32`, `boxes_in_i = 8`, `L = 9`); the
+catalog's campaign size `['5','4096']` is the same structure one doubling wider
+— `boxes_in_i = 16`, `L = 10`, three 4096-box levels before agglomeration, and
+every formula below scales accordingly:
 
 | level | box_dim | boxes_in_i | boxes `N` | one box DB | all boxes |
 |-------|---------|-----------|-----------|------------|-----------|
@@ -68,8 +71,7 @@ A box DB is `16 + 12·(box_dim+2)·kStride·8` bytes (`kStride = (box_dim+2)²`,
 floor-padded to 8 in the pencil); each level also carries one *constant box* of
 that size (the out-of-domain neighbour sentinel) and a level DB of `240 + 64·N`
 bytes.  **DBs = `2 + 3L + Σ N_l`** at init, plus one scratch per `solve_edt`
-(`L`), one in `print_timing_edt` and one 16-byte norm result per level-0 box
-(`N_0`, the norm phase's per-box output) → **2 163**, of which 1 612 are boxes;
+(`L`) and one in `print_timing_edt` → **1 651**, of which 1 612 are boxes;
 payload **≈ 2.12 GiB**, live for the whole run.
 
 EDTs come in two tiers.  The **level chain** is materialised up front —
@@ -85,33 +87,30 @@ and zeroing per *coarse* box); fan-out phases per level number `23` at level 0,
 `= 23N_0 + Σ 21(l+1)N_l + (3L+1)N_{L−1}` = **72 221** (31 013 6-neighbour
 exchanges, 27 112 smooths, 3 901 residuals, 2 886 restricts, 2 886
 interpolations, 1 786 zeroings, 1 100 26-neighbour exchanges, 1 537
-init/mulv/norm), and the norm phase adds its single collector — **73 215 EDT
-creates** in all.
+init/mulv/norm) — **73 214 EDT creates** in all.
 
 Events, over all three shim sources: `ocrEventCreate` (`L+1`), the output event
 of every `ocrEdtCreate` with a non-NULL `outputEvent`, and one finish event per
 `EDT_PROP_FINISH`.  Nearly every level EDT is finish-with-output → **2 events
 each**; `solve_edt`, `print_timing_edt` and `finalize_edt` are output-only → 1;
-every per-box EDT passes NULL → 0 except the `N_0` `norm_edt`s, whose output
-events carry their results to the collector → 1 each.  Total **2 490**.
+every per-box EDT passes NULL → 0.  Total **1 978**.
 Dependence slots resolved ≈ 375 000: 189 k box-RO, 74 k box-RW, 77 k level-RO,
 34 k on the nine constant boxes.
 
-Counter cross-check: verified (1 node, `4 1` / `4 8` / `4 64`, L = 5/6/7).
-ΔNUM_EDT_CREATE = +698 / +4 371, ΔNUM_DB_CREATE = +26 / +180, ΔNUM_EVENT_CREATE
-= +277 / +378 between the three sizes match the formulas' deltas exactly (the
-DB and event deltas carry the norm phase's `N_0` = 1/8/64 result blocks and
-their output events). The absolutes also match — NUM_DB_CREATE = 30/56/236 and
-NUM_EVENT_CREATE = 587/864/1242 equal the formulas above plus the runtime's
-usual +1 DB / +0 event bootstrap — but NUM_EDT_CREATE = 528/1226/5597 needs **+2 EDT, not
+Counter cross-check: taken at `4 1` / `4 8` / `4 64` (L = 5/6/7) against a
+since-reverted norm-collector variant; the formulas above are the as-born
+wiring with that variant's `N_0` result blocks, output events and collector
+subtracted analytically (ΔNUM_EDT_CREATE = +698 / +4 371 between the sizes is
+unchanged; a fresh counter run should reconfirm the absolutes).  The absolutes
+then read NUM_DB_CREATE = 29/48/172 and NUM_EVENT_CREATE = 586/856/1178 plus
+the runtime's usual +1 DB / +0 event bootstrap — and NUM_EDT_CREATE needs **+2 EDT, not
 +1**: `main_edt` (`libs/src/core/system/runtime.c:535`) is itself one EDT,
 and its body — the OCR shim's own `main_edt`
 (`benchmarks/ocr_shim/arts_ocr.c:2159-2196`) — creates the argv DB *and* a
 second EDT, `mainEdtTrampoline`, to carry the app's `mainEdt` in as a DB
 dependence. Both run before any app code, so every total here is
-`app formula + 2` EDTs (526/1224/5595 → 528/1226/5597; 73 215 → **73 217** at
-the calibrated `['5','512']`) — a shim-bootstrap fact, not specific to this
-app.
+`app formula + 2` EDTs (73 214 → **73 216** at
+`['5','512']`) — a shim-bootstrap fact, not specific to this app.
 
 ## Wiring
 
@@ -121,12 +120,15 @@ every child of phase `k` has completed and released.  The other events are one
 ONCE event per restriction sequence, which `restrict_edt` satisfies **with
 the coarsest box's GUID** (`ocrDbRelease` then `ocrEventSatisfy`,
 `restrict_edt.c:77`) — that is how the bottom solve receives its datablock, on
-an **RW** slot, since BiCGStab updates that box in place — and the `N_0` norm
-output events described below.
+an **RW** slot, since BiCGStab updates that box in place.
 
 Per-box EDTs uniformly take the level DB on slot 0 and their own box on slot 1.
 `smooth_edt`, `residual_edt`, `init_ur_edt`, `mulv_edt` and `zero_vector_edt`
-take level RO + box **RW**.  `exchange_edt` adds 6 (face) or 26 (face+edge+
+take level RO + box **RW**; `norm_edt` takes the level **RW** and its box RO,
+depositing one double into the level's `b_norms` slot — so the whole norm
+fan-out serializes on the level datablock's per-node-exclusive turns, the
+port's starkest one-datablock fan-in (kept as-born: it is part of what the
+baseline exhibits).  `exchange_edt` adds 6 (face) or 26 (face+edge+
 vertex) neighbour boxes **RO**; out-of-domain neighbours resolve to the level's
 single `constant_box_guid`, so one DB appears `6B²` times per 6-neighbour round
 and `27B³ − (3B−2)³` times per 26-neighbour round — at level 0 of the calibrated
@@ -135,9 +137,7 @@ one per coarse box: coarse box **RW**, both level DBs RO, its `N_fine/N_coarse`
 fine boxes RO; `interpolate_edt` mirrors it with the fine boxes **RW** and the
 coarse box RO for the piecewise-constant (V-cycle) prolongation, **RW** for the
 linear (FMG) one, which applies the boundary condition to that box's ghost
-cells before reading it.  `norm_edt` takes level and box RO and returns its
-box's norm in a 16-byte block; one `norm_merge_edt` holds the level DB RW and
-folds all `N_0` of them into `box_norms[]`.
+cells before reading it.
 
 DB concurrency, worst first.  The **level DB is the contention point**: its
 level EDT holds it RW while all `N_l` children hold it RO (children are created
@@ -222,8 +222,25 @@ boxes of a level co-locate AND a coarse box lands on the rank of its fine
 children, so inter-level transfers stay rank-local.  EDTs follow their box via
 `ocrAffinityQuery(box)` (`mg_edt.c`), keeping compute with data.  This is the
 spatial box-home design adopted in the 2026-08-07 anti-scale verdicts; the
-residual granularity amplification (~400x) is structural and out of a hint's
-reach.
+residual granularity amplification (~460x per remote face read) is structural
+and out of a hint's reach.
+
+Measured (bentley trend sweep, 15w+1p, `['5','4096']`, val_wb / best-of-arm
+range): base 111 s → 348 / 330 / 350 s at 2/4/8 n — the whole-box exchange
+saturates immediately and flattens; hinted 112 s → 160 / 175 / 184 s
+(range across the four arms ≤ 8%, `val_wb_comb` consistently best) — the
+layer halves the multinode cost and turns the cliff into a decelerating
+creep, but the program still anti-scales.  The Dane anchor cell (108w+4p)
+runs 114.5 s.  Two facts locate the residual: the E2E is 94% *serial
+initialization* (the app's own solve timer reads 6.2 s at 1 n under 112 s
+E2E), and the solve itself anti-scales 10× even hinted (6.2 → 64 s at
+8 n).  An exchange-payload-only rewrite (face slabs, ~460× fewer bytes,
+structure otherwise unchanged) came back *slower* — the solve's multinode
+term is the per-phase turnaround of the centrally-spawned fork-join, not
+bandwidth.  Both terms fall to the full restructure: see `hpgmg_dist`
+(rank-persistent decomposition + distributed init), which turns
+112 → 184 s into 22 → 5.7 s and gives the application its first positive
+scaling.
 
 ## Sizing
 
@@ -245,15 +262,37 @@ hide the exchange, and `log2_box_dim` so the grain is worth a task:
 
 - **1 node, 15 workers**: `['5','512']` → 512 boxes, ~34 per worker, 32 768
   cells per task, 2.12 GiB.  `['5','64']` (64 boxes, 276 MiB) is the fast
-  variant; `['4','1']` is a single box — strictly serial, correctness pin only.
-- **8 nodes, 120 workers**: the same `['5','512']` under strong scaling leaves
-  4.3 boxes per worker at level 0 and none at levels 5–8; widening to
-  `['5','4096']` restores ~34 per worker but costs 17 GiB.
+  variant; `['4','1']` is a single box — strictly serial.
+- **Campaign width**: `['5','4096']` → 16³ boxes of 32³ cells, a 512³ grid,
+  ~17 GiB — 4 096 boxes cover a 108-worker rank 38-deep at level 0 and keep
+  the first three levels at full width.
 
-The catalog's `['5','512']` is that trade-off: 8³ boxes of 32³ cells — a 256³
-grid, the largest power-of-two width that keeps the 1-node footprint near 2 GiB,
-with a grain large enough that level 0 is compute-bound.  `expect_args` uses
-`['4','1']` because the pinned `||error||` is grid-dependent; the single box also
-makes the pin insensitive to placement and scheduling.  Note that the serial
-`init_all` preamble does not shrink with node count, so it grows as a fraction of
-a strong-scaling sweep.
+The catalog's `['5','512']` is the campaign calibration under the
+anti-scaler rule: this program's worst cells are its LARGE geometries, so
+the anchor is sized small — the dane1 anchor (1 node, 108w+4p) runs
+14.5 s, 8 nodes runs 26.1 s, and the 32-node extrapolation stays in the
+tens of seconds while the anti-scaling *shape* (the measurement) is fully
+visible.  `['5','4096']` is the bentley 15w+1p × {1,2,4,8} trend size
+(~112 s at 1 n), where the measured family table above was taken.
+`expect_args` equals `args`: the pinned `||error||` is grid-dependent
+(discretization error) and prints identically across arms, node counts,
+hint states and the restructured decomposition — and the two sizes'
+pins sit exactly a factor ~3.97 apart, the O(h²) second-order signature.
+Note that the serial `init_all` preamble does not shrink with node count,
+so it grows as a fraction of a strong-scaling sweep.
+
+## Family
+
+The submodule holds one other HPGMG port, `hpgmg4`
+(`apps/hpgmg4/refactored/ocr/intel/`): a *fourth-order* HPGMG with red-black
+smoothing whose own README opens "Beginnings of an OCR implementation" — a
+different discretization and an unfinished one, so it is neither registered
+nor comparable.  This SDSC port
+is the family's only member; there is no scaling sibling, which is why the
+structural anti-scaling above has no in-family control and the catalog
+carries a restructured decomposition instead: `hpgmg_dist` (see its own
+appdoc) rebuilds the port on a rank-persistent data plane — spatial box
+homes with per-rank slice fan-outs, a face-slab exchange, distributed
+initialization — with the kernels, F-cycle and answer unchanged, and is
+the pairing that supplies the fork-join-vs-persistent comparison for this
+family.

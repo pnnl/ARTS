@@ -397,6 +397,7 @@ add_benchmark_app(NAME nqueens
 add_benchmark_app(NAME smithwaterman
     DIR smithwaterman/ocr
     SOURCES smithwaterman.c
+    HINTED_PLACEMENT
 )
 
 add_benchmark_app(NAME basicIO
@@ -484,6 +485,7 @@ add_benchmark_app(NAME triangle
 add_benchmark_app(NAME tempest
     DIR tempest/refactored/ocr/intel-bryan
     SOURCES tempestCommunication.c
+    EXTRA_DEFINES DURATION=4400
     HINTED_PLACEMENT
 )
 
@@ -740,6 +742,20 @@ add_benchmark_app(NAME hpgmg
     HINTED_PLACEMENT
 )
 
+# Restructured decomposition: a separate program (its own main, lattice
+# driver and face-slab exchange) that links the base port's kernel and
+# per-box task sources unchanged — rank-persistent data plane, point-to-point
+# phase chains, distributed initialization.  Placement is part of the design,
+# so the layer is compiled in unconditionally (no _hinted family).
+add_benchmark_app(NAME hpgmg_dist
+    DIR hpgmg/refactored/ocr/sdsc
+    SOURCES hpgmg_dist_main.c mg_dist.c exchange_dist.c
+    init.c utils.c mg_edt.c solve_edt.c
+    residual_edt.c restrict_edt.c smooth_edt.c interpolate_edt.c
+    EXTRA_DEFINES OCR_APP_OPTIMIZED_PLACEMENT
+    EXTRA_LINK_LIBS m
+)
+
 
 # ==========================================================================
 # Tier 10: MiniAMR variants
@@ -768,6 +784,7 @@ add_benchmark_app(NAME miniAMR_intel_bryan
 )
 
 add_benchmark_app(NAME miniAMR_intel_chandra
+    EXTRA_DEFINES OCR_APP_DESTROY_REDUCTION_TEMPS OCR_APP_COUNTED_OEVT
     DIR miniAMR/refactored/ocr/intel-chandra
     SOURCES main.c init.c check_sum.c refine.c move.c block.c comm_refine.c
     comm_parent.c driver.c comm.c comm_utils.c stencil.c util.c
@@ -822,6 +839,7 @@ add_benchmark_app(NAME npb_cg
 # ==========================================================================
 
 add_benchmark_app(NAME RSBench_intel
+    HINTED_PLACEMENT
     DIR RSBench/refactored/ocr/intel
     SRC_SUBDIR src
     SOURCES main.c init.c material.c io.c timers.c utils.c rs_kernel.c
