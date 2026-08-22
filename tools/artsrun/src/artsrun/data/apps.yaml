@@ -90,10 +90,11 @@ apps:
     marker: 'Initial energy'
     scalar_re: 'Initial energy\s*:\s*([\-+0-9.eE]+)'
     tolerance: 0.0001
-    # -n 1 (a print/reduction every step) was only ever a workaround for the
-    # port's terminate-on-period-multiples bug, now fixed — the default
-    # period stands.
-    args: ['-x', '60', '-y', '60', '-z', '60', '-N', '6']
+    # The port reaches its wrap-up only through the kinetic-energy reduction,
+    # which runs on print-period boundaries — a step count the period does
+    # not divide never terminates.  The args keep -n dividing -N for that
+    # reason (the row is disabled regardless; see unsupported above).
+    args: ['-x', '60', '-y', '60', '-z', '60', '-N', '6', '-n', '6']
 
   CoMD_intel_chandra_tiled:
     binary: CoMD_intel_chandra_tiled
@@ -102,9 +103,13 @@ apps:
     marker: 'Final energy'
     scalar_re: 'Final energy\s*:\s*([\-+0-9.eE]+)'
     tolerance: 1e-06
-    expect: '-1.166063'
-    expect_args: ['-x', '8', '-y', '8', '-z', '8', '-N', '2', '-i', '2', '-j', '2', '-k', '1']
-    args: ['-x', '144', '-y', '144', '-z', '144', '-N', '8', '-i', '8', '-j', '4', '-k', '4']
+    # Scaling-app anchor: -N 100 (the benchmark's own default) lands the
+    # dane1 cell (one 108w+4p node) at ~126 s, inside the ~150 s anchor
+    # band; the 24x12x12 rank grid is 3456 = one persistent chain per
+    # worker at the largest campaign geometry, node-invariant.
+    expect: '-1.166049797578'
+    expect_args: ['-x', '216', '-y', '216', '-z', '216', '-N', '100', '-n', '10', '-i', '24', '-j', '12', '-k', '12']
+    args: ['-x', '216', '-y', '216', '-z', '216', '-N', '100', '-n', '10', '-i', '24', '-j', '12', '-k', '12']
 
   CoMD_sdsc:
     binary: CoMD_sdsc
@@ -113,9 +118,19 @@ apps:
     marker: 'Final energy'
     scalar_re: 'Final energy\s*:\s*([\-+0-9.eE]+)'
     tolerance: 1e-06
-    expect: '-1.166058121223'
-    expect_args: ['-x', '4', '-y', '4', '-z', '4', '-N', '2']
-    args: ['-x', '36', '-y', '36', '-z', '36', '-N', '2']
+    # Anti-scaling anchor: each step re-wires a 24,389-box five-phase
+    # fork-join over the wire, so the LONGEST cell is the LARGEST geometry
+    # and -N (the duration knob; per-step structure is the invariant) is
+    # sized by the 32-node budget, not by 1n -- measured per-step wall
+    # 12.4/19.2/25.5 s at 2/4/8 bentley nodes (~+6.5 s per doubling)
+    # extrapolates to ~38 s/step at 32n, so -N 15 puts the worst cell
+    # near the 600 s budget (1n is then ~12 s: correct for this class).
+    # The period must divide -N or the final print's kinetic term is
+    # stale.  Re-check the 32n extrapolation on Dane's fabric.
+    expect: '-1.166054974646'
+    expect_args: ['-x', '48', '-y', '48', '-z', '48', '-N', '15', '-n', '5']
+    args: ['-x', '48', '-y', '48', '-z', '48', '-N', '15', '-n', '5']
+    hinted: true
 
   CoMD_sdsc2:
     binary: CoMD_sdsc2

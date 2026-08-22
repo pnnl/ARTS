@@ -571,6 +571,7 @@ add_benchmark_app(NAME CoMD_intel_chandra
 
 add_benchmark_app(NAME CoMD_intel_chandra_tiled
     DIR CoMD/refactored/ocr/intel-chandra-tiled
+    EXTRA_DEFINES OCR_APP_COUNTED_OEVT
     SOURCES CoMD.c mycommand.c cmdLineParser.c eam.c ljForce.c decomposition.c
     linkCells.c initAtoms.c random.c timestep.c performanceTimers.c
     haloExchange.c
@@ -583,7 +584,10 @@ add_benchmark_app(NAME CoMD_sdsc
     DIR CoMD/refactored/ocr/sdsc
     SOURCES atoms.c cells.c comd.c command.c eam.c lj.c simulation.c timers.c
     timestep.c
+    LIBS ocrAppUtils
+    EXTRA_DEFINES OCR_APP_COUNTED_OEVT
     EXTRA_LINK_LIBS m
+    HINTED_PLACEMENT
 )
 
 add_benchmark_app(NAME CoMD_sdsc2

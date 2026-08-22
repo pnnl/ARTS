@@ -43,7 +43,7 @@ is a *command-line choice* rather than a consequence of the box size.
 | `-d/-p/-t` (`potDir`, `potName`, `potType`) | EAM table selection | `pots`, auto, `funcfl` | ✓ under `-e`, dead otherwise |
 | `-h/--help` | print the option table | — | ✓ prints and calls `ocrShutdown` |
 
-The target's three `EXTRA_DEFINES`: **`DOUBLE_BUFFERED_EVTS`** doubles the halo
+The target's four `EXTRA_DEFINES`: **`DOUBLE_BUFFERED_EVTS`** doubles the halo
 channel and send-buffer arrays (`NB_SEND_CHANNELS` 6 → 12) and indexes them by
 `phase = step % 2` — load-bearing, see Wiring.  **`CHANNEL_EVENTS_AT_RECEIVER`**
 decides which side *owns* each halo channel: with it a rank creates its own
@@ -51,7 +51,15 @@ receive channels and publishes their GUIDs, so the peer's send is a remote
 satisfy (push); without it the sender owns them and the receiver's
 `ocrAddDependence` is remote (pull).  **`WITH_COUNTED_EVT`** is **dead in this
 source** — nothing under `intel-chandra-tiled/` references it; counted events
-are used unconditionally through `createEventHelper`.
+are used unconditionally through `createEventHelper`.  **`OCR_APP_COUNTED_OEVT`**
+makes every EDT output event a COUNTED event the program supplies itself
+(`OEVT_COUNTED_PRE` + `EDT_PROP_OEVT_VALID`) instead of a runtime-minted
+single-fire event: an undeclared output event must linger forever (a later
+registration on it is always legal), so per-step output events otherwise
+accumulate without bound in the step count.  Coverage is complete: every
+create either supplies a COUNTED output, or passes NULL where nothing
+consumed the event at all (the timestep-loop spawn and the sort step were
+minting events nobody read).
 
 `MAXATOMS` (64), `ARITY` (10, reduction fan-in) and `numberOfTimers` (24) are
 genuine compile-time constants.  `USE_STATIC_SCHEDULER` is in the upstream
@@ -128,18 +136,17 @@ the same mechanism as the sibling port: the runtime counts *every*
   supplying the other `+6`) and the epilogue's own flat remainder (rank 0's
   extra `printPerformanceResultsEdt`, `+2`) lands in the constant (`1` → `3`).
 
-Worked numbers for the calibrated `-x 144 -y 144 -z 144 -N 8 -i 8 -j 4 -k 4`
-→ `R = 128`, `gs = (11,22,22)`, `L = 5324`, `H = 2164`, `T = 7488`,
-`A = 479 232`: **≈31k EDTs**, **≈10k DBs**, **≈57k events**, 11 943 936 atoms
-(93 312 per rank, 17.5 of 64 slots per local box), and per rank **≈42 MB** of
-atom arrays plus **≈50 MB** of halo buffers — **≈11.7 GB in total, independent
-of the node count** (the rank grid, not the machine, sets the footprint).  The
-half of that which is halo buffer is worst-case capacity: the x face is the
-largest here (`(gs_y+2)(gs_z+2) = 576` cells against 312 for the other two), and
-every face buffer is sized for the largest.  For
-the `expect` args `-x 8 -y 8 -z 8 -N 2 -i 2 -j 2 -k 1`: `R = 4`, `gs = (2,2,4)`,
-`T = 96` → this is also the calibrated `-N 2` verify point: 406 EDTs, 292 DBs,
-787 events exactly, 0.54 MB of atom arrays per rank.
+Worked numbers for the campaign `-x 216 -y 216 -z 216 -N 100 -i 24 -j 12
+-k 12` → `R = 3456`, `gs ≈ (6,11,11)`, `L ≈ 726` local boxes and
+`A = 40 310 784` atoms (~11.7k per rank, ~17 of 64 slots per local box):
+per-step EDT cost is ~22 per rank (the chains loop atoms inside EDTs), so a
+run is **~7.6M EDTs** and the footprint — atom arrays plus worst-face halo
+buffers, set by the rank grid, not the machine — is on the order of **tens
+of GB machine-wide, node-count-independent**.  ⚠ The event formula verified
+below predates the output-event conversion: two per-step events that nothing
+consumed (the timestep-loop spawn's and the sort step's) are no longer
+created at all (−2 per rank per step), so the event term now overcounts by
+exactly that much until the counter verification is re-run.
 
 Counter cross-check: verified (1 node, `-x 16 -y 16 -z 16 -N 2 -i 2 -j 2 -k 1`
 vs `-x 16 -y 16 -z 16 -N 4 -i 2 -j 2 -k 1`): measured absolutes EDT 406/590, DB
@@ -171,10 +178,11 @@ FINISH EDT holding exactly one load and one unload.
 
 The second idiom is `createEventHelper`, used for **every** intermediate join in
 the program: an `OCR_EVENT_COUNTED_T` with `nbDeps = 1`, fed by an EDT's output
-event and consumed as a `DB_MODE_NULL` control edge.  Under the ARTS shim
-COUNTED collapses to LATCH(1) fire-and-linger, so the count is advisory — the
-app only ever asks for one — but it is what makes the whole per-rank DAG a chain
-of one-shot latches rather than a web of sticky events.
+event and consumed as a `DB_MODE_NULL` control edge.  The declared count is
+what makes the event reclaimable — the runtime frees it once its one consumer
+has been delivered, where an undeclared single-fire event has to linger for
+the rest of the run — so the whole per-rank DAG is a chain of one-shot,
+self-reclaiming latches rather than an ever-growing web of lingering events.
 
 Why double buffering is a **correctness** requirement, not a throughput tweak: a
 rank reuses `sendBuf[face][phase]` every second step, and the pairwise handshake
@@ -242,11 +250,12 @@ creating rank, still homes them on the owning rank because they are created
 global-parameter blocks, read once per rank at init.
 
 The resulting multinode traffic is therefore exactly the algorithm's: per rank
-per step, six packed halo buffers out and six in (4.13 MB apiece at the
-calibrated size, whole-DB granularity regardless of how many atoms actually
+per step, six packed halo buffers out and six in (each sized for the rank's
+worst face, whole-DB granularity regardless of how many atoms actually
 travel), plus one 24-byte reduction payload per collective.  Locality that
 exists in the algorithm is fully expressed — this is the port to compare the
-others against, not a coherence stress.
+others against, not a coherence stress, and it is why the family sweep is
+arm-indifferent to a fraction of a percent.
 
 `USE_STATIC_SCHEDULER` would replace the per-rank affinity hints with one fork
 EDT per policy domain plus an `OCR_HINT_EDT_DISPERSE` hint; it is not defined
@@ -264,16 +273,30 @@ and memory** — atoms `4·n_x·n_y·n_z`, per rank `≈ 5.5 KB × T` of atom ar
 plus 12 worst-case face buffers; shrinking the rank grid does not shrink the
 total footprint, it concentrates it.
 
-- **1 node × 15 workers**: `-i 4 -j 2 -k 2` (`R = 16`) with `-x 64 -y 32 -z 32`
-  keeps every worker busy at ~1 rank each and ~8 MB per rank.
-- **8 nodes × 120 workers**: the calibrated `-i 8 -j 4 -k 4` gives `R = 128` —
-  16 ranks per node against 15 workers at the widest point, and 8×
-  oversubscription at one node so the strong-scaling sweep starts saturated.
-  `-x/-y/-z 144` clears `3.2·8 = 25.6` comfortably and yields `gs = (11,22,22)`,
-  5324 local boxes and 17.5 atoms per box — the same occupancy as the other CoMD
-  entries, so per-task arithmetic is comparable.
-- `-N 8` with the default `-n 10` means one collective, at the last step; raise
-  `-n` above `-N` to measure the loop with no barrier in it, lower it to study
-  the collective.
+- The campaign cell is `-i 24 -j 12 -k 12` (`R = 3456`) — one persistent
+  rank-chain per worker at the largest campaign geometry (32 nodes x 108
+  workers), node-invariant; smaller runs pack more chains per worker.
+  `-x/-y/-z 216` clears the structural floor (`3.2 x 24 = 76.8`) and gives
+  ~700 local boxes and ~17 atoms per box per rank — the same occupancy as
+  the other CoMD entries, so per-task arithmetic is comparable.
+- **Scaling-app anchor**: `-N 100` (the benchmark's own default) lands the
+  dane1 cell (one 108w+4p node) at 126 s, inside the ~150 s anchor band;
+  the largest geometry only gets faster from there.  `-n 10` is the
+  canonical print period (it also paces the kinetic-energy allreduce).
+- On the reduced 15w bentley ladder the full-size cell costs ~500 s at 1n,
+  ~250 s of it the 40M-atom init — a reduced trend workload (half-linear
+  `-x 108`, same rank grid) is the right shape for repeated trend sweeps.
 - Do **not** leave `-i/-j/-k` at their defaults for a measurement: the run is
   correct but single-chain, and its numbers describe one core.
+
+## Family shape (measured, 15w+1p × 1/2/4/8 nodes, campaign args)
+
+val_wb, e2e seconds — 501 / 274 / 164 / 86: clean strong scaling (5.8x at 8
+nodes), and the arms are indifferent (1n all four arms within 500.2-501.1 s;
+the 2n pre-fix reference showed the same).  The dane1 anchor cell runs 126 s.
+The energy pin held in every cell.  Set against its fork-join sibling
+(`CoMD_sdsc`, which anti-scales on every arm), this port is the family's
+demonstration that the persistent-chain SPMD rewrite — wire the DAG once,
+exchange halos by message — is what removes the wiring-plane wall; its cost
+profile is the algorithm's own traffic, which no coherence arm can
+distinguish.
