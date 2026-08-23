@@ -241,13 +241,46 @@ mapped through the effective mesh (npx<<L, npy<<L, npz<<L) onto that grid, and
 the block's tasks pin there.  Neighbouring blocks — including parents and
 children across refinement levels, whose coordinates nest — land on the same
 or adjacent ranks, so halo exchange and refine/coarsen transfers stay mostly
-rank-local.  EDT affinity only; block DBs keep their creator home and settle
-with the pinned tasks.
+rank-local.  EDT affinity only, and that is measured rather than assumed:
+homing each refined child's datablocks on the domain its own tasks run at
+changed nothing at 1, 2, 4 or 8 nodes (44.8 / 26.2 / 17.0 / 11.9 s against
+44.7 / 26.2 / 17.0 / 11.9).  A block's datablocks are acquired RW by that
+block's own task straight after creation, so the payload moves once either
+way and the home is only a directory entry.
+
+**Building the hint is on the hot path, and it showed.**  This program creates
+23.2 M EDTs; resolving the domain affinity and rebuilding an `ocrHint_t` at
+each of them cost more than the placement saved, and the layer as first
+written ran the anchor cell in **241.6 s against the base's 155.1** — a hinted
+tier that lost to the tier it was supposed to improve.  Caching one hint per
+domain, caching the domain factorization, and handing back the cached hint by
+reference bring it to **161.4 s**; the 4% that remains at one node is the cost
+of offering a hint at all, where a single domain has nothing to gain from one.
+
+What it buys, at the trend size over bentley nodes:
+
+| | 1n | 2n | 4n | 8n |
+|---|---|---|---|---|
+| base | 44.7 | 765.7 | 592.0 | 406.7 |
+| **hinted** | 44.7 | **26.2** | **17.0** | **11.9** |
+
+The base tier is an extreme anti-scaler — one node to two costs it 17x,
+because a refined child is created wherever its parent ran and its halo
+partners are elsewhere.  The hinted tier scales 3.8x to eight nodes and is
+**34x** the base there.  The placement counters at eight nodes say the layer
+is doing what it claims: `NUM_EDT_FINISH` spread across ranks 1.00x, useful
+work 1.05x, and **97.3% of acquires local**.
 
 ## Sizing
 
-- `npx·npy·npz` sets the **parallel width** and is capped at 1000. It is the only
-  dial that adds independent work; keep it well above `nodes × workers`.
+- `npx·npy·npz` sets the **base width** and is capped at 1000 by
+  `MAX_NUM_UNREFINED_BLOCKS` (`root.h`), which also sizes the root's `dbSize[]`
+  array and the root clone's dependence count.  It is not the coverage
+  constraint it looks like: refinement multiplies it, and the calibrated
+  arguments produce **23,235,399 EDTs** and **44,316,336 datablocks** from 512
+  base blocks — 6,725 EDTs per worker at 32 nodes x 108, so no worker goes
+  unused.  Peak resident memory stays at 5.5 GB while 1,478 GB of datablocks
+  pass through, which is the destroy path working.
 - `nx·ny·nz` and `num_vars` set **grain**: block payload is
   `(nx+2)(ny+2)(nz+2)·num_vars·8` B and face payload `comm_vars·(dim1)(dim2)·8` B.
   Raising them makes each clone move more bytes without adding tasks — the lever
@@ -272,3 +305,9 @@ time you want. 1 node × 15 workers: `--npx 4 --npy 4 --npz 4 --nx 16 --ny 16 --
 still fits in memory (~1 GB of level-0 payload) while giving the 8-node cell four
 blocks per worker. `--num_tsteps 12` with the default 20 stages keeps the run in
 minutes, and `--num_objects 1` pins a reproducible (zero-initialized, unspecified) object rather than omitting the flag.
+
+The calibrated set runs the Dane anchor node (108w+4p) in **155.1 s** at 5.5 GB
+resident, which is the scaler window without further tuning.  Note that these
+are counter-free numbers: the same cell reads 225.8 s on a tree still carrying
+a campaign's `attribution` counters, a 31% instrumentation cost this
+datablock-heavy program feels more than most.
