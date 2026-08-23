@@ -822,17 +822,15 @@ add_benchmark_app(NAME npb_cg
     EXTRA_LINK_LIBS m
 )
 
-# Registration held back: this program's source is not carried by the
-# application submodule yet, so a checkout that has not produced it
-# locally cannot configure.  Restore this block, and the application's
-# restructured version in the driver's catalog, once the submodule
-# carries the source.
-#add_benchmark_app(NAME npb_cg_dist
-#    DIR npb-cg/sdsc-ocr
-#    SOURCES cg_dist_edt.c makea_ocr.c util_ocr.c
-#    LIBS reduction
-#    EXTRA_LINK_LIBS m
-#)
+# Restructured decomposition: a separate program (row-band SPMD chains,
+# channel-event fragment exchange, library reductions) sharing the matrix
+# generator and utilities; its placement is internal, so no _hinted family.
+add_benchmark_app(NAME npb_cg_dist
+    DIR npb-cg/sdsc-ocr
+    SOURCES cg_dist_edt.c cg_dist_makea.c makea_ocr.c util_ocr.c
+    LIBS reduction
+    EXTRA_LINK_LIBS m
+)
 
 # ==========================================================================
 # Tier 12: RSBench, XSBench

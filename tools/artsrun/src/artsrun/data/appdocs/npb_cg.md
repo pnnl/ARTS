@@ -104,8 +104,11 @@ reconciles hpgmg's EDT counts exactly.
 `head_edt` (6 slots) and calls `conj_grad` to fill its last two. `head_edt`
 discards that warm-up result, re-initialises `x` and starts the timed loop:
 `loop_top_edt(it)` → `conj_grad` → `loop_bottom_edt(it)` → either the next
-`loop_top_edt` or `tail_edt`. All four driver EDTs pass `NULL` for their
-output event; the only inter-EDT edges here are direct DB dependences.
+`loop_top_edt` or `tail_edt`; a dedicated shutdown EDT gated on `tail_edt`'s
+output event calls `ocrShutdown` only after the tail's dependence releases
+have completed, so no release work is truncated out of the measured run.
+The driver EDTs otherwise pass `NULL` for their output events; the only
+inter-EDT edges here are direct DB dependences.
 
 Inside `conj_grad` every edge is either an EDT output event or a `ONCE` event
 satisfied by hand:
@@ -179,21 +182,49 @@ that EDT landed. At multinode:
 The algorithm has obvious locality (a row block and its result belong
 together; the matrix never changes) and the base program expresses none.
 
-## Placement (hinted)
+## Placement (no hinted tier — measured, not assumed)
 
-As-born homes every row-block DB on rank 0 and round-robins the per-block
-rowvec tasks, so a block is read from a different rank every iteration and its
-payload never settles anywhere.
+A hint layer was written for this application and then **removed**: every
+form of it measured slower than the base program, at every geometry and
+both problem sizes tried.  Solve time at 8 bentley nodes, class A (base
+17.9/18.0/18.0 s over three runs):
 
-The layer (`cgBandEdtHint` in `cg_edt.c`, the rowvec spawn loop inside
-`spmv_edt`) pins block e to the fixed band rank `(e * nranks) / nblocks` every
-iteration.  A block's reader is now the same rank in every spMv, so the block
-is fetched once and every later acquire is a local hit; the p-vector still
-broadcasts (that is CG's structure).  The gather EDT and the whole-vector ops
-(square/alphas/daxpy) stay base — single EDTs on the critical path with
-nothing to distribute.  `nranks <= 1` returns `NULL_HINT`.
+| layer | solve |
+|-------|-------|
+| band-homed blocks only | 20.3 |
+| band-pinned readers only | 20.3 |
+| both | 19.3 |
+| spine pinned to rank 0 only | 25.3 |
+| all three | 25.0 |
+
+and at class A's 4× larger sibling (class B, 180 MB matrix, `-i 5`,
+end-to-end): 2 nodes 90.2 base vs 93.3 hinted, 8 nodes **108.9 base vs
+147.7 hinted**.
+
+The reason is in what the data does, not in how the hints were written.
+The only placement-sensitive object is the matrix, and it is **read-only
+after `makea`** — under a validating protocol every rank ends up holding
+its own snapshot after the first read, so pinning a block's reader to a
+fixed rank buys a locality the base program already has, while paying to
+move the block's home and to resolve an affinity per spawn.  Everything
+that actually moves — the operand vector broadcast to every reader each
+matvec, and the `nb` result fragments gathered into one EDT — is
+all-to-all or all-to-one, which no home assignment improves.  Worse,
+pinning the serial spine makes one rank the permanent server for that
+broadcast and the permanent sink for that gather; the base program's
+round-robin rotates the role and spreads it, which is why the spine pin
+alone costs 40%.
+
+So the answer to this program's placement problem is not a hint but the
+decomposition: see `npb_cg_dist`, where the vector never travels whole
+and the matrix band is owned, not fetched.
 
 ## Sizing
+
+The restructured `npb_cg_dist` shares this program's generator and CLI but
+replaces the decomposition; see its appdoc for the sizes it is calibrated
+at, and for the four floors that survive the rewrite — the serial
+generator above being the one both versions pay.
 
 `-b` is the only dial that changes parallelism without changing the answer:
 `nb = na/blk` is both the task count per matvec and the fan-out. `-t` sets the
@@ -212,11 +243,28 @@ fixes `niter`), `-i` moves duration only.
   the fan-out at the failing create in `spmv_edt`.
 - **Memory** is `≈ 12·na·(nonzer+1)²` bytes for the matrix and negligible for
   everything else: 24 MB at class A, ~180 MB at B, ~430 MB at C.
-- 1 node × 15 workers: `-t A -b 25` gives 560 tasks per matvec, 37 per worker;
-  8 nodes × 120 workers, still 4.7 per worker — enough to fill the machine,
-  but the 26 fork-joins per outer iteration and the serial chain between them
-  are what the run actually pays for. `-b 50`/`-b 100` for a coarser grain.
-- The calibrated `-t A -b 25` is the smallest class with a non-trivial matrix
-  (24 MB, 2M nonzeros) and 15 outer iterations, sized so a 1-node run is tens
-  of seconds rather than milliseconds; `expect_args` uses `-t T` (`na=50`,
-  3 iterations) as a fast oracle of the same code path.
+- **The calibrated `-b` is set by the widest geometry, not by the anchor's
+  clock.** `-t A -b 2` gives 7000 tasks per matvec — and 7000 matrix-block
+  datablocks, and 7000 result fragments per matvec, since `na/blk` is all
+  three at once. That is 2.0× the 3456 workers of 32 Dane nodes × 108;
+  `-b 25`'s 560 would leave five of every six workers idle there. The count
+  is node-invariant, so smaller geometries pack more of it onto each node.
+  Width stops at 2× rather than the fork-join rule's 4× because the two
+  constraints cross: `-b 1` reaches 4.05× and takes 73.1 s at the anchor,
+  and this is an anti-scaler, so that cell only grows with node count (its
+  two-node run was still going at 430 s). At 2× no worker is idle — the
+  rest is stealing headroom, not coverage.
+- **This is an anti-scaler, and the calibration says so.** Measured (hinted,
+  val_wb): class A `-b 25` runs 1.3 s at one bentley node, 15.6 s at two and
+  27.3 s at eight — every added node costs time, because the operand
+  broadcast, the single-EDT gather and the serial vector spine all grow with
+  the rank count while the per-task grain shrinks. One class up the wall is
+  absolute: class B `-b 10` finishes in 116 s at one node and **times out
+  past 590 s at two**. So the class stays at A — `-t A -b 2`, 27.0 s on the
+  Dane anchor node (108w+4p), inside the 10–30 s an anti-scaler is sized to
+  — and the 32-node cell, not the 1-node one, is what the budget has to
+  hold. (`-b 25` at the same node is 2.3 s: enough to time, not enough to
+  fill 32 nodes.)
+- `expect_args` equals `args` and the pin is the class's own reference zeta
+  (17.1721077015265): the previous pin was taken at `-t T`, an argument set
+  no campaign runs, so the cross-check never fired.

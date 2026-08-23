@@ -500,24 +500,39 @@ apps:
     marker: 'Verification SUCCESSFUL'
     scalar_re: 'Verification SUCCESSFUL \(zeta\s*=\s*([\-+0-9.eE]+)'
     tolerance: 1e-10
-    expect: '7.85534'
-    expect_args: ['-t', 'T', '-b', '25']
-    args: ['-t', 'A', '-b', '25']
-    # restructured_as: npb_cg_dist   # held back — see the entry below
+    # Fork-join: per matvec, na/blk transient row tasks and one gather whose
+    # dependence count IS na/blk.  Anti-scaler -- the whole-vector broadcast,
+    # the single-EDT gather and the serial vector spine make every added node
+    # cost time -- so the class stays at A (B already times out at two nodes).
+    # -b is set by the widest geometry: 7000 tasks per matvec is 2.0x 32 Dane
+    # nodes' 3456 workers, and lands the anchor at 27.0s.  4x (-b 1) is
+    # reachable but costs 73.1s at one node and grows from there.  The pin is
+    # the class's own reference zeta, so it is live at args.
+    expect: '17.1721077015265'
+    expect_args: ['-t', 'A', '-b', '2']
+    args: ['-t', 'A', '-b', '2']
+    restructured_as: npb_cg_dist
 
-  # Held back with the target: the program's source is not carried by the
-  # application submodule yet, so the build has no target for it.  Restore
-  # this entry, and its parent's restructured_as, with the registration in
-  # benchmarks/apps/CMakeLists.txt once the submodule carries the source.
-  #npb_cg_dist:
-  #binary: npb_cg_dist
-  #class: task
-  #provenance: 'NAS Parallel Benchmarks CG; distributed rewrite'
-  #marker: 'Verification SUCCESSFUL'
-  #scalar_re: 'Verification SUCCESSFUL \(zeta\s*=\s*([\-+0-9.eE]+)'
-  #tolerance: 1e-10
-  #args: ['-t', 'A', '-b', '25']
-  #restructured_from: npb_cg
+  npb_cg_dist:
+    binary: npb_cg_dist
+    class: spmd
+    provenance: 'NAS Parallel Benchmarks CG; row-band SPMD rewrite'
+    marker: 'Verification SUCCESSFUL'
+    scalar_re: 'Verification SUCCESSFUL \(zeta\s*=\s*([\-+0-9.eE]+)'
+    tolerance: 1e-10
+    # SPMD: one persistent chain per rank, 256 row slices inside it (2.4x a
+    # node's workers).  Scaler, and the anchor IS the worst cell (dane1 475s).  D is the
+    # largest class that runs: E's 72MB operand puts every gather in DRAM
+    # behind a TLB walk and takes >19h at one node, while C is 32.4s.  -i
+    # cannot bridge the two -- D reaches the benchmark's own 1e-8 bar only
+    # near iteration 85 of its 100 -- so the published count stands and
+    # the pin is the class's reference zeta (the run prints it to 4e-13).
+    # Every rank replays the draw stream itself, so construction never
+    # crosses the wire and init is flat in node count.
+    expect: '52.5239203995295'
+    expect_args: ['-t', 'D']
+    args: ['-t', 'D']
+    restructured_from: npb_cg
 
   nqueens:
     binary: nqueens
