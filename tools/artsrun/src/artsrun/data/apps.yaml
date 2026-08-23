@@ -435,17 +435,16 @@ apps:
     marker: 'Grand Total Checksum'
     scalar_re: 'Grand Total Checksum\s*==\s*([\-+0-9.eE]+)'
     tolerance: 1e-08
-    expect: '710400'
-    expect_args: ['--nx', '4', '--ny', '4', '--nz', '4', '--num_tsteps', '2', '--num_objects', '1']
-    args: ['--nx', '16', '--ny', '16', '--nz', '16', '--npx', '8', '--npy', '8', '--npz', '8', '--num_tsteps', '12', '--num_objects', '1']
+    expect: '144913203200.000000'
+    expect_args: ['--nx', '16', '--ny', '16', '--nz', '16', '--npx', '8', '--npy', '8', '--npz', '8', '--num_tsteps', '360', '--num_objects', '1']
+    args: ['--nx', '16', '--ny', '16', '--nz', '16', '--npx', '8', '--npy', '8', '--npz', '8', '--num_tsteps', '360', '--num_objects', '1']
     hinted: true
 
-  # Reclassified 2026-08-23: same philosophy as miniAMR_intel (a per-block
-  # EDT chain with halo exchange) and dominated by it -- 9 EDT creation sites
-  # against 21, no refinement clone machinery, per-block checksums with no
-  # grand total to pin, and every EDT created with ocrAffinityGetCurrent() so
-  # nothing distributes however many nodes it is given.  Kept as a microbench
-  # of that caller-pinned shape.
+  # Reclassified 2026-08-23: same philosophy as miniAMR_intel (block-per-EDT
+  # dataflow with halo exchange) and dominated by it -- 9 EDT creation sites
+  # against 21, no refinement clone machinery, every EDT pinned to the
+  # creating rank so nothing distributes, and per-block checksums with no
+  # grand total to pin.  Kept as a microbench of the caller-pinned shape.
   miniAMR_intel_bryan:
     binary: miniAMR_intel_bryan
     kind: microbench

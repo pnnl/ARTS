@@ -5,9 +5,9 @@
 # versions, and any calibration that differs from the catalog default.
 # Set `enabled: false` to drop one without editing the tool.
 #
-# Version policy: the campaign's subject is `optimized`; an app lists
-# `asborn` only when it offers no optimized variant (no hint layer, so
-# as-born IS the optimized placement).  `restructured` stays reserved for
+# Version policy: the campaign's subject is `hinted`; an app lists
+# `base` only when it offers no hinted variant (no hint layer, so
+# base IS the hinted placement).  `restructured` stays reserved for
 # apps whose anti-scaling hints alone cannot fix.
 
 name: paper-main
@@ -16,194 +16,200 @@ description: curated roster for the coherence comparison
 apps:
   basicIO:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   cache_offset:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   cholesky:
     enabled: true
-    versions: [optimized]
+    versions: [hinted]
   cholesky_blas:
     enabled: true
-    versions: [optimized]
+    versions: [hinted]
   CoMD_intel_chandra:
     enabled: false   # unsupported: needs EW semantics the runtime does not implement
   CoMD_intel_chandra_tiled:
     enabled: true
-    versions: [asborn]
+    versions: [base]
   CoMD_sdsc:
     enabled: true
-    versions: [optimized]
+    versions: [hinted]
   CoMD_sdsc2:
     enabled: false   # unsupported: needs EW semantics the runtime does not implement
   curvefit:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   dbcreate_matrix:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   dbctrl:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   fft:
     enabled: true
-    versions: [asborn, restructured]
+    versions: [base, restructured]
   fibonacci:
     enabled: true
-    versions: [optimized]
+    versions: [hinted]
   globalsum_cgNoShim:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   globalsum_cgShim:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   globalsum_pcg:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   graph500:
     enabled: true
-    versions: [asborn]
+    versions: [base]
   highbw:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   hpcg_intel:
     enabled: true
-    versions: [asborn]
+    versions: [base]
   hpcg_intel_Eager:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   hpcg_intel_Eager_Collective:
     enabled: true
-    versions: [asborn]
+    versions: [base]
   hpgmg:
     enabled: true
-    versions: [optimized]
+    versions: [hinted, restructured]
   LCS_all_db_distributed:
     enabled: true
-    versions: [optimized, restructured]
+    versions: [hinted, restructured]
   LCS_distributed_ST:
     enabled: true
-    versions: [asborn]
+    versions: [base]
   LCS_shared:
     enabled: true
-    versions: [asborn]
+    versions: [base]
   miniAMR_forkbomb:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   miniAMR_intel:
     enabled: true
-    versions: [optimized]
+    versions: [hinted]
+  # Off the roster 2026-08-23: reclassified kind: microbench -- same
+  # philosophy as miniAMR_intel and dominated by it, with every EDT pinned to
+  # the creating rank so nothing distributes.
   miniAMR_intel_bryan:
-    enabled: true
-    versions: [asborn]
+    enabled: false
+    versions: [base]
   miniAMR_intel_chandra:
     enabled: true
-    versions: [asborn]
+    versions: [base]
   multigen:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   multigen_2:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   nekbone:
     enabled: true
-    versions: [asborn]
+    versions: [base]
   npb_cg:
     enabled: true
-    versions: [asborn, restructured]
+    versions: [base, restructured]
   nqueens:
     enabled: true
-    versions: [optimized]
+    versions: [hinted]
   p2p:
     enabled: true
-    versions: [optimized]
+    versions: [hinted]
   printf:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   prodcon:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   quicksort:
     enabled: true
-    versions: [asborn, restructured]
+    versions: [base, restructured]
   reduction_intel:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   reduction_intel_chandra:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   RSBench_intel:
     enabled: true
-    versions: [optimized]
+    versions: [hinted]
   RSBench_intel_sharedDB:
     enabled: true
-    versions: [asborn]
+    versions: [base]
   sar_large:
     enabled: true
-    versions: [asborn]
+    versions: [base]
   sar_pss:
     enabled: true
-    versions: [optimized]
+    versions: [hinted]
   sar_small:
     enabled: true
-    versions: [asborn]
+    versions: [base]
   smithwaterman:
     enabled: true
-    versions: [optimized]
+    versions: [hinted]
   stencil1D_channel:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   stencil1D_guid:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   stencil1D_guidPI:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   Stencil1D_intel_chandra:
     enabled: false   # same source as Stencil2D_intel_chandra (PROBLEM_TYPE=1) — 2-neighbor degenerate
-    versions: [asborn]
+    versions: [base]
   stencil1D_once:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   stencil1D_oncePI:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   stencil1D_sticky:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   stencil1D_stickyLG:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   Stencil2D_intel_chandra:
     enabled: false   # same kernel as channelEVTs, per-round sticky churn — channelEVTs represents the family
-    versions: [asborn]
+    versions: [base]
   Stencil2D_intel_channelEVTs:
     enabled: true
-    versions: [asborn]
+    versions: [base]
   stream:
     enabled: true
-    versions: [asborn, restructured]
+    versions: [base, restructured]
   stream_org:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   stream_sa:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   task_priorities:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   tempest:
     enabled: true
-    versions: [optimized]
+    versions: [hinted]
   testlibs:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   triangle:
     enabled: true
-    versions: [optimized]
+    versions: [hinted]
   xeonNumaSize:
     enabled: false
-    versions: [asborn]
+    versions: [base]
   XSBench_intel:
     enabled: true
-    versions: [optimized, restructured]
+    versions: [hinted]   # restructured is held back in the catalog until its source lands
+  XSBench_intel_sharedDB:
+    enabled: true
+    versions: [base]   # SPMD self-placed (fork pins ranks, chains carry rank hints) — no hint layer to add
