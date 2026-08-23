@@ -414,8 +414,13 @@ apps:
     # node) — the multinode growth supplies the rest of the plot.
     args: ['131072', '1024']
 
+  # Reclassified 2026-08-23: its EDT set is a strict subset of
+  # miniAMR_intel_bryan's (the same block chain with halo send and receive,
+  # minus the checksum, reduction and wrap-up path), so it computes no
+  # result at all -- what it exercises is the refinement spawn storm.
   miniAMR_forkbomb:
     binary: miniAMR_forkbomb
+    kind: microbench
     class: task
     provenance: 'miniAMR (Mantevo); spawn-storm variant'
     marker: 'BLOCK 0 finished'
@@ -435,8 +440,15 @@ apps:
     args: ['--nx', '16', '--ny', '16', '--nz', '16', '--npx', '8', '--npy', '8', '--npz', '8', '--num_tsteps', '12', '--num_objects', '1']
     hinted: true
 
+  # Reclassified 2026-08-23: same philosophy as miniAMR_intel (a per-block
+  # EDT chain with halo exchange) and dominated by it -- 9 EDT creation sites
+  # against 21, no refinement clone machinery, per-block checksums with no
+  # grand total to pin, and every EDT created with ocrAffinityGetCurrent() so
+  # nothing distributes however many nodes it is given.  Kept as a microbench
+  # of that caller-pinned shape.
   miniAMR_intel_bryan:
     binary: miniAMR_intel_bryan
+    kind: microbench
     class: task
     provenance: 'miniAMR (Mantevo); full refinement and communication'
     marker: 'miniAMR complete'

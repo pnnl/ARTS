@@ -1,5 +1,15 @@
 # miniAMR_intel_bryan
 
+> **Reclassified to `kind: microbench` (2026-08-23).**  This port shares
+> `miniAMR_intel`'s philosophy — a per-block EDT chain with halo send/receive
+> tasks — and is dominated by it on every axis that matters to a distributed
+> measurement: 9 EDT creation sites against 21, no refinement clone machinery,
+> per-block checksums with no grand total to pin, and, decisively, **every EDT
+> created with `ocrAffinityGetCurrent()`**, so the whole program stays on the
+> rank that spawned it however many nodes are given.  It is kept as a
+> microbench of exactly that caller-pinned shape, and is off the application
+> roster.
+
 *miniAMR's refinement/coarsening protocol without miniAMR's mesh: every block
 carries a single `double`, and what the program actually exercises is the
 channel-event neighbour handshake that AMR needs to keep a changing 6-neighbour
