@@ -29,10 +29,14 @@ task/event/DB churn and measuring real backtracking compute.
 | `argv[1]` = `n` | board size; asserted `0 < n < 31` | none (required) | ✓ parsed in `mainEdt` via `ocrGetArgv`, carried in `struct nqueens_args`/`shutdown_args` paramv — multinode-safe |
 | `argv[2]` = `cutoff` | queens-placed depth at which an EDT switches from spawning children to a single sequential subtree search; asserted `cutoff < n` | none (required) | ✓ same paramv path — multinode-safe |
 | `argv[3]` = `rounds` (optional) | repeats the whole search that many times, chained through `shutdownEdt`; only the final round prints/times | 1 | ✓ but ⚠ a value `< 1` is silently coerced back to 1 (no error) |
+| `argv[4]` = scatter levels (optional) | tree levels (queens placed) scattered across ranks before a subtree pins to the rank it landed on | `NQUEENS_RR_LEVELS` (3) | ✓ parsed in `mainEdt`, carried in `struct nqueens_args` paramv to every task — no global |
 
-`NQUEENS_RR_LEVELS` (= 3) is a compile-time constant of the *hinted*
-placement layer only (round-robins the top 3 levels of the tree, pins the
-rest local); the base build never reads it.
+**`rounds` is repetition, not refinement**: `shutdownEdt` restarts the
+identical search, chained after the previous one finishes, so a round adds
+wall time and nothing else.  It stays at 1 and the board size carries the
+weight.  The scatter depth used to be a compile-time constant; it is the app's
+only parallelism dial and is calibrated by measurement, so it is an argument,
+with the `#define` surviving as the default.  The base build reads neither.
 
 ## Structure
 
@@ -124,9 +128,9 @@ with no relation to their subtree, and every 8-byte result DB homes wherever
 its producer landed, so the summing side acquires almost everything remotely.
 
 The layer (`nqPlaceEdtHint` in `nqueens.c`) uses the column bitmask as a
-distinct per-subtree key and its popcount as the tree level: levels below
-`NQUEENS_RR_LEVELS` (default 3, `#ifndef`-overridable for calibration) scatter
-round-robin on `mixKey(cols) % nranks`, deeper tasks pin to the creating rank
+distinct per-subtree key and its popcount as the tree level: levels below the
+scatter depth (argument, default 3, calibrated to **5**) are placed by
+`mixKey(cols) % nranks`, deeper tasks pin to the creating rank
 (`nqLocalEdtHint` likewise pins the sum EDTs), so each scattered subtree — its
 spawn tree, its result DBs, and its sums — stays on one rank.  Result DBs keep
 `NULL_HINT`: the runtime's creator-home default gives the one-shot 8-byte
@@ -148,8 +152,61 @@ not change per-round parallelism.
   branching factor at that depth, so raising `cutoff` by 1–2 is normally
   enough headroom. Pick `n` so `T(n,cutoff)` ≫ total workers for the
   scheduling/tree-churn phase.
-- The calibrated `n=15, cutoff=8` (no `rounds`) gives ≈11M EDTs total —
-  comfortably above 8 nodes × 15 workers = 120 workers with wide margin at
-  both the tree-churn and the serial-leaf phases.
+- Measured at the Dane anchor node (108w+4p, `cutoff 12`, one round):
+  14 → 0.01 s, 16 → 0.11, 17 → 0.81, 18 → 6.6, 19 → 62.9, 20 → 624.8.  The
+  ladder is a factor of ~8 per step.  `20` is the calibrated size; at the
+  calibrated grain its anchor is **~289 s**, not the 624.8 s the port's
+  inherited `cutoff 12` produced.
+- **The solution count needs 64 bits from `n = 19` on** (4 968 057 848 for 19,
+  39 029 188 884 for 20).  The port truncated it to `u32` when printing, so
+  every size at or above 19 reported a wrong answer until this cycle.
+- **`cutoff` and the scatter depth are one plane, not two knobs.**  `cutoff`
+  fixes `max_set = n - cutoff`, so tasks exist at popcounts `0 … max_set+1`
+  and the ones at `max_set+1` are the sequential leaves.  A scatter of
+  `max_set+1` therefore means "scatter every spawning task, leave the
+  sequential leaves where they were created", `max_set+2` means "scatter
+  those too", and anything beyond saturates: at `cutoff 16`, `s5` = 295.1 s
+  leaves the leaves local, `s6` = 287.2 scatters them, and `s7` = 287.3 is
+  the same run again.  The plane at `n = 20` over 8 bentley nodes, E2E seconds:
+
+  | cutoff (max_set) | s2 | s3 | s4 | s5 | s6 | s7 | s8 |
+  |---|---|---|---|---|---|---|---|
+  | 13 (7) | — | 373.1 | — | 318.3 | — | 321.6 | 540.3 |
+  | 14 (6) | — | — | — | — | 305.8 | — | — |
+  | 15 (5) | — | 361.1 | 339.3 | 308.9 | **299.8** | 308.8 | — |
+  | 16 (4) | 552.3 | 345.6 | 325.3 | 295.1 | **287.2** | 287.3 | — |
+  | 17 (3) | 530.1 | 332.2 | 312.4 | **283.6** | — | — | — |
+  | 18 (2) | — | — | 304.2 | 301.9 | — | — | — |
+
+  What the plane says is not "scatter as deep as possible": the cost tracks
+  the **number of tasks scattered**, and that is exponential in depth (levels
+  1…4 hold about 55 k boards, level 7 about 28 M).  Scattering every spawning
+  level is right only while that count stays near 1e5 — `c13 s8` scatters
+  28 M and costs 540 s, nearly twice the optimum.  Too little scatter is just
+  as bad: the `s2` column is 1.8× the optimum because seven ranks sit idle.
+- **The fastest cell is not the calibrated one.**  `c17 s5` is 283.6 s and
+  `c16 s6` is 287.2 s, but the placement counters at 8 nodes say why the
+  slower one is chosen: `c17 s5` leaves 72 417 units (600 per worker here,
+  **21 per worker at 32 nodes**) and already shows 1.19× spread in
+  `TIME_EDT_EXEC` with 173× spread in steal attempts, while `c16 s6` leaves
+  788 725 units, 1.05× and 47×.  The 1.3% is real, not noise — the `s6`/`s7`
+  pair of the same row is an accidental repeat of one configuration (scatter
+  saturates at `max_set+2`, so both scatter everything) and reproduced to
+  287.2 / 287.3 s, putting the run-to-run band under 0.1%.  The 1.3% is
+  knowingly paid for 10× the load-balancing headroom at the geometry the
+  campaign actually ends at.
+- The one-node anchor cannot decide any of this: scatter is a no-op there
+  (every affinity resolves to the only rank), so the anchor sees grain only
+  and prefers ever-coarser cutoffs — 301.3 / 289.0 / 276.8 s for c15 / c16 /
+  c17.  The 8-node plane is what the calibration rests on.
 - Memory is not the limiting factor (8-byte DBs, destroyed on consumption);
   size for total EDT count and remote-acquire volume, not footprint.
+- **The hinted tier is what the app is for.**  Base at `n=18, cutoff 12`:
+  32.7 s at one bentley node, 151.3 at two, 132.7 at four.  Hinted at the same
+  size: 32.7 / 18.5 / 10.0 / 5.2 over 1/2/4/8 nodes.  At the trend size with
+  the calibrated grain (`18 14 1 5`) the four arms run
+  30.8 / 16.8 / 9.8 / 5.1 and sit within **0.5%** of each other — the
+  coherence configuration is nearly not a variable for this application, and
+  that is itself the result.  The placement counters say why: at the trend
+  size 99.8% of acquires are local hits, with `NUM_EDT_FINISH` spread 1.10x
+  and `TIME_EDT_EXEC` 1.07x across ranks.

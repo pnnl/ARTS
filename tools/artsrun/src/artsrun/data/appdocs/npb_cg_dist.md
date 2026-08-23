@@ -117,17 +117,20 @@ stickies; nothing grows with the iteration count.
   node count: **0.756 s at class D** (0.072 s at class C), against a
   32-node cell of roughly 16 s — about 5%, and flat.  Everything else in
   init does scale: the capacity and index passes are 0.93 s at class D and
-  the assembly folds from 566 s serial to 11 s over one node's workers and
-  0.35 s over 32 nodes'.
+  the assembly folds from 566 s serial to 10.2 s over one node's workers and
+  0.32 s over 32 nodes'.  All timings here come from a tree built with every
+  counter OFF; the earlier ones carried a previous campaign's `attribution`
+  set and read up to 16% differently.
 - **Two collectives per inner iteration.** That is conjugate gradient, not
   this port: `p·q` must be reduced before `α`, and `r·r` before `β`.
   Removing one needs a different CG variant (Chronopoulos–Gear), i.e. a
   change of numerics rather than of decomposition.
 - **The product is gather-latency bound, not bandwidth bound** — which is
   what NPB CG is *for*.  Widening a node buys memory-level parallelism, not
-  bandwidth: at class C one NUMA node's 15 workers already reach what all
-  108 do (13.9 s vs 14.8 s of solve), and at class D 7.2× the workers buy
-  1.8× (65.2 s vs 35.8 s at `-i 5`, ~44 GB/s of matrix stream).  Page
+  bandwidth: at class C one NUMA node's 15 workers **beat** all 108
+  (12.7 s vs 16.8 s of solve for the same 40 iterations), and at class D
+  7.2× the workers buy 1.76× (69.9 s vs 39.6 s at `-i 5`, ~44 GB/s of
+  matrix stream).  Page
   placement is not the reason — `numactl --interleave=all` moves it 2–4%.
   Cache-blocking the gather would change the summation order, i.e. measure
   a different benchmark.
@@ -136,7 +139,7 @@ stickies; nothing grows with the iteration count.
   because NPB CG's sparsity is random), and the two `nloc` axpys.  It is
   fan-out-able but not currently binding, so it is left simple.
 - **The class ladder has no rung at the anchor's budget.** Measured at
-  dane1: class C 32.4 s, class D 492 s, class E over 19 h.  Class E is a
+  dane1: class C 32.6 s, class D 471 s, class E over 19 h.  Class E is a
   cliff rather than a cost — its operand vector is 72 MB, so every gather
   is a DRAM access plus a TLB page walk (class C's is 1.2 MB, class D's
   12 MB), and one outer iteration alone takes over 14 minutes.  `-i`

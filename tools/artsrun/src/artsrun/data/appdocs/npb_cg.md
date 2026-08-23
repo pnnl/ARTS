@@ -250,7 +250,7 @@ fixes `niter`), `-i` moves duration only.
   `-b 25`'s 560 would leave five of every six workers idle there. The count
   is node-invariant, so smaller geometries pack more of it onto each node.
   Width stops at 2× rather than the fork-join rule's 4× because the two
-  constraints cross: `-b 1` reaches 4.05× and takes 73.1 s at the anchor,
+  constraints cross: `-b 1` reaches 4.05× and takes 67.2 s at the anchor,
   and this is an anti-scaler, so that cell only grows with node count (its
   two-node run was still going at 430 s). At 2× no worker is idle — the
   rest is stealing headroom, not coverage.
@@ -260,11 +260,16 @@ fixes `niter`), `-i` moves duration only.
   broadcast, the single-EDT gather and the serial vector spine all grow with
   the rank count while the per-task grain shrinks. One class up the wall is
   absolute: class B `-b 10` finishes in 116 s at one node and **times out
-  past 590 s at two**. So the class stays at A — `-t A -b 2`, 27.0 s on the
+  past 590 s at two**. So the class stays at A — `-t A -b 2`, 25.3 s on the
   Dane anchor node (108w+4p), inside the 10–30 s an anti-scaler is sized to
   — and the 32-node cell, not the 1-node one, is what the budget has to
-  hold. (`-b 25` at the same node is 2.3 s: enough to time, not enough to
+  hold. (`-b 25` at the same node is 2.5 s: enough to time, not enough to
   fill 32 nodes.)
+
+  Every number above was taken on a tree built with every counter OFF. That
+  is not pedantry: the tree these were first measured on carried an earlier
+  campaign's `attribution` set, whose `OBJ_*` tables hash on each acquire,
+  and it moved this app's anchor by 6%.
 - `expect_args` equals `args` and the pin is the class's own reference zeta
   (17.1721077015265): the previous pin was taken at `-t T`, an argument set
   no campaign runs, so the cross-check never fired.

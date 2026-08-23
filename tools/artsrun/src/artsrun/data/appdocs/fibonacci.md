@@ -19,9 +19,12 @@ fine-grain data movement, not arithmetic.
 | arg | meaning | default | CLI reachability |
 |-----|---------|---------|------------------|
 | `argv[1]` = `n` | recursion input; sizes the whole graph exponentially | 10 (with a usage note) | ✓ parsed in `mainEdt` via `ocrGetArgv`, propagated through the argument DB — multinode-safe |
+| `argv[2]` = scatter levels | how deep the spawn scatters across ranks before a subtree pins to the rank it landed on | `FIB_RR_LEVELS` (11) | ✓ parsed in `mainEdt`, carried in each task's paramv — no global, so every rank sees it |
 
-No other runtime knobs.  `FIB_RR_LEVELS` (= 11) is a compile-time constant of
-the *hinted* placement layer only; the base build does not read it.
+The scatter depth used to be a compile-time constant.  It is the app's only
+parallelism dial and is calibrated by measurement, so it is an argument; the
+`#define` survives as the default when the argument is absent, and the base
+build ignores it either way.
 
 ## Structure
 
@@ -97,11 +100,22 @@ work itself is negligible per task, so the whole cost of the program is
 wherever the tree's edges cross ranks.
 
 The layer (`OCR_APP_OPTIMIZED_PLACEMENT` in `fib.c`) makes the crossing edges a
-prefix of the tree: children at level <= `FIB_RR_LEVELS` (default 11,
-`#ifndef`-overridable for calibration) scatter round-robin keyed on the child's
-deterministic path id; every deeper child pins to its creating rank, so each
-scattered subtree runs wire-free below its root.  The `complete` (sum) EDT pins
-to the creating rank.  The argument DBs stay `NULL_HINT` deliberately: the
+prefix of the tree: children at level <= the scatter depth (argument, default
+11) are placed by the child's deterministic path id; every deeper child pins to
+its creating rank, so each scattered subtree runs wire-free below its root.
+The `complete` (sum) EDT pins to the creating rank.
+
+**The path id is hashed before the modulus, and that is not cosmetic.**  A path
+id is the branch sequence read as a binary number, so a raw `% nranks` aliases
+with the tree's own shape — and this tree is asymmetric (`fib(n-1)` dwarfs
+`fib(n-2)`), so the alias puts unequal subtrees on the same rank.  Measured at
+4 nodes with the placement counters: raw modulus gave 2.62x spread in
+`NUM_EDT_FINISH`, **2.92x in `TIME_EDT_EXEC`** (one rank doing 104 s of work
+against another's 36 s) and 91x in steal attempts — three ranks spinning for
+work while the first drowned; two ranks even landed on identical counts, the
+signature of an aliasing key.  Mixing first (the same finalizer used by
+`nqueens`) brings those to **1.13x / 1.15x / 15x** and the cell from 7.19 s to
+**4.82 s**.  The argument DBs stay `NULL_HINT` deliberately: the
 runtime's no-hint DB home is the creator, which is exactly the one-shot
 small-DB placement the 2026-07-10 pin experiments showed this class needs.
 
@@ -110,12 +124,18 @@ small-DB placement the 2026-07-10 pin experiments showed this class needs.
 `n` is the only dial, and it scales *work*, not per-task size:
 
 - Pick `n` so total EDTs (`3·F(n+1)`) ≫ total workers; ~10⁴ EDTs per worker
-  keeps every deque busy through the fold-up wave.  1 node × 15 workers:
-  `n ≈ 28–30` (1.5–4M EDTs).  8 nodes × 120 workers: `n ≈ 32–34` (6.5–28M).
-  The calibrated strong-scaling argument is `33` (~17.1M EDTs), sized so the
-  1-node run takes minutes rather than seconds.
-- Wall time ≈ total EDTs × per-EDT overhead / (nodes × workers) — but at
-  multinode the remote-edge cost above, not worker count, dominates; expect
-  anti-scaling in the naive placement and treat the app as a scheduler/
-  coherence probe, not a FLOPS benchmark.
+  keeps every deque busy through the fold-up wave.  Measured at the Dane
+  anchor node (108w+4p): 30 → 0.83 s, 33 → 3.6, 36 → 15.7, 38 → 39.9,
+  40 → 105.8, **41 → 173.4**.  The calibrated argument is `41`.
+- Scatter depth `11` gives 2048 distinct paths — 64 per rank at 32 nodes,
+  enough for the asymmetric tree to average out.  It sits on the measured
+  plateau: at 4 nodes 9/11/14 give 4.75/4.77/4.89 s and at 8 nodes
+  2.26/2.28/2.37; only `6` (6.02 s at 4 nodes) and `16` fall off.
 - Memory is never the limit; leave it out of the sizing decision.
+- **The hinted tier is what the app is for.**  Base at `n = 38`: 78.9 s at
+  one bentley node, and TIMEOUT past 400 s at two and at four — every
+  recursion child is a remote spawn.  Hinted at the same size: 78.8 / 43.2 /
+  25.0.  At the trend size (`36`, scatter 11) the hinted tier runs
+  24.2 / 10.6 / 4.8 / 2.3 s over 1/2/4/8 nodes — **10.5x on 8 nodes**, and
+  all four coherence arms land within 3% of each other, because 99.99% of
+  its acquires are local hits.
