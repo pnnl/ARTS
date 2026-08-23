@@ -466,7 +466,25 @@ apps:
     # --report_diffusion is on AND the timestep is a checksum step
     # (ts % checksum_freq == 0) — without these two flags the cell can never
     # match its own scalar_re.
-    args: ['--nx', '12', '--ny', '12', '--nz', '12', '--init_x', '2', '--init_y', '2', '--init_z', '2', '--num_tsteps', '10', '--num_refine', '1', '--npx', '2', '--npy', '2', '--npz', '2', '--report_diffusion', '1', '--checksum_freq', '2']
+    # SPMD, and the base already carries a complete placement layer: the rank
+    # grid maps to policy domains as 3-D subgrids (not modulo) and both EDT and
+    # datablock affinity are pinned to the owning domain at 84 sites, so there
+    # is no hinted tier to add -- measured 98.8% local acquires and 1.00x EDT
+    # spread across ranks at 8 nodes.
+    #
+    # The rank grid now mirrors the largest geometry (4*4*2 = 32) instead of
+    # 12^3 = 1728.  The EDT count is set by the block total, not the rank count
+    # (518,117,863 against 518,119,559), so the oversized grid bought nothing
+    # and cost 189.4s against 143.3s at the anchor.  Blocks per rank rise to
+    # keep the mesh identical, which is why the pin does not move.
+    #
+    # stages_per_ts and num_vars are stated rather than left at their defaults
+    # (20 and 40, the values in force): with the 26-neighbour halo they are
+    # what makes 2,082 EDTs per block-timestep, and an argument list that does
+    # not name them hides where half a billion EDTs come from.
+    expect: '23887872.000000'
+    expect_args: ['--npx', '4', '--npy', '4', '--npz', '2', '--init_x', '6', '--init_y', '6', '--init_z', '12', '--nx', '12', '--ny', '12', '--nz', '12', '--num_tsteps', '18', '--num_refine', '0', '--stages_per_ts', '20', '--num_vars', '40', '--report_diffusion', '1', '--checksum_freq', '2']
+    args: ['--npx', '4', '--npy', '4', '--npz', '2', '--init_x', '6', '--init_y', '6', '--init_z', '12', '--nx', '12', '--ny', '12', '--nz', '12', '--num_tsteps', '18', '--num_refine', '0', '--stages_per_ts', '20', '--num_vars', '40', '--report_diffusion', '1', '--checksum_freq', '2']
 
   multigen:
     binary: multigen

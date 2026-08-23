@@ -184,6 +184,23 @@ checksum timestep, which drives a full octree reduction and a `2V`-EDT
 serial print chain on the sequential-rank-0 block; and every refinement round,
 which is an intent reduction plus a parent-and-eight-children RW join.
 
+## Placement (base — and why there is no hinted tier)
+
+This port needs no placement layer added to it, which is a statement about the
+port rather than about the app: `forkSpmdEdts_staticScheduler_Cart3D` maps a
+3-D **subgrid** of ranks to each policy domain rather than striping them
+modulo, `getAffinityHintsForDBandEdt` pins **both** EDT and datablock affinity
+to the owning domain at 84 sites, and `load_balance.c` re-pins through
+`...AtPD(newPD)` when a block migrates.  The counters at 8 nodes agree: EDT
+spread across ranks **1.00x** and **98.8% of acquires local**.  A hinted tier
+would have nothing left to say.
+
+What the counters do show is a **2.24x spread in useful work** against that
+1.00x spread in EDT count — the blocks are evenly distributed but not evenly
+heavy, which is adaptive refinement rather than misplacement, and belongs to
+the load-balance dials (`--lb_opt`, `--inbalance`, `--target_active`) rather
+than to affinity.
+
 ## Placement (base)
 
 No `OCR_APP_OPTIMIZED_PLACEMENT` guard exists in this port — the placement below
@@ -233,14 +250,34 @@ nothing. This is the port's dominant sizing constraint, not a subtlety.
   one `--object`, or `--uniform_refine 1`; and to get any printed per-timestep
   number you need `--report_diffusion 1`.
 
-For `N` nodes × 15 workers, choose `npx·npy·npz ≥ N` (ideally a 3-D factorization
-matching the node grid), then `init_x·init_y·init_z` so that
-`npx·npy·npz·init_x·init_y·init_z ≈ 4 × 15N` blocks, then `nx/ny/nz` for the grain
-and `num_refine` for the memory you can afford. 1 node × 15 workers:
-`--npx 2 --npy 2 --npz 2 --init_x 2 --init_y 2 --init_z 2` gives 64 blocks over 8
-ranks — the calibrated set, whose `--nx 12 … --num_refine 1` keeps eager
-allocation near 0.5 GB and `--num_tsteps 10` keeps the run short. 8 nodes × 120
-workers: keep the same 64 blocks for strong scaling (8 ranks distribute one per
-node) or, for a wider run, `--npx 4 --npy 4 --npz 2` with `--init_x/y/z 2`
-(1024 blocks) — but note the strong-scaling sweep holds the arguments fixed, so
-past 8 nodes the 8-rank grid cannot spread further.
+For `N` nodes × 15 workers, choose `npx·npy·npz ≥ N` (ideally a 3-D
+factorization matching the node grid), then `init_x·init_y·init_z` so that the
+block total covers the workers, then `nx/ny/nz` for the grain.
+
+**The calibrated set mirrors the largest geometry**: `--npx 4 --npy 4 --npz 2`
+is 32 ranks for 32 Dane nodes, and `--init_x 6 --init_y 6 --init_z 12` puts
+13,824 blocks behind them.  It replaces a 12³ = 1728-rank grid that had been
+chosen to force distribution.  The correction is worth stating because the
+reasoning behind the old grid does not survive measurement: **the EDT count is
+set by the block total, not by the rank count** — 518,117,863 EDTs at 32 ranks
+against 518,119,559 at 1728, for the same mesh — so the oversized grid bought
+no parallelism and cost 189.4 s against 143.3 s at the anchor.  The pin does
+not move with the grid, because the checksum is a property of the mesh.
+
+`--stages_per_ts 20` and `--num_vars 40` are stated even though they are the
+defaults.  They are the multipliers: per block per timestep the program creates
+about **2,082 EDTs** — 20 stages against roughly 104 for the 26-neighbour halo
+pack/unpack and the per-variable calculation — and an argument list that leaves
+them implicit hides where half a billion EDTs come from.
+
+**Memory is an EDT-count phenomenon here, not a datablock one.**  At the anchor
+the run holds **114.4 GB** resident while creating only 34 GB of datablocks:
+what occupies the machine is the in-flight set of half a billion EDTs.  The
+COUNTED output-event conversion is already complete (all 31 creates that ask
+for an output event supply their own COUNTED event; the other 47 pass NULL, so
+the runtime mints nothing), so there is no reclamation left to add — the count
+itself is the size.  It fits: Dane nodes have 256 GB, and the residency divides
+cleanly with the node count (15.5 / 8.5 / 4.5 / 2.7 GB over 1/2/4/8 nodes at
+the trend size).
+
+Anchor: **128.1 s**, inside the scaler window without further tuning.
