@@ -808,6 +808,27 @@ register_multinode_test(coherence_rw_multihop TIMEOUT 30)
 register_multinode_test(coherence_rw_pipeline TIMEOUT 40)
 register_multinode_test(coherence_rw_chain TIMEOUT 30)
 register_multinode_test(coherence_rwro_phase TIMEOUT 30)
+# RO-side coherence is a MULTINODE-only code path: on one rank home, owner and
+# self coincide, so a read acquire never emits a REQUEST/FORWARD/DELIVER at all.
+# These three were registered single-node only, which meant they exercised none
+# of the read plane they are named for.
+# The read-side twin of grant_sticky: a read grant must outlive its readers
+# under the retaining policy.  No value oracle can see this — a purging
+# implementation computes identical answers and merely re-fetches — so it needs
+# an assertion of its own.  Self-skips outside EXCL+RETAIN.
+# The silent-wrong-answer gate for retention: an owner writes AFTER lending a
+# read copy, and the lender reads again strictly after that write.  A rank that
+# keeps a stale copy answers the old value — no crash, no hang.  Portable, so
+# it guards every arm, not just the retaining one.
+add_arts_test(coherence_owner_write_after_lend)
+register_multinode_test(coherence_owner_write_after_lend TIMEOUT 30)
+
+add_arts_test(ro_grant_retained)
+register_multinode_test(ro_grant_retained TIMEOUT 30)
+
+register_multinode_test(coherence_rw_ro_rw TIMEOUT 30)
+register_multinode_test(coherence_ro_accumulation TIMEOUT 30)
+register_multinode_test(coherence_ro_acquire_stress TIMEOUT 90)
 
 register_multinode_test(multinode_stdout_forward)
 set_tests_properties(multinode_stdout_forward_2n PROPERTIES

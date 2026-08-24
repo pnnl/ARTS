@@ -19,8 +19,18 @@
  *
  * Single-rank by construction: with no other rank there is nothing that could
  * revoke the grant, so the sentinel's survival is attributable to stickiness
- * and to nothing else. Arms without a migrating grant (EXCL, WRF_VAL) have no
- * sentinel and self-skip.
+ * and to nothing else.
+ *
+ * EXCL states the same property in its own vocabulary. There is no sentinel
+ * there; the write PERMISSION lives in cache_state's rw_st, and RETAIN means it
+ * is relinquished only when another node asks — never merely because the local
+ * writers finished. So the EXCL arm asserts rw_st == GRANT with wc == 0 after
+ * every writer has released. An implementation that relinquished at the zero
+ * edge (or that demoted unconditionally when driving the engine) lands on IDLE
+ * here and every later local write pays a home round trip — the policy
+ * silently degrades to PURGE while computing identical answers, which is
+ * exactly the class of regression a value oracle cannot see. PURGE lands on
+ * IDLE legitimately and is excluded; WRF_VAL has no grant at all and skips.
  */
 
 #include "arts.h"
@@ -28,11 +38,12 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#if defined(ARTS_PROTOCOL_EXCL) || defined(ARTS_PROTOCOL_WRF_VAL)
+#if defined(ARTS_PROTOCOL_WRF_VAL) ||                                          \
+    (defined(ARTS_PROTOCOL_EXCL) && !defined(ARTS_RELEASE_RETAIN))
 int main(int argc, char **argv) {
   (void)argc;
   (void)argv;
-  printf("SKIP grant_sticky: no migrating grant in this protocol\n");
+  printf("SKIP grant_sticky: no retained grant in this configuration\n");
   return 0;
 }
 #else
@@ -46,6 +57,20 @@ int main(int argc, char **argv) {
 static arts_guid_t g_db;
 static int g_fail;
 
+#ifdef ARTS_PROTOCOL_EXCL
+#include "arts/coherence/excl/types.h"
+
+/* EXCL: the permission is rw_st, and wc counts only the live local writers. */
+static void excl_perm(arts_guid_t db, unsigned int *rw_st, unsigned int *wc) {
+  arts_shared_ptr_t h = arts_route_table_lookup_db(db);
+  struct arts_db_s *d = (struct arts_db_s *)arts_shared_get(h);
+  uint64_t w =
+      (d != NULL) ? arts_atomic_read_u64(&d->cache.cache_state) : 0u;
+  *rw_st = CACHE_RW_ST(w);
+  *wc = CACHE_RW_CNT(w);
+  arts_shared_release(&h);
+}
+#else
 /* Read the grant counter on this rank without disturbing it. */
 static unsigned int lease_count(arts_guid_t db) {
   arts_shared_ptr_t h = arts_route_table_lookup_db(db);
@@ -54,6 +79,7 @@ static unsigned int lease_count(arts_guid_t db) {
   arts_shared_release(&h);
   return wc;
 }
+#endif
 
 static void writer_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                        arts_edt_dep_t depv[]) {
@@ -67,6 +93,18 @@ static void writer_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     return;
   }
   data[0] = data[0] + 1;
+#ifdef ARTS_PROTOCOL_EXCL
+  /* A writer runs only under a held permission; wc counts its own hold. */
+  unsigned int rw_st, wc;
+  excl_perm(g_db, &rw_st, &wc);
+  if (rw_st != CACHE_ST_GRANT || wc < 1u) {
+    (void)fprintf(stderr,
+                  "FAIL grant_sticky: writer %u sees rw_st=%u wc=%u, "
+                  "expected GRANT with its own hold counted\n",
+                  seq, rw_st, wc);
+    g_fail = 1;
+  }
+#else
   /* Own hold + sentinel.  A writer that reached here without the sentinel
    * would mean the grant was granted per acquire rather than held. */
   unsigned int wc = lease_count(g_db);
@@ -77,6 +115,7 @@ static void writer_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                   seq, wc);
     g_fail = 1;
   }
+#endif
 }
 
 static void check_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -85,6 +124,20 @@ static void check_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramv;
   (void)depc;
   (void)depv;
+#ifdef ARTS_PROTOCOL_EXCL
+  /* Every writer has released and nobody else exists to ask for it back, so
+   * the permission must still be held with no live writer under it. */
+  unsigned int rw_st, wc;
+  excl_perm(g_db, &rw_st, &wc);
+  if (rw_st != CACHE_ST_GRANT || wc != 0u) {
+    (void)fprintf(stderr,
+                  "FAIL grant_sticky: after all releases rw_st=%u wc=%u, "
+                  "expected GRANT with wc==0 (the permission survives its "
+                  "writers; IDLE here means it degraded to PURGE)\n",
+                  rw_st, wc);
+    g_fail = 1;
+  }
+#else
   /* Every writer has released and nobody else exists to revoke: the sentinel,
    * and only the sentinel, must remain. */
   unsigned int wc = lease_count(g_db);
@@ -95,6 +148,7 @@ static void check_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                   wc);
     g_fail = 1;
   }
+#endif
   if (g_fail) {
     arts_abort(1);
   }

@@ -468,15 +468,21 @@ void arts_handler_db_excl_roret(void *item_v);
 
 /* arts_send_db_excl_forward: home → current owner.  mode=DB_MODE_RW requests
  * migration to target rank; mode=DB_MODE_RO requests serving one RO reader. */
+/* arts_send_db_excl_recall: home → a rank holding an unmarked RO grant.
+ * Data-less, fire-and-forget, no ack: the completion signal is the ordinary
+ * RO_RETURN it provokes.  The fan-out includes the sending rank itself. */
+void arts_send_db_excl_recall(unsigned int target_rank, arts_guid_t db_guid);
+void arts_handler_db_excl_recall(void *item_v);
+
 void arts_send_db_excl_forward(unsigned int owner_rank, arts_guid_t db_guid,
-                               uint32_t mode, uint32_t target,
+                               uint32_t mode, uint32_t target, uint32_t tag,
                                const struct arts_rdzv_landing_s *target_rdzv);
 
 /* arts_send_db_excl_deliver: owner → target.  Versionless (EXCL serialization
  * guarantees ordering).  The payload PUTs into the target's forwarded landing
  * (rdzv); src_h — a strong ref on the owner buffer — is CONSUMED. */
 void arts_send_db_excl_deliver(unsigned int target_rank, arts_guid_t db_guid,
-                               uint32_t mode,
+                               uint32_t mode, uint32_t tag,
                                const struct arts_rdzv_landing_s *rdzv,
                                arts_shared_ptr_t src_h, uint64_t data_size);
 

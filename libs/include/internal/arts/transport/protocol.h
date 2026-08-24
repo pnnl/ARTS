@@ -144,6 +144,13 @@ enum arts_msg_type {
                          * install: the DB's stable home buffer as a durable
                          * publish credit.  Pure hint (Cat-C lookup-or-drop
                          * at the creator). */
+  /* EXCL RETAIN-only: home -> retainer, "give the RO grant back".  Data-less;
+   * shares arts_msg_excl_confirm_packet_s with CONFIRM/RORET.  Appended at the
+   * end so no existing ordinal moves.  There is no ack: the completion signal
+   * is the ordinary RO_RETURN this provokes, and the home's r==0 edge is the
+   * continuation that fires the RO->RW flip. */
+  MSG_DB_EXCL_RECALL,
+
   MSG_COUNT, /* sentinel — keep last; used for array sizing */
 };
 
@@ -553,6 +560,13 @@ struct ARTS_PACKED arts_msg_excl_forward_packet_s {
   arts_guid_t db_guid;
   uint32_t mode;   /* DB_MODE_RW = migrate, DB_MODE_RO = serve reader */
   uint32_t target; /* migrate: new-owner rank; serve: reader rank */
+  /* Relinquish policy for the grant this FORWARD serves: nonzero = the grant is
+   * issued pre-marked to return voluntarily at its count zero edge.  A dedicated
+   * field rather than spare bits in `mode`: the mode test is an equality compare
+   * today, so a stuffed bit would land in the serve arm by accident rather than
+   * by contract, and `target` is copied unmasked into the serve node's rank. */
+  uint32_t tag;
+  uint32_t tag_pad;
   struct arts_msg_rdzv_landing_s rdzv; /* target's landing, forwarded */
 };
 
@@ -566,7 +580,7 @@ struct ARTS_PACKED arts_msg_excl_deliver_packet_s {
   struct arts_msg_header_s header;
   arts_guid_t db_guid;
   uint32_t mode; /* DB_MODE_RW = new owner, DB_MODE_RO = reader copy */
-  uint32_t pad;
+  uint32_t tag;  /* RO: relinquish policy carried through from the FORWARD */
   uint64_t data_size;
   uint64_t rdzv_txid;
   uint64_t rdzv_cookie;

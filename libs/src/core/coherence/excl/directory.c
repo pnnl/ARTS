@@ -230,6 +230,9 @@ void arts_db_home_init(struct arts_db_s *db, unsigned int rw_holder,
   arts_home_grantreq_queue_init(&db->rw_waiters);
   arts_lf_stack_init(&db->ro_waiters);
   arts_rank_bitset_init(&db->cached_ranks, nranks);
+#ifdef ARTS_RELEASE_RETAIN
+  arts_rank_bitset_init(&db->ro_retainers, nranks);
+#endif
 }
 
 void arts_db_home_teardown(struct arts_db_s *db) {
@@ -247,6 +250,11 @@ void arts_db_home_teardown(struct arts_db_s *db) {
     node = nx;
   }
   arts_rank_bitset_destroy(&db->cached_ranks);
+#ifdef ARTS_RELEASE_RETAIN
+  /* Retainers are legal at destroy — a retained grant has no live acquire — so
+   * a non-empty roster here is a normal path, not an edge case. */
+  arts_rank_bitset_destroy(&db->ro_retainers);
+#endif
 }
 
 /* ===== arts_handler_db_destroy =========================================

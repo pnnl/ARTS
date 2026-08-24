@@ -149,6 +149,17 @@ extern "C" {
    * to queue at the home: the reader/writer serialization its philosophy    \
    * pays for. */                                                            \
   X(NUM_EXCL_QUEUE_WAIT)                                                       \
+  /* Num: retention arm — the cost of making the relinquish involuntary.     \
+   * RECALL_SENT counts every "give the read grant back" the home fans out;  \
+   * RECALL_EARLY counts the subset that landed on a request still in flight \
+   * and had to be remembered rather than acted on.  Their ratio is the      \
+   * erosion metric: a recall that retires a live grant is the protocol      \
+   * working, while one that demotes a later, unrelated grant is a re-fetch  \
+   * this policy exists to avoid.  A campaign where RECALL_SENT stays zero   \
+   * exercised no retention at all.                                          \
+   */                                                                        \
+  X(NUM_EXCL_RECALL_SENT)                                                      \
+  X(NUM_EXCL_RECALL_EARLY)                                                     \
   /* Num: write-through publish flight machine.  These count the RARE        \
    * transitions a green suite cannot prove exercised — a campaign where one \
    * stays zero ran no coverage of that path, not a healthy path.  FLIGHT =  \

@@ -280,6 +280,16 @@ counters:
     unit: count
     help: 'Turns that could not be granted on arrival and queued'
 
+  NUM_EXCL_RECALL_SENT:
+    group: 'Retention arm'
+    unit: count
+    help: 'Read grants the home asked back so a writer could proceed'
+
+  NUM_EXCL_RECALL_EARLY:
+    group: 'Retention arm'
+    unit: count
+    help: 'Recalls that overtook their grant and had to be remembered'
+
   NUM_PUB_FLIGHT:
     group: 'Publish flight'
     unit: count

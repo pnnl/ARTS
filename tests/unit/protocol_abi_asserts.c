@@ -122,8 +122,10 @@ _Static_assert(MSG_DB_INV_REDIRECT == 38,
                "ordinal MSG_DB_INV_REDIRECT drifted");
 _Static_assert(MSG_DB_CREATE_RETURN == 39,
                "MSG_DB_CREATE_RETURN ordinal moved");
-_Static_assert(MSG_COUNT == 40,
-               "MSG_COUNT drifted (wire-compat: must be 40 in all configs)");
+_Static_assert(MSG_DB_EXCL_RECALL == 40,
+               "ordinal MSG_DB_EXCL_RECALL drifted");
+_Static_assert(MSG_COUNT == 41,
+               "MSG_COUNT drifted (wire-compat: must be 41 in all configs)");
 
 /* ===== (2) header layout — read before the message type is known. ===== */
 _Static_assert(offsetof(struct arts_msg_header_s, message_type) == 0,
@@ -215,7 +217,7 @@ _Static_assert(sizeof(struct arts_msg_excl_release_packet_s) == 72,
 _Static_assert(sizeof(struct arts_msg_excl_cts_packet_s) == 40,
                "lock_cts sizeof drifted");
 #ifdef ARTS_RELEASE_RETAIN
-_Static_assert(sizeof(struct arts_msg_excl_forward_packet_s) == 64,
+_Static_assert(sizeof(struct arts_msg_excl_forward_packet_s) == 72,
                "lock_forward sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_excl_deliver_packet_s) == 56,
                "lock_deliver sizeof drifted");

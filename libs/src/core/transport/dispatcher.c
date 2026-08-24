@@ -781,6 +781,11 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     arts_handler_db_excl_roret((void *)packet);
     break;
   }
+  case MSG_DB_EXCL_RECALL: {
+    ARTS_DEBUG("Coh EXCL_RECALL Received");
+    arts_handler_db_excl_recall((void *)packet);
+    break;
+  }
 #endif /* ARTS_RELEASE_RETAIN */
 #endif /* ARTS_PROTOCOL_EXCL */
 #ifdef ARTS_PROTOCOL_INV

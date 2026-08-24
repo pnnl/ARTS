@@ -73,6 +73,12 @@ extern "C" {
 #define CACHE_ST_IDLE 0u
 #define CACHE_ST_REQ 1u
 #define CACHE_ST_GRANT 2u
+/* GRANT_PURGE — a grant that relinquishes VOLUNTARILY at the count zero edge,
+ * i.e. a PURGE-flavoured grant.  The release policy is really a per-grant
+ * property: under PURGE every grant carries it, under RETAIN none does until
+ * the home asks (a recall) or the home issues the grant pre-marked because a
+ * writer was already queued.  Only ro_st uses the value today. */
+#define CACHE_ST_GRANT_PURGE 3u
 
 /* Field widths and shifts. */
 #define CACHE_OWNER_RC_BITS 22
@@ -332,14 +338,28 @@ uint64_t cache_compute_next(uint64_t cur, int op, uint32_t *out_action);
 #define CACHE_OP_REL_RW 4 /* local RW release: wc-- + 0-edge → migrate/noop */
 #define CACHE_OP_REL_RO 5 /* local RO release: rc-- */
 
+/* Values are aligned with the PURGE block above so that a name shared by both
+ * policies also shares its number.  The acquire-axis NAMES stay distinct on
+ * purpose: PURGE's SELF_SERVE carries a does-not-park contract (its waiter is
+ * pushed only after the arbiter returns, which is what makes "the count the
+ * grant CAS observed == the parked population" hold), while the DRAIN_* actions
+ * here always find their waiter already pushed.  Merging those names would
+ * import a false invariant; merging the numbers costs nothing. */
 #define CACHE_ACT_NONE 0
-#define CACHE_ACT_SEND_RW 1    /* send RW REQUEST to home */
-#define CACHE_ACT_SEND_RO 2    /* send RO REQUEST to home */
-#define CACHE_ACT_DRAIN_RW 3   /* serve rw_pending */
-#define CACHE_ACT_DRAIN_BOTH 4 /* serve rw_pending + ro_pending */
-#define CACHE_ACT_DRAIN_RO 5   /* serve ro_pending */
-#define CACHE_ACT_MIGRATE 6 /* wc 0-edge + migrate_target set: send DELIVER */
-#define CACHE_ACT_REL_RO 7  /* rc-- only (no wire needed) */
+#define CACHE_ACT_SEND_RW 2    /* send RW REQUEST to home */
+#define CACHE_ACT_SEND_RO 3    /* send RO REQUEST to home */
+#define CACHE_ACT_DRAIN_BOTH 5 /* serve rw_pending + ro_pending */
+#define CACHE_ACT_DRAIN_RO 6   /* serve ro_pending */
+#define CACHE_ACT_REL_RO 8     /* the rc zero edge was reached */
+#define CACHE_ACT_DRAIN_RW 9   /* serve rw_pending (no PURGE counterpart) */
+#define CACHE_ACT_MIGRATE 10 /* wc 0-edge + migrate_target set: send DELIVER */
+
+/* CACHE_ACT_REL_RO marks the edge, NOT the wire send.  Whether a RO_RETURN goes
+ * out is derived from the COMMITTED transition by the caller —
+ * ro_st(cur) in {REQ, GRANT, GRANT_PURGE} && ro_st(next) == IDLE — because that
+ * CAS is the exactly-once token and a concurrent recall must not be able to
+ * make two sites send for one grant.  Under RETAIN the edge may relinquish
+ * (GRANT_PURGE) or retain (GRANT); the engine must be driven either way. */
 
 uint64_t cache_owner_compute_next(uint64_t cur, int op, uint32_t *out_action);
 #endif /* ARTS_RELEASE_RETAIN */
@@ -465,6 +485,16 @@ struct arts_db_s {
   struct arts_home_grantreq_queue_s rw_waiters; /* Vyukov MPSC, pop-one */
   arts_lf_stack_t ro_waiters;                  /* Treiber, XCHG drain */
   struct arts_rank_bitset_s cached_ranks;      /* destroy fan-out roster */
+#ifdef ARTS_RELEASE_RETAIN
+  /* Recall roster: ranks that have issued a RO request since the last drain.
+   * Its OWN bitset — cached_ranks is the monotone destroy set and is written by
+   * RW requesters too.  Set with fetch_or BEFORE the requester's lock_state CAS
+   * (the ordering that makes "untagged implies recalled" hold), drained by the
+   * CAS that takes w 0->1.  The set must stay a fetch_or and the read an atomic
+   * load: a test-then-store fast path would remove the claimer's RMW and reopen
+   * the store-load pair this ordering closes for free. */
+  struct arts_rank_bitset_s ro_retainers;
+#endif
   /* GPU staging fields (full arts_db_s alloc; unused on the CPU EXCL path). */
   volatile unsigned int reader;
   volatile unsigned int writer;
