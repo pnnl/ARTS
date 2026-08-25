@@ -141,15 +141,9 @@ apps:
   RSBench_intel_sharedDB:
     enabled: true
     versions: [base]
-  sar_large:
-    enabled: true
-    versions: [base]
   sar_pss:
     enabled: true
-    versions: [hinted]
-  sar_small:
-    enabled: true
-    versions: [base]
+    versions: [base, restructured]
   smithwaterman:
     enabled: true
     versions: [hinted]

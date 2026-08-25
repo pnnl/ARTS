@@ -929,28 +929,17 @@ add_benchmark_app(NAME LCS_wavefront
 )
 
 # ==========================================================================
-# Tier 14: SAR (all sizes share same sources from sar/ocr/src/)
+# Tier 14: SAR (problem_size_scaling, over sources shared from sar/ocr/src/)
 # ==========================================================================
 #
-# SAR build pipeline (ported from original Makefiles):
-#
 #   1. crlibm: extract tarball → configure → RAG patches → compile
-#   2. datagen: build host utility → generate .bin datasets
-#   3. dataImage: build host utility → convert .bin → .c
-#   4. Compile generated .c → .o (for RAG_IMPLICIT_INPUTS sizes)
-#   5. Link SAR executables with data objects + crlibm
+#   2. Link the SAR executable against crlibm
 #
-# Sizes tiny/small/medium/large use RAG_IMPLICIT_INPUTS (compile-time data).
-# Sizes huge/problem_size_scaling read data files at runtime.
+# The one variant reads its data files and its parameter file at runtime, so
+# the problem size is an argument rather than a build.
 
 set(SAR_ROOT "${OCR_APPS_ROOT}/sar")
 set(SAR_SRC_DIR "${SAR_ROOT}/ocr/src")
-# Embedded-size datagen output lives in the BUILD tree: these bytes exist
-# only to be assembled into the sar_<size> binaries (compile-time data), so
-# they are build material with build-tree lifecycle — never generated into
-# the application submodule.  Runtime-input datasets (sar-huge) live under
-# the repo datasets/ root instead.
-set(SAR_DATASETS_DIR "${CMAKE_CURRENT_BINARY_DIR}/sar_datasets")
 set(CRLIBM_PKG_DIR "${OCR_LIBS_ROOT}/crlibm-1.0beta5")
 set(CRLIBM_TARBALL "${CRLIBM_PKG_DIR}/tar/crlibm-1.0beta5.tgz")
 set(CRLIBM_DIR "${CMAKE_CURRENT_BINARY_DIR}/crlibm")
@@ -1075,160 +1064,15 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# Step 2: Build host utilities (datagen + dataImage)
+# The RAG_IMPLICIT_INPUTS sizes are gone (2026-08-24).  tiny/small/medium/large
+# compiled their datasets into the binary through a datagen -> dataImage ->
+# .incbin pipeline, which is why they took no arguments: each was one rung of
+# the problem_size_scaling ladder frozen at build time.  The ladder itself is
+# Parameter files differing only in the image grid (Ix = 400*(n+1)), so the pss
+# target with a parameter file covers every one of them and the four binaries,
+# their host utilities and their generated data objects buy nothing.  The same
+# rule extends the ladder: Parameter41 is 16800 a side.
 # ---------------------------------------------------------------------------
-if(HAS_CRLIBM)
-    # datagen: generates .bin datasets from Parameters.txt + Targets.txt
-    set(DATAGEN_SRC_DIR "${SAR_ROOT}/datagen-tsml/src")
-    add_executable(sar_datagen
-        ${DATAGEN_SRC_DIR}/main.c
-        ${DATAGEN_SRC_DIR}/inputs.c
-        ${DATAGEN_SRC_DIR}/fir_filter.c
-        ${DATAGEN_SRC_DIR}/gen_rand.c
-        ${DATAGEN_SRC_DIR}/fftw3.c
-    )
-    target_include_directories(sar_datagen PRIVATE ${DATAGEN_SRC_DIR})
-    target_compile_definitions(sar_datagen PRIVATE RAG_ADD_ERROR=1)
-    target_compile_options(sar_datagen PRIVATE -O2 -fopenmp)
-    target_link_libraries(sar_datagen PRIVATE m gomp)
-    set_target_properties(sar_datagen PROPERTIES
-        C_STANDARD 99 C_EXTENSIONS ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-    )
-
-    # dataImage: converts .bin → .c source with embedded data arrays
-    set(DATAIMAGE_SRC_DIR "${SAR_ROOT}/utils")
-    add_executable(sar_dataImage
-        ${DATAIMAGE_SRC_DIR}/dataImage.c
-        ${DATAIMAGE_SRC_DIR}/inputs.c
-    )
-    target_include_directories(sar_dataImage PRIVATE
-        ${DATAIMAGE_SRC_DIR}
-        ${SAR_SRC_DIR}
-    )
-    target_compile_definitions(sar_dataImage PRIVATE RAG)
-    target_compile_options(sar_dataImage PRIVATE -O2)
-    target_link_libraries(sar_dataImage PRIVATE m)
-    set_target_properties(sar_dataImage PROPERTIES
-        C_STANDARD 99 C_EXTENSIONS ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-    )
-endif()
-
-# ---------------------------------------------------------------------------
-# Step 3: Data generation pipeline for RAG_IMPLICIT_INPUTS sizes
-# ---------------------------------------------------------------------------
-# For each size (tiny/small/medium/large):
-#   datagen → .bin files → dataImage → .c files → compiled into data objects
-# All generated artifacts go into the build directory.
-#
-# Per-file data object resolution for RAG_IMPLICIT_INPUTS sizes:
-#   1. .o exists in datasets/<size>/x86/ → copy to build dir (fastest)
-#   2. .c exists but .o missing → compile once, cache .o back to datasets dir
-#   3. Neither → full pipeline: .bin → dataImage → .c → compile .o
-if(HAS_CRLIBM)
-    set(SAR_IMPLICIT_SIZES tiny small medium large)
-
-    # Helper script for dataImage invocation (handles stdin/stdout redirection)
-    set(_dataimage_script "${CMAKE_CURRENT_BINARY_DIR}/sar_run_dataimage.sh")
-    file(WRITE "${_dataimage_script}"
-        "#!/bin/sh\nset -e\n"
-        "# Usage: sar_run_dataimage.sh <dataImage> <type_index> <input.bin> <output.c>\n"
-        "\"$1\" \"$2\" < \"$3\" > \"$4\"\n"
-    )
-
-    # dataImage type indices per data file (legacy Case 2 path)
-    set(_dataimage_idx_Data 1)
-    set(_dataimage_idx_PlatformPosition 2)
-    set(_dataimage_idx_PulseTransmissionTime 3)
-
-    # Symbol prefix per data file — used by the .incbin wrapper script
-    # (Case 3 path).  These match what app code extern-declares in
-    # third_party/ocr-apps/apps/sar/ocr/src/inputs.c.
-    set(_sym_prefix_Data image)
-    set(_sym_prefix_PlatformPosition platform)
-    set(_sym_prefix_PulseTransmissionTime pulse)
-
-    # .incbin wrapper script — bypasses the cc1 OOM that sar_dataImage's
-    # giant C-source output causes on medium/large datasets (~10 GB+ peak
-    # compiler memory).  The assembler's .incbin copies bytes directly
-    # in O(1) memory regardless of dataset size.
-    set(_sar_incbin_script
-        "${CMAKE_SOURCE_DIR}/benchmarks/apps/sar_make_incbin_wrapper.sh")
-
-    # datagen wrapper — enters the size's input directory (the generator reads
-    # Parameters.txt / Targets.txt from the working directory) and stages its
-    # outputs before moving them into place.
-    set(_sar_datagen_script
-        "${CMAKE_SOURCE_DIR}/benchmarks/apps/sar_run_datagen.sh")
-
-    foreach(sar_size ${SAR_IMPLICIT_SIZES})
-        set(_ocr_size_dir "${SAR_ROOT}/ocr/${sar_size}")
-        set(_data_build_dir "${CMAKE_CURRENT_BINARY_DIR}/sar_data/${sar_size}")
-        set(_datasets_dir "${SAR_DATASETS_DIR}/${sar_size}")
-
-        file(MAKE_DIRECTORY "${_data_build_dir}")
-        file(MAKE_DIRECTORY "${_datasets_dir}")
-
-        set(_data_names Data PlatformPosition PulseTransmissionTime)
-        set(_data_objects "")
-
-        # The .bin datasets are a deterministic function of two tracked files,
-        # and the datasets directory itself is not tracked — so a checkout that
-        # has never staged them has no .bin at all.  Generating them here makes
-        # that the build's job: without a rule the build would instead stop on
-        # a missing file it calls a source, naming neither SAR nor the two
-        # inputs that produce it.  Only the sizes embedded at build time are
-        # generated; the runtime-input size costs orders of magnitude more to
-        # produce and is staged onto a host rather than rebuilt on it.
-        set(_datagen_inputs "${SAR_ROOT}/datagen-tsml/${sar_size}")
-        set(_datagen_outputs "")
-        foreach(_name ${_data_names})
-            list(APPEND _datagen_outputs "${_datasets_dir}/${_name}.bin")
-        endforeach()
-        add_custom_command(
-            OUTPUT ${_datagen_outputs} "${_datasets_dir}/Radar.txt"
-            COMMAND sh "${_sar_datagen_script}" "$<TARGET_FILE:sar_datagen>"
-                    "${_datagen_inputs}" "${_datasets_dir}"
-            DEPENDS sar_datagen "${_sar_datagen_script}"
-                    "${_datagen_inputs}/Parameters.txt"
-                    "${_datagen_inputs}/Targets.txt"
-            COMMENT "SAR: Generating ${sar_size} dataset from datagen inputs..."
-            VERBATIM
-        )
-
-        foreach(_name ${_data_names})
-            set(_build_o "${_data_build_dir}/${_name}.o")
-
-            # Emit .S via .incbin and assemble: the assembler embeds the
-            # bytes in O(1) memory, bypassing the cc1 OOM that a giant
-            # C-array source triggers on the medium/large datasets.
-            set(_build_S "${_data_build_dir}/${_name}.S")
-            add_custom_command(
-                OUTPUT "${_build_S}"
-                COMMAND sh "${_sar_incbin_script}"
-                    "${_datasets_dir}/${_name}.bin"
-                    "${_build_S}"
-                    "${_sym_prefix_${_name}}"
-                DEPENDS "${_sar_incbin_script}"
-                        "${_datasets_dir}/${_name}.bin"
-                COMMENT "SAR: Generating ${sar_size}/${_name}.S (.incbin wrapper)..."
-            )
-            add_custom_command(
-                OUTPUT "${_build_o}"
-                COMMAND ${CMAKE_C_COMPILER} -c -o "${_build_o}" "${_build_S}"
-                DEPENDS "${_build_S}"
-                COMMENT "SAR: Assembling ${sar_size}/${_name}.S -> .o..."
-            )
-
-            list(APPEND _data_objects "${_build_o}")
-        endforeach()
-
-        # Custom target to trigger all data object builds for this size
-        add_custom_target(sar_data_${sar_size}_objs DEPENDS ${_data_objects})
-        set(SAR_DATA_${sar_size}_OBJECTS ${_data_objects})
-    endforeach()
-endif()
 
 # ---------------------------------------------------------------------------
 # Step 4: Build SAR executables
@@ -1260,63 +1104,58 @@ set(SAR_DEFINES
 )
 
 if(HAS_CRLIBM)
-    # --- RAG_IMPLICIT_INPUTS sizes (tiny/small/medium/large) ---
-    foreach(sar_size ${SAR_IMPLICIT_SIZES})
-        set(SAR_SIZE_DEFINES ${SAR_DEFINES} RAG_IMPLICIT_INPUTS)
+    set(SAR_DIST_DEFINES ${SAR_DEFINES})
+    list(REMOVE_ITEM SAR_DIST_DEFINES RAG_NEW_BLK_SIZE=32)
+    list(APPEND SAR_DIST_DEFINES RAG_NEW_BLK_SIZE=50)
+    # The detection pass computes the correlation values its own windows need
+    # instead of reading them from a whole-image map, so its blocking factor
+    # is its own: the halo it recomputes is (blk+Ncfar-1)^2/blk^2.
+    list(APPEND SAR_DIST_DEFINES RAG_CFAR_BLK_SIZE=100)
 
-        add_benchmark_app(NAME sar_${sar_size}
-            DIR sar/ocr/${sar_size}
-            SRC_SUBDIR ../src
-            SOURCES ${SAR_SOURCES}
-            EXTRA_INCLUDES ${SAR_SRC_DIR} ${CRLIBM_DIR}
-            EXTRA_DEFINES ${SAR_SIZE_DEFINES}
-            EXTRA_LINK_LIBS m ocr_lib_crlibm
-            HINTED_PLACEMENT
-        )
-        # Link the per-size data objects (image_*, platform_*, pulse_*
-        # symbols emitted from the sar_dataImage / .incbin pipeline) into
-        # the executable.  Without this the link fails with "undefined
-        # reference to image_0/platform_0/pulse_0/...". */
-        foreach(_sa sar_${sar_size} sar_${sar_size}_hinted)
-            if(TARGET ${_sa}_xsocr)
-                target_link_libraries(${_sa}_xsocr PRIVATE
-                    ${SAR_DATA_${sar_size}_OBJECTS})
-                add_dependencies(${_sa}_xsocr sar_data_${sar_size}_objs)
-            endif()
-            foreach(sfx ${ARTS_VARIANT_SUFFIXES})
-                target_link_libraries(${_sa}_arts_${sfx} PRIVATE
-                    ${SAR_DATA_${sar_size}_OBJECTS})
-                add_dependencies(${_sa}_arts_${sfx} sar_data_${sar_size}_objs)
-            endforeach()
-            if(TARGET ${_sa}_ocrvx)
-                target_link_libraries(${_sa}_ocrvx PRIVATE
-                    ${SAR_DATA_${sar_size}_OBJECTS})
-                add_dependencies(${_sa}_ocrvx sar_data_${sar_size}_objs)
-            endif()
-        endforeach()
-    endforeach()
+    # The resample interpolates one pixel per iteration, so a projection-sized
+    # block holds microseconds of work; this phase blocks coarser.
+    list(APPEND SAR_DIST_DEFINES RAG_AFFINE_BLK_SIZE=250)
 
-    # --- Runtime-input sizes (huge, problem_size_scaling) ---
-    foreach(sar_size huge problem_size_scaling)
-        if(EXISTS "${SAR_ROOT}/ocr/${sar_size}")
-            set(SAR_RT_DEFINES ${SAR_DEFINES})
-            if(sar_size STREQUAL "problem_size_scaling")
-                # This variant's own Makefile.x86 sets the blocking factor to
-                # 50 (the shared list carries the other variants' 32).
-                list(REMOVE_ITEM SAR_RT_DEFINES RAG_NEW_BLK_SIZE=32)
-                list(APPEND SAR_RT_DEFINES RAG_NEW_BLK_SIZE=50)
-            endif()
-            add_benchmark_app(NAME sar_${sar_size}
-                DIR sar/ocr/${sar_size}
-                SRC_SUBDIR ../src
-                SOURCES ${SAR_SOURCES}
-                EXTRA_INCLUDES ${SAR_SRC_DIR} ${CRLIBM_DIR}
-                EXTRA_DEFINES ${SAR_RT_DEFINES}
-                EXTRA_LINK_LIBS m ocr_lib_crlibm
-                HINTED_PLACEMENT
-            )
-        endif()
-    endforeach()
+    # --- Restructured: sar_dist ---
+    # It owns only the files whose decomposition it changes; the rest of the
+    # pipeline is the shared source, compiled once more.  ccd.c is absent
+    # because the correlation pass is fused into the detection pass.
+    set(SAR_DIST_SOURCES
+        main.c cfar.c back_proj.c registration.c image_formation.c blocks.c
+        ../src/inputs.c ../src/digspot.c ../src/sinc_interp.c ../src/sinc.c
+        ../src/fftw3.c ../src/rag_ocr.c
+    )
+    add_benchmark_app(NAME sar_dist
+        DIR sar/ocr/dist
+        SRC_SUBDIR .
+        SOURCES ${SAR_DIST_SOURCES}
+        EXTRA_INCLUDES ${SAR_ROOT}/ocr/problem_size_scaling ${SAR_SRC_DIR} ${CRLIBM_DIR}
+        EXTRA_DEFINES ${SAR_DIST_DEFINES}
+        EXTRA_LINK_LIBS m ocr_lib_crlibm
+    )
+
+    # --- Base: the one runtime-input variant ---
+    # sar/ocr/huge carries byte-identical sources (main.c, common.h, argv.h) and
+    # differs solely in the Parameters.txt it ships, whose grid is this ladder's
+    # tenth rung, so it is not a target of its own either.
+    # This variant's own Makefile.x86 sets the blocking factor to 50 (the
+    # shared list carries the other variants' 32).
+    set(SAR_RT_DEFINES ${SAR_DEFINES})
+    list(REMOVE_ITEM SAR_RT_DEFINES RAG_NEW_BLK_SIZE=32)
+    list(APPEND SAR_RT_DEFINES RAG_NEW_BLK_SIZE=50)
+    # No HINTED_PLACEMENT: measured, a placement layer for this program either
+    # collapses the pipeline onto one rank (97% of the work on one of four) or,
+    # written honestly, runs 23-36% SLOWER than no hints at all.  The
+    # serialisation is on a shared whole image block, which affinity cannot
+    # address.
+    add_benchmark_app(NAME sar_problem_size_scaling
+        DIR sar/ocr/problem_size_scaling
+        SRC_SUBDIR ../src
+        SOURCES ${SAR_SOURCES}
+        EXTRA_INCLUDES ${SAR_SRC_DIR} ${CRLIBM_DIR}
+        EXTRA_DEFINES ${SAR_RT_DEFINES}
+        EXTRA_LINK_LIBS m ocr_lib_crlibm
+    )
 endif()
 
 

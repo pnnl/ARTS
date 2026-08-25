@@ -741,9 +741,52 @@ apps:
     marker: 'SAR detects:'
     scalar_re: 'SAR detects:\s*(\d+)'
     scalar_kind: int
-    args: ['{repo}/datasets/sar-huge/Data.bin', '{repo}/datasets/sar-huge/PlatformPosition.bin', '{repo}/datasets/sar-huge/PulseTransmissionTime.bin', '{repo}/scratch/sar_detects.txt', '{repo}/third_party/ocr-apps/apps/sar/ocr/problem_size_scaling/Parameter2.txt']
+    args: ['{repo}/datasets/sar-huge/Data.bin', '{repo}/datasets/sar-huge/PlatformPosition.bin', '{repo}/datasets/sar-huge/PulseTransmissionTime.bin', '{repo}/scratch/sar_detects.txt', '{repo}/third_party/ocr-apps/apps/sar/ocr/problem_size_scaling/Parameter9.txt']
+    # Anti-scaler, structurally: every tile family splits the image but writes
+    # it back through ONE whole-image block acquired RW, and write permission
+    # is exclusive per policy domain, so the block tours the domains and each
+    # hop carries the whole image.  Measured at 2000 a side: 13.2s / 1.4GB at
+    # one bentley node against 78.7s / 110.5GB at two.
+    #
+    # No hinted tier: a placement layer here either collapses the pipeline onto
+    # one rank (measured: 97% of the useful work on one of four, five tasks
+    # between the other two) or, written honestly as a coordinate map, runs
+    # 23-36% slower than no hints.  Affinity cannot address a serialisation
+    # that is on a shared block.
+    #
+    # The parameter file IS the size dial: the shipped files differ only in the
+    # image grid, by the rule Ix = 400*(n+1), and Parameter9 is the last one
+    # they ship.  That puts this row's anchor at 12.2s -- inside the 10-30s an
+    # anti-scaler is sized to -- so the grid needs no extension here (the
+    # restructured row extends the same ladder for its own).  detects scales
+    # with the grid and is deterministic, which is what the pin checks.
+    expect: '4075334'
+    expect_args: ['{repo}/datasets/sar-huge/Data.bin', '{repo}/datasets/sar-huge/PlatformPosition.bin', '{repo}/datasets/sar-huge/PulseTransmissionTime.bin', '{repo}/scratch/sar_detects.txt', '{repo}/third_party/ocr-apps/apps/sar/ocr/problem_size_scaling/Parameter9.txt']
     fixtures: ['{repo}/datasets/sar-huge/Data.bin', '{repo}/datasets/sar-huge/PlatformPosition.bin', '{repo}/datasets/sar-huge/PulseTransmissionTime.bin']
-    hinted: true
+    restructured_as: sar_dist
+
+  sar_dist:
+    binary: sar_dist
+    class: task
+    provenance: 'Streaming Sensor Challenge Problem SAR reference (Georgia Tech Research Institute); distributed rewrite'
+    marker: 'SAR detects:'
+    scalar_re: 'SAR detects:\s*(\d+)'
+    scalar_kind: int
+    # The four shared objects the base program's phases pass through are gone:
+    # backprojection writes one block per tile and gathers once; the correlation
+    # pass is fused into the detection pass, so the whole-image correlation map
+    # is never built; detections are per block instead of appended into one
+    # array under an atomic, and each block writes its own slice of the output
+    # file at its own offset; and the affine resample lands its tiles straight
+    # in the current image, so its whole-image intermediate and the copy that
+    # read it both disappear.  It scales where the base anti-scales, which puts
+    # it in the ~150 s scaler window rather than the base's 10-30 s -- hence its
+    # own rung of the shipped ladder (Ix = 400*(n+1), so 18400 is Parameter45).
+    args: ['{repo}/datasets/sar-huge/Data.bin', '{repo}/datasets/sar-huge/PlatformPosition.bin', '{repo}/datasets/sar-huge/PulseTransmissionTime.bin', '{repo}/scratch/sar_detects.txt', '{repo}/third_party/ocr-apps/apps/sar/ocr/problem_size_scaling/Parameter45.txt']
+    expect: '27114207'
+    expect_args: ['{repo}/datasets/sar-huge/Data.bin', '{repo}/datasets/sar-huge/PlatformPosition.bin', '{repo}/datasets/sar-huge/PulseTransmissionTime.bin', '{repo}/scratch/sar_detects.txt', '{repo}/third_party/ocr-apps/apps/sar/ocr/problem_size_scaling/Parameter45.txt']
+    fixtures: ['{repo}/datasets/sar-huge/Data.bin', '{repo}/datasets/sar-huge/PlatformPosition.bin', '{repo}/datasets/sar-huge/PulseTransmissionTime.bin']
+    restructured_from: sar_pss
 
   smithwaterman:
     binary: smithwaterman
@@ -1021,60 +1064,6 @@ apps:
     # a per-instance replica, which is exactly what that sibling already is
     # (and what the shelved Main_dist.c driver was).  The pair IS the
     # decomposition ablation; a restructured row would duplicate it.
-
-  sar_large:
-    binary: sar_large
-    class: task
-    provenance: 'Streaming Sensor Challenge Problem SAR reference (Georgia Tech Research Institute)'
-    marker: 'SAR detects:'
-    scalar_re: 'SAR detects:\s*(\d+)'
-    scalar_kind: int
-    expect: '6523'
-    expect_args: []
-    args: []
-    hinted: true
-    default_enabled: false
-    timeout: 120
-
-  sar_medium:
-    binary: sar_medium
-    class: task
-    provenance: 'Streaming Sensor Challenge Problem SAR reference (Georgia Tech Research Institute)'
-    marker: 'SAR detects:'
-    scalar_re: 'SAR detects:\s*(\d+)'
-    scalar_kind: int
-    expect: '1991'
-    expect_args: []
-    args: []
-    hinted: true
-    default_enabled: false
-
-  sar_small:
-    binary: sar_small
-    class: task
-    provenance: 'Streaming Sensor Challenge Problem SAR reference (Georgia Tech Research Institute)'
-    marker: 'SAR detects:'
-    scalar_re: 'SAR detects:\s*(\d+)'
-    scalar_kind: int
-    expect: '458'
-    expect_args: []
-    args: []
-    hinted: true
-    default_enabled: false
-
-  sar_tiny:
-    binary: sar_tiny
-    class: task
-    provenance: 'Streaming Sensor Challenge Problem SAR reference (Georgia Tech Research Institute)'
-    marker: 'SAR detects:'
-    scalar_re: 'SAR detects:\s*(\d+)'
-    scalar_kind: int
-    expect: '12'
-    expect_args: []
-    args: []
-    hinted: true
-    default_enabled: false
-
   XSBench_intel_sharedDB:
     binary: XSBench_intel_sharedDB
     class: spmd
