@@ -62,7 +62,7 @@ apps:
     versions: [base]
   graph500:
     enabled: true
-    versions: [base]
+    versions: [base, hinted]
   highbw:
     enabled: false
     versions: [base]

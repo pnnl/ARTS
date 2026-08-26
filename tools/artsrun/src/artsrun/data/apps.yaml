@@ -269,9 +269,25 @@ apps:
     marker: 'nodes \d+'
     scalar_re: 'nodes (\d+)'
     scalar_kind: int
-    expect: '64'
-    expect_args: ['6', '8', '1', '1']
-    args: ['20', '8', '32', '16']
+    # The edge factor is the official benchmark's 16, which the app's own
+    # README names; the row carried 8.  R and C are the worker grid and R*C
+    # must divide 2^SCALE, so the dataflow-DAG rule's ~4x of 3456 rounds to
+    # the nearest power of two that constraint permits: 128 x 128 = 16384.
+    # SCALE is the size knob and 21 puts the anchor at 156.5s.
+    #
+    # The scalar is the sum of the workers' visited counts, so it is a
+    # traversal result rather than an echo of SCALE -- but at an average
+    # degree of 32 the giant component covers the graph, so it equals 2^SCALE
+    # and catches a BFS that fails to reach vertices, not one that reaches
+    # them with the wrong parent.  The source has full validation
+    # (VALIDATION_MODE) but it runs inside the finish EDT, which is inside the
+    # measured span.
+    expect: '2097152'
+    expect_args: ['21', '16', '128', '128']
+    args: ['21', '16', '128', '128']
+    # The shipped worker-to-place map is `w % places`, which scatters every
+    # row and column partner on the R x C grid; the hinted tier tiles it.
+    hinted: true
     extra_scalars:
       kernel2_ns: '\[kernel2 time ([0-9.eE+-]+)\]'
       mteps: 'mean MTEPS ([0-9.eE+-]+)'

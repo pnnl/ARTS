@@ -86,10 +86,13 @@ def test_optimized_version_resolves_to_the_opt_target():
 
 
 def test_optimized_is_refused_where_the_source_has_no_hint_layer():
+    # Whichever application has no layer — naming one here makes the test fail
+    # when that application later gains one, which says nothing about the
+    # refusal being tested.
     catalog = load_catalog()
-    assert not catalog.apps["graph500"].hinted
+    bare = next(a for a in catalog.rows if not a.hinted)
     with pytest.raises(KeyError):
-        catalog.resolve("graph500", Version.HINTED)
+        catalog.resolve(bare.name, Version.HINTED)
 
 
 def test_a_real_run_configures_a_missing_build_tree(tmp_path, monkeypatch):
@@ -210,10 +213,11 @@ def test_a_version_an_application_lacks_is_dropped_and_said_out_loud(capsys):
     # back on its own when the catalog restores it; what must not happen is
     # the campaign running as though it had measured it.
     catalog = load_catalog()
-    bs = Benchset(name="o", apps={"graph500": BenchsetEntry(
+    bare = next(a for a in catalog.rows if not a.hinted)
+    bs = Benchset(name="o", apps={bare.name: BenchsetEntry(
         versions=[Version.BASE, Version.HINTED])})
     got = bs.resolve(catalog)
-    assert [a.key for a in got] == ["graph500:base"]
+    assert [a.key for a in got] == [f"{bare.name}:base"]
     assert "no hinted version" in capsys.readouterr().err
 
 

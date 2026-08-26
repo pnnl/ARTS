@@ -576,6 +576,9 @@ add_benchmark_app(NAME graph500
     DIR graph500
     SOURCES graph500.c
     EXTRA_DEFINES NO_FILES NO_MAP
+    # The shipped worker-to-place map indexes by worker id alone; the hinted
+    # flavour tiles the R x C worker grid instead.
+    HINTED_PLACEMENT
     EXTRA_LINK_LIBS m
 )
 

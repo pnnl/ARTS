@@ -83,10 +83,16 @@ def test_the_control_acts_on_the_surface_that_is_showing():
 
 
 def test_a_version_the_application_lacks_is_absent_not_unchecked():
+    # Whichever application has no hint layer — naming one here makes the test
+    # fail when that application later gains one, which says nothing about the
+    # absence being tested.
+    from artsrun.model.catalog import load_catalog
+    bare = next(a for a in load_catalog().rows if not a.hinted).name
+
     async def check(app, pilot):
         bench = app.query_one("#bench", BenchsetPanel)
         idents = {t.ident for t in bench.toggles}
-        return ("graph500:hinted" in idents, "nqueens:hinted" in idents,
+        return (f"{bare}:hinted" in idents, "nqueens:hinted" in idents,
                 len(bench.query(".bench-cell.blank")))
 
     has_absent, has_present, blanks = drive(check)
