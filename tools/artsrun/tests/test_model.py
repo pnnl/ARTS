@@ -359,16 +359,6 @@ def test_fixtures_and_library_drivers_are_microbenchmarks():
         assert catalog.apps[name].kind is Kind.MICROBENCH, name
 
 
-def test_a_variant_of_a_published_application_is_still_an_application():
-    # Being a duplicate of a sibling is a reason to leave it off a campaign,
-    # not a reason to call it a mechanism probe.
-    catalog = load_catalog()
-    for name in ("stream_org", "miniAMR_forkbomb"):
-        entry = catalog.apps[name]
-        assert entry.kind is Kind.APPLICATION, name
-        assert not entry.default_enabled, name
-
-
 def test_an_idiom_study_series_is_a_mechanism_probe():
     # The david stencil1D set shares a directory with the PRK Stencil ports
     # but neither the kernel nor the provenance: its own README presents it

@@ -179,13 +179,7 @@ apps:
     versions: [base]
   stream:
     enabled: true
-    versions: [base, restructured]
-  stream_org:
-    enabled: false
-    versions: [base]
-  stream_sa:
-    enabled: false
-    versions: [base]
+    versions: [base, hinted, restructured]
   task_priorities:
     enabled: false
     versions: [base]

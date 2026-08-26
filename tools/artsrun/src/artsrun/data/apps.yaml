@@ -968,52 +968,66 @@ apps:
     binary: stream
     class: spmd
     provenance: 'STREAM memory-bandwidth benchmark (McCalpin)'
-    marker: 'STREAM_RESULT'
-    scalar_re: 'STREAM_RESULT a\[0\] = ([0-9.eE+-]+)'
-    tolerance: 0.001
-    expect: '9.388296233681296e+29'
-    expect_args: ['100000000', '1728', '4200']
-    # Strict sweep invariant: the chain count and iteration count are
-    # node-invariant, fixed at the largest geometry's calibration — 1728
-    # chains (the BW rule's 1x: 54 per node x 32 nodes; a measured harm
-    # from raising width at fixed array size is why BW stays at 1x, not
-    # the task floor's 4x) and 4200 iterations everywhere.
-    args: ['100000000', '1728', '4200']
+    marker: 'Solution Validates'
+    # The app validates itself: finalize recomputes the kernel chain
+    # analytically and compares EVERY element of every thread's array against
+    # it at a relative 1e-13.  A failure prints "Solution FAILED Validation"
+    # instead, which this pattern does not match, and a cell whose scalar does
+    # not extract fails -- so the pin is "the whole array validated".  a[0]
+    # cannot carry that: it is a per-element recurrence with no reduction, so
+    # it depends on the sweep count and nothing else (identical at 108M, 324M
+    # and 972M elements).  It rides along as an extra scalar.
+    scalar_re: 'Solution Validates: all (\d+) elements'
+    scalar_kind: int
+    extra_scalars:
+      a0: 'STREAM_RESULT a\[0\] = ([0-9.eE+-]+)'
+    # The width is the sweep rule's, not a performance choice: SPMD, so 1x the
+    # persistent units the largest geometry provides -- 32 nodes x 108 workers
+    # = 3456 chains.  The row carried 1728, chosen (its own comment said)
+    # because a wider run measured worse, which is the one reason the
+    # invariance rule does not allow.  The sweep count is the port's own
+    # default and is a repetition, not a size, so the array carries the
+    # calibration: 836,352,000 elements puts the anchor at 157.0s, which is
+    # 242,000 per chain against the port's reference ratio of 281,250
+    # (STREAM_ARRAY_SIZE 9000000 over NUM_THREADS 32).
+    #
+    expect: '836352000'
+    expect_args: ['836352000', '3456', '1000']
+    args: ['836352000', '3456', '1000']
+    # The source carries a placement layer (OCR_APP_OPTIMIZED_PLACEMENT): the
+    # four kernels and the loop driver that re-creates them are pinned to the
+    # place their chain already runs on, so a re-created array at least stays
+    # where the chain is.  It had never been built -- the CMake entry had no
+    # HINTED_PLACEMENT and this row had no hinted flag.
+    #
+    # Measured, that layer is the difference between running and not: at the
+    # trend size the base tier is 67x its own one-node time at two nodes and
+    # 64x the hinted tier at eight, and at this size its eight-node cell did
+    # not finish in 1800 s against the hinted tier's 102 s.  Budget the base
+    # tier's multinode cells accordingly or expect them to time out -- that is
+    # the tier doing its job of exhibiting the structure, not a defect to mask.
+    hinted: true
     restructured_as: stream_dist
 
   stream_dist:
     binary: stream_dist
     class: spmd
     provenance: 'STREAM; distributed rewrite'
-    marker: 'STREAM checksum'
-    scalar_re: 'STREAM checksum: a\[0\] = ([0-9.eE+-]+)'
-    tolerance: 1e-09
-    expect: '2.100022581888'
-    expect_args: []
-    args: ['32000000', '128', '400']
+    marker: 'Solution Validates'
+    scalar_re: 'Solution Validates: all (\d+) elements'
+    scalar_kind: int
+    extra_scalars:
+      a0: 'STREAM checksum: a\[0\] = ([0-9.eE+-]+)'
+    # The same arguments as the row it re-implements.  The two take the same
+    # argv triple and their kernels do the same arithmetic statement for
+    # statement -- what differs is only whether a kernel's output array is
+    # created fresh or written in place -- so they must print the same
+    # validation line, which is the check that they are one application.
+    expect: '836352000'
+    expect_args: ['836352000', '3456', '1000']
+    args: ['836352000', '3456', '1000']
     restructured_from: stream
 
-  stream_org:
-    binary: stream_org
-    class: spmd
-    provenance: 'STREAM; original single-node form'
-    marker: 'MB/s'
-    scalar_re: 'STREAM_VALID relerr = ([0-9.eE+-]+)'
-    tolerance: 1e-12
-    args: []
-    default_enabled: false
-    multinode_timeout: 75
-
-  stream_sa:
-    binary: stream_sa
-    class: spmd
-    provenance: 'STREAM; shared-array form'
-    marker: 'MB/s'
-    scalar_re: 'STREAM_VALID relerr = ([0-9.eE+-]+)'
-    tolerance: 1e-12
-    args: []
-    default_enabled: false
-    multinode_timeout: 75
 
   task_priorities:
     binary: task_priorities

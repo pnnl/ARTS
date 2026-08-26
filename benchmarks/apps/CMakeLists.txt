@@ -1235,6 +1235,8 @@ add_benchmark_app(NAME stream
     # never took effect — its measured scalar (a[0] after NTIMES sweeps)
     # was always the source default's.
     EXTRA_DEFINES STREAM_ARRAY_SIZE=1000 NUM_THREADS=2
+    # The source carries a placement layer; without this it was never built.
+    HINTED_PLACEMENT
     EXTRA_LINK_LIBS m
 )
 
@@ -1245,17 +1247,7 @@ add_benchmark_app(NAME stream_dist
     EXTRA_LINK_LIBS m
 )
 
-add_benchmark_app(NAME stream_org
-    DIR stream/ocr
-    SOURCES stream_org.c
-    EXTRA_LINK_LIBS m
-)
 
-add_benchmark_app(NAME stream_sa
-    DIR stream/ocr
-    SOURCES stream_sa.c
-    EXTRA_LINK_LIBS m
-)
 
 add_benchmark_app(NAME uts
     DIR uts-1.1/ocr
