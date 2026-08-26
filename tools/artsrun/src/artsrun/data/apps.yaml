@@ -520,12 +520,57 @@ apps:
     # (matvec, halo, reductions); the initial residual is computed before it
     # and stays as a secondary scalar.
     scalar_re: 'CGloop_stop> rnormfinal(?:\^2)?\s*=\s*([0-9.eE+-]+)'
-    tolerance: 1e-09
-    expect: '7.46766248469994E-01'
-    expect_args: ['1', '1', '1', '1', '1', '1', '2', '1']
+    # artsrun uses the tolerance as an absolute floor as well as a relative
+    # one, so it has to be scaled to the scalar's magnitude or the pin is
+    # vacuous.  The residual here is ~4e-6; this rejects anything outside a
+    # relative 2.5e-13, which the reduction tree's reassociation stays well
+    # inside.
+    tolerance: 1e-18
     extra_scalars:
       rnorminit: 'CGstep0_stop> rnorminit(?:\^2)?\s*=\s*([0-9.eE+-]+)'
-    args: ['8', '4', '4', '4', '4', '4', '12', '50']
+    # SPMD, so the rank lattice is 1x the persistent units the largest
+    # geometry provides: 32 nodes x 108 workers = 3456 = 18*16*12, and the
+    # lattice is held there for every node count.  (The lattice must be
+    # non-increasing -- the program rejects Rx<Ry or Ry<Rz.)  It anti-scales,
+    # so the size targets the ~150s window at one node: 138.8s there.
+    #
+    # Everything but the lattice comes from the program's own references.  The
+    # polynomial DOF count is 8 -- what all five of the port's scaling scripts
+    # use and what the original's example1 sweeps to -- and the CG count is
+    # 100, which the original hardcodes in its driver rather than reading from
+    # input.  The one knob left is the element block per rank, which is
+    # exactly what the original's input file varies (`iel0,ielN,ielD (per
+    # processor)`), so that is what carries the size: 6x6x4 = 144 elements,
+    # against the 8 the port's scripts use and the ~512 of the reference
+    # inputs.
+    expect: '3.95222063651471E-06'
+    expect_args: ['18', '16', '12', '6', '6', '4', '8', '100']
+    args: ['18', '16', '12', '6', '6', '4', '8', '100']
+    # The shipped rank-to-place map is rankID % places, which puts a rank's
+    # halo neighbours on other places by construction; the hinted tier gives
+    # each place a contiguous box of the lattice instead.  Every place still
+    # holds the same number of ranks and every rank the same number of
+    # elements, so the balance is unchanged.
+    hinted: true
+    restructured_as: nekbone_dist
+
+  nekbone_dist:
+    binary: nekbone_dist
+    class: spmd
+    provenance: 'Nekbone (Nek5000 proxy); reduction restructured'
+    marker: 'FinalEDT'
+    scalar_re: 'CGloop_stop> rnormfinal(?:\^2)?\s*=\s*([0-9.eE+-]+)'
+    tolerance: 1e-18
+    extra_scalars:
+      rnorminit: 'CGstep0_stop> rnorminit(?:\^2)?\s*=\s*([0-9.eE+-]+)'
+    # Same lattice and same iteration count as the row it re-implements -- the
+    # rewrite is in the all-reduce, not in the problem.  The tree reassociates
+    # the sum differently, so the residual agrees to the tolerance rather than
+    # bit-for-bit.
+    expect: '3.95222063651471E-06'
+    expect_args: ['18', '16', '12', '6', '6', '4', '8', '100']
+    args: ['18', '16', '12', '6', '6', '4', '8', '100']
+    restructured_from: nekbone
 
   npb_cg:
     binary: npb_cg

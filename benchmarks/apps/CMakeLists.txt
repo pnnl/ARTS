@@ -52,6 +52,26 @@ target_compile_options(ocr_lib_reduction PRIVATE ${BENCH_C_OPT})
 target_compile_definitions(ocr_lib_reduction PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
 target_include_directories(ocr_lib_reduction PRIVATE ${BENCH_OCR_OPTIONS_DIR})
 
+# --- reductionTwoLevel library ---
+# The same interface as `reduction`, with the tree built in two levels around
+# a place-major numbering instead of flat over participant indices.  A separate
+# library rather than a switch inside the shared one, the way reductionEager is:
+# an application links one of them.
+add_library(ocr_lib_reductionTwoLevel OBJECT
+    ${OCR_LIBS_ROOT}/reductionTwoLevel/reductionTwoLevel.c
+)
+target_include_directories(ocr_lib_reductionTwoLevel PUBLIC
+    ${OCR_LIBS_ROOT}/reductionTwoLevel
+)
+target_include_directories(ocr_lib_reductionTwoLevel PRIVATE
+    ${OCR_LIBS_ROOT}/macros/macros
+    ${OCR_INC_DIR}
+)
+set_target_properties(ocr_lib_reductionTwoLevel PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
+target_compile_options(ocr_lib_reductionTwoLevel PRIVATE ${BENCH_C_OPT})
+target_compile_definitions(ocr_lib_reductionTwoLevel PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
+target_include_directories(ocr_lib_reductionTwoLevel PRIVATE ${BENCH_OCR_OPTIONS_DIR})
+
 # --- reductionEager library ---
 add_library(ocr_lib_reductionEager OBJECT
     ${OCR_LIBS_ROOT}/reductionEager/reductionEager.c
@@ -137,6 +157,21 @@ set_target_properties(ocr_lib_reduction_ocrvx PROPERTIES C_STANDARD 11 C_EXTENSI
 target_compile_options(ocr_lib_reduction_ocrvx PRIVATE ${BENCH_C_OPT}
     "-include" "${OCRVX_COMPAT_H}")
 target_compile_definitions(ocr_lib_reduction_ocrvx PRIVATE ${OCR_EXT_DEFINES} "OCR_TYPE_H=vdm.h")
+
+add_library(ocr_lib_reductionTwoLevel_ocrvx OBJECT
+    ${OCR_LIBS_ROOT}/reductionTwoLevel/reductionTwoLevel.c
+)
+target_include_directories(ocr_lib_reductionTwoLevel_ocrvx PUBLIC
+    ${OCR_LIBS_ROOT}/reductionTwoLevel
+)
+target_include_directories(ocr_lib_reductionTwoLevel_ocrvx PRIVATE
+    ${OCR_LIBS_ROOT}/macros/macros
+    ${OCRVX_OCR_INC}
+)
+set_target_properties(ocr_lib_reductionTwoLevel_ocrvx PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
+target_compile_options(ocr_lib_reductionTwoLevel_ocrvx PRIVATE ${BENCH_C_OPT}
+    "-include" "${OCRVX_COMPAT_H}")
+target_compile_definitions(ocr_lib_reductionTwoLevel_ocrvx PRIVATE ${OCR_EXT_DEFINES} "OCR_TYPE_H=vdm.h")
 
 add_library(ocr_lib_reductionEager_ocrvx OBJECT
     ${OCR_LIBS_ROOT}/reductionEager/reductionEager.c
@@ -805,6 +840,7 @@ add_benchmark_app(NAME miniAMR_intel_chandra
 # ==========================================================================
 
 add_benchmark_app(NAME nekbone
+    HINTED_PLACEMENT
     DIR nekbone/refactored/ocr_src
     SOURCES fastfcn.c neko_reduction.c timing.c nekbone_cg.c ax.c local_grad.c
     set_f.c blas1.c blas3.c polybasis.c set_vert_box.c cubic.c
@@ -813,6 +849,32 @@ add_benchmark_app(NAME nekbone
     neko_halo_util.c neko_halo.c spmd_global_data.c tailrecursion.c
     treeForkJoin.c z_nekbone_inOcr.c
     LIBS reduction
+    EXTRA_LINK_LIBS m
+)
+
+# --- Restructured: nekbone_dist ---
+# Same sources; what it redesigns is the reduction's own decomposition.  The
+# tree is a flat ARITY tree over participant indices and the program hands it
+# the geometric rank id, so its edges are unrelated to where a rank runs --
+# with the halo made local by placement, that tree is what stops scaling.
+# This build numbers the participants place-major AND makes the tree two-level
+# around that numbering: a place reduces among its own participants, and only
+# the places' roots reduce with each other.  Renumbering alone is worse than
+# doing nothing -- a flat tree's internal nodes are its low indices, and
+# place-major numbering puts every one of them on the first place.
+add_benchmark_app(NAME nekbone_dist
+    DIR nekbone/refactored/ocr_src
+    EXTRA_DEFINES OCR_APP_OPTIMIZED_PLACEMENT
+    # The restructured tier's own sources replace the shared ones file by file:
+    # ../ocr_dist/neko_reduction.c in place of neko_reduction.c, and the
+    # reductionTwoLevel library in place of reduction.
+    SOURCES fastfcn.c ../ocr_dist/neko_reduction.c timing.c nekbone_cg.c ax.c local_grad.c
+    set_f.c blas1.c blas3.c polybasis.c set_vert_box.c cubic.c
+    init_mesh.c nekbone_setup.c app_ocr_util.c integer_log2.c
+    neko_globals.c nekos_triplet.c nekos_cubiclattice.c nekos_tools.c
+    neko_halo_util.c neko_halo.c spmd_global_data.c tailrecursion.c
+    treeForkJoin.c z_nekbone_inOcr.c
+    LIBS reductionTwoLevel
     EXTRA_LINK_LIBS m
 )
 

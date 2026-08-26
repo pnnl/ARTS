@@ -110,7 +110,7 @@ apps:
     versions: [base]
   nekbone:
     enabled: true
-    versions: [base]
+    versions: [hinted, restructured]
   npb_cg:
     enabled: true
     versions: [base, restructured]
