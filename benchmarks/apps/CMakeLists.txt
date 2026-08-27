@@ -410,17 +410,17 @@ add_benchmark_app(NAME printf
 add_benchmark_app(NAME quicksort
     DIR quicksort/ocr
     SOURCES quicksort.c
+    # The source carries a placement layer; without this it was never built.
+    HINTED_PLACEMENT
 )
 
-# Registration held back: this program's source is not carried by the
-# application submodule yet, so a checkout that has not produced it
-# locally cannot configure.  Restore this block, and the application's
-# restructured version in the driver's catalog, once the submodule
-# carries the source.
-#add_benchmark_app(NAME quicksort_dist
-#    DIR quicksort/ocr
-#    SOURCES quicksort_dist.c
-#)
+# --- Restructured: quicksort_dist ---
+# A sample-splitter sort: the decomposition is buckets and chunks rather than
+# the base's recursive split, and it takes their counts as arguments.
+add_benchmark_app(NAME quicksort_dist
+    DIR quicksort/ocr
+    SOURCES quicksort_dist.c
+)
 
 add_benchmark_app(NAME nqueens
     DIR nqueens/refactored/ocr
@@ -558,19 +558,19 @@ add_benchmark_app(NAME cholesky_blas
 add_benchmark_app(NAME fft
     DIR fft/ocr
     SOURCES fft.c verify.c
+    # The source carries a placement layer; without this it was never built.
+    HINTED_PLACEMENT
     EXTRA_LINK_LIBS m
 )
 
-# Registration held back: this program's source is not carried by the
-# application submodule yet, so a checkout that has not produced it
-# locally cannot configure.  Restore this block, and the application's
-# restructured version in the driver's catalog, once the submodule
-# carries the source.
-#add_benchmark_app(NAME fft_dist
-#    DIR fft/ocr
-#    SOURCES fft_dist.c
-#    EXTRA_LINK_LIBS m
-#)
+# --- Restructured: fft_dist ---
+# Bailey's four-step transpose in place of the recursive form: the tile count
+# is the decomposition, and it is an argument.
+add_benchmark_app(NAME fft_dist
+    DIR fft/ocr
+    SOURCES fft_dist.c
+    EXTRA_LINK_LIBS m
+)
 
 add_benchmark_app(NAME graph500
     DIR graph500

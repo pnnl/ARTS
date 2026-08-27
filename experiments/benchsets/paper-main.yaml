@@ -47,7 +47,7 @@ apps:
     versions: [base]
   fft:
     enabled: true
-    versions: [base, restructured]
+    versions: [base, hinted, restructured]
   fibonacci:
     enabled: true
     versions: [hinted]
@@ -128,7 +128,7 @@ apps:
     versions: [base]
   quicksort:
     enabled: true
-    versions: [base, restructured]
+    versions: [base, hinted, restructured]
   reduction_intel:
     enabled: false
     versions: [base]

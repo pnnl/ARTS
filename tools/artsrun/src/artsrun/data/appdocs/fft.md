@@ -15,23 +15,29 @@ purely serial (function-call, no-EDT) recursive `ditfft2` down to size 1. On
 the way back up, one `fftEndEdt` per split level performs the radix-2
 butterfly combine, itself farmed out to `fftEndSlaveEdt` slave tasks chunked
 by `serialBlockSize` elements. The whole tree operates in place on a single
-shared datablock; once it completes, `fftVerifyEdt` recomputes the same
-transform with a fully serial reference and compares. The printed `FFT
-checksum` (sum of `|Re|+|Im|` over all outputs) is the result scalar. Unlike a
+shared datablock. The printed `FFT checksum` (sum of `|Re|+|Im|` over all
+outputs) is the result scalar; the top level's combine slaves each sum their
+own share of the output into their own slot of the block and `finalPrintEdt`
+adds the slots, so the scalar costs no pass of its own. `fftVerifyEdt`
+recomputes the whole transform serially and compares it point by point -- a
+reference implementation rather than part of the work, and at any interesting
+size the largest single task in the program, so it runs only when a second
+argument asks for it. Unlike a
 pure task-churn probe, every leaf and slave EDT does real floating-point work,
 so the app stresses fine-grain task/DB scheduling *and* per-task compute, with
 one very large, heavily-shared datablock at its center. The catalog also
-carries a held-back, uncommitted restructured twin (`fft_dist`, a Bailey
-four-step transpose rewrite) not yet registered in the build.
+carries a restructured twin, `fft_dist` -- a Bailey four-step transpose
+rewrite whose tile count is its decomposition and whose transpose is exchanged
+pair-wise between places.
 
 ## Parameters
 
 | arg | meaning | default | CLI reachability |
 |-----|---------|---------|-------------------|
-| `argv[1]` = `power` | `N = 2^power`, the transform length | required — exactly one argument, else usage error + shutdown | ✓ parsed in `parseOptions`/`mainEdt`, carried in EDT paramv structs to every rank — multinode-safe |
+| `argv[1]` = `power` | `N = 2^power`, the transform length | required — one or two arguments, else usage error + shutdown | ✓ parsed in `parseOptions`/`mainEdt`, carried in EDT paramv structs to every rank — multinode-safe |
 | `serialBlockSize` | recursion cutoff: below this size `fftStartEdt` computes serially via `ditfft2` instead of spawning more EDTs | `SERIAL_BLOCK_SIZE_DEFAULT` = 1024·16 = 16384 | ✗ `#define` only, no CLI path — the knob a user would most want to size against worker count |
 | `iterations` | intended repeat count | 1 (hardcoded; `parseOptions` never reads argv for it) | ✗ constant; the `!=1` warning branch is dead code |
-| `verify` | run `fftVerifyEdt` | `true` (hardcoded) | ✗ always on |
+| `verify` | run `fftVerifyEdt`, the serial reference recomputation | off | ✓ `argv[2]` = `v` |
 | `verbose` | extra `ocrPrintf` tracing | `true` (hardcoded) | ✗ always on |
 | `printResults` | dump the full input/output arrays | `false` (hardcoded) | ✗ always off |
 
@@ -45,17 +51,17 @@ levels (`d = 0` when `N ≤ serialBlockSize`, i.e. `power ≤ 14`).
 | `fftStartEdt` | `2^(d+1) - 1` (internal splits `2^d - 1`, leaves `2^d`; `= 1` when `d = 0`) | — |
 | `fftEndEdt` | `2^d - 1` (one per internal split node) | — |
 | `fftEndSlaveEdt` | `d · 2^(d-1)` (`= 0` when `d = 0`) | — |
-| `mainEdt` / `fftIterationEdt` / `fftVerifyEdt` / `finalPrintEdt` | 1 each | — |
-| EDTs total | `2 + 3·2^d + d·2^(d-1)` (`= 5` when `d = 0`) | — |
-| Datablocks | **3, constant regardless of `N`**: 1 shared data block + 2 verify blocks | data block `12N` bytes; each verify block `4N` bytes |
-| Events | `5·2^d - 1` (`= 4` when `d = 0`) — finish latches + idempotent output events per FINISH create, plus 1 for the verify EDT | — |
+| `mainEdt` / `fftIterationEdt` / `finalPrintEdt` | 1 each; `fftVerifyEdt` only when the reference is asked for | — |
+| EDTs total | `2 + 3·2^d + d·2^(d-1)` (`= 5` when `d = 0`), plus 1 with the reference | — |
+| Datablocks | **1, constant regardless of `N`** — plus 2 verify blocks when the reference is asked for | data block `12N` bytes plus one `double` per combine slave; each verify block `4N` bytes |
+| Events | `5·2^d - 1` (`= 4` when `d = 0`) — finish latches + idempotent output events per FINISH create, plus 1 when the verify EDT runs | — |
 | EDT templates | 6 created (5 app + 1 verify), all destroyed | — |
 
-Worked numbers: `power = 6` (expect_args; `N = 64 ≤ serialBlockSize`, `d = 0`):
-5 EDTs, 3 DBs, 4 events. `power = 23` (calibrated args; `N = 8,388,608`,
-`d = 9`): 3,842 EDTs, 3 DBs (~96 MiB data block + 2×32 MiB verify blocks ≈
-160 MiB total), 2,559 events. Each `+1` on `power` roughly doubles the
-exponential terms; DB *count* never changes.
+Worked numbers with the reference off, which is how the row runs: `power = 6`
+(`N = 64 ≤ serialBlockSize`, `d = 0`) 5 EDTs, 1 DB, 4 events; `power = 30`
+(calibrated args; `N = 1,073,741,824`, `d = 16`) a 12 GiB data block carrying
+32,768 combine slaves' slots, measured at 13 GiB resident. Each `+1` on
+`power` roughly doubles the exponential terms; DB *count* never changes.
 
 Counter cross-check: verified (1 node, `power=6` vs `power=15`): measured absolutes EDT 6/10, DB 4/4, EVT 4/9; subtracting the runtime's constant baseline (+1 EDT, +1 DB, +0 EVT per run) gives app-side EDT 5/9, DB 3/3, EVT 4/9 — exactly the formulas above, both in absolute value and in delta.
 
@@ -72,11 +78,11 @@ whole-DB granularity regardless. This single datablock is therefore the app's
 sole and severe contention point: at the widest wavefront (the last split
 level) up to `2^d` `fftStartEdt`/leaf instances contend for RW on it
 simultaneously (512 at the calibrated `power = 23`). `fftIterationEdt` and
-`finalPrintEdt` hold it RO/CONST instead. `fftVerifyEdt` reads the finished
-block RO and owns two fresh verify blocks exclusively. End-to-end:
-`fftIterationEdt` (FINISH-wraps the whole tree) → its output event triggers
-`fftVerifyEdt` → its output event triggers `finalPrintEdt`, which destroys the
-data block and shuts down.
+`finalPrintEdt` hold it RO/CONST instead. When the reference is asked for,
+`fftVerifyEdt` reads the finished block RO and owns two fresh verify blocks
+exclusively. End-to-end: `fftIterationEdt` (FINISH-wraps the whole tree) → its
+output event triggers `finalPrintEdt` (or, with the reference on,
+`fftVerifyEdt` first), which destroys the data block and shuts down.
 
 ## Flow
 
@@ -100,7 +106,7 @@ The source passes `NULL_HINT` on every EDT and DB create — there is no
 round-robin (per-creating-rank atomic counter, modulo rank count), so a
 node's two children and its `fftEndEdt` scatter across arbitrary ranks;
 **DBs** → home = creating rank, but since there is only ever one data block
-(created once by `mainEdt` on rank 0) and two verify blocks, "creator" only
+(created once by `mainEdt` on rank 0), "creator" only
 applies at those few points, not per-node. Consequence: nearly every
 `fftStartEdt`/`fftEndEdt`/`fftEndSlaveEdt` runs on a rank other than the data
 block's home, so nearly every RW acquire of that one 12N-byte block is a
@@ -124,14 +130,22 @@ and a round-robin-scattered tree therefore cannot compute in parallel across
 ranks — it can only hand the whole 12N-byte block from rank to rank, paying a
 full transfer per hop.
 
-The layer (`fftHereEdtHint` in `fft.c`, 7 create sites) pins every
-`fftStartEdt` / `fftEndEdt` / `fftEndSlaveEdt` to the creating rank, keeping
-the tree — and with it the block's ownership — on one rank.  This is
-CONTAINMENT, not scaling: hints cannot give this program a multinode
-decomposition, because the single-RW-block structure is the program.  A real
-distributed FFT is the `restructured` version's job (`fft_dist`, held out of
-the catalog until its source lands).  `pdCount <= 1` returns `NULL_HINT`, so a
-single-node run is bit-identical to base (verified: power=10 PASSED).
+The layer (`fftRangeEdtHint` in `fft.c`, 7 create sites) places every
+`fftStartEdt` / `fftEndEdt` / `fftEndSlaveEdt` by the part of the transform it
+owns -- its output offset -- so the tasks that revisit a region keep returning
+to the same place, while the offsets, being a partition of the transform, keep
+every place equally loaded.  Hints cannot give this program a multinode
+decomposition, because the single-RW-block structure IS the program; what they
+can do is stop the block from chasing the recursion around.  Measured at power
+28 over 15 workers a node: base runs 8.96 s at one node and 304.26 s at eight,
+this layer 8.85 s and 61.90 s.
+
+Placing by the creating task instead would keep the whole recursion on the one
+place the root started on -- perfectly local, and using a single node of
+however many the machine has, which wins by not using the machine.  A real
+distributed FFT is the `restructured` version's job (`fft_dist`).
+`pdCount <= 1` returns `NULL_HINT`, so a single-node run is bit-identical to
+base.
 
 ## Sizing
 

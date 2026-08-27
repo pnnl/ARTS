@@ -185,26 +185,77 @@ apps:
     marker: 'FFT checksum'
     scalar_re: 'FFT checksum\s*=\s*([\-+0-9.eE]+)'
     tolerance: 0.001
-    expect: '81.421870'
-    expect_args: ['6']
-    args: ['23']
-    # restructured_as: fft_dist   # held back — see the entry below
+    # The one argument is a power: the transform is over 2^p points.  This tier
+    # anti-scales, so its anchor window is 10-30 s rather than the ~150 s a
+    # strong scaler gets, and the knob only doubles: 30 puts the anchor at
+    # 16.7-19.3 s across the three coherence families, holding 13 GB.
+    # The scalar is summed in the combine phase's slaves rather than swept
+    # afterwards, so the summation is blocked rather than sequential and the
+    # last digits moved -- 4.8e-11 relative, against a 1e-3 tolerance.
+    expect: '1367130551.153591'
+    expect_args: ['30']
+    args: ['30']
+    # The source carries a placement layer; the CMake entry had no
+    # HINTED_PLACEMENT, so it had never been built.  Every task in the
+    # recursion acquires the SAME block RW, so the layer cannot distribute the
+    # work; what it can do is stop the block from chasing the recursion, by
+    # placing a subtree where the part of the transform it owns lives.  That
+    # covers every node -- pinning the recursion to its creator would leave one
+    # node doing all of it, which wins by not using the machine.  Measured at
+    # power 28 over 15 workers a node: base 8.96 s at one node and 304.26 s at
+    # eight, this layer 8.85 s and 61.90 s.
+    hinted: true
+    restructured_as: fft_dist
 
-  # Held back with the target: the program's source is not carried by the
-  # application submodule yet, so the build has no target for it.  Restore
-  # this entry, and its parent's restructured_as, with the registration in
-  # benchmarks/apps/CMakeLists.txt once the submodule carries the source.
-  #fft_dist:
-  #binary: fft_dist
-  #class: task
-  #provenance: 'FFT, Bailey four-step transpose rewrite'
-  #marker: 'FFT_DIST checksum'
-  #scalar_re: 'FFT_DIST checksum\s*=\s*([\-+0-9.eE]+)'
-  #tolerance: 0.001
-  #expect: '4194304.0'
-  #expect_args: ['22']
-  #args: ['28', '512']
-  #restructured_from: fft
+  fft_dist:
+    binary: fft_dist
+    class: task
+    provenance: 'FFT, Bailey four-step transpose rewrite'
+    marker: 'FFT_DIST checksum'
+    # It transforms a pure tone, whose spectrum is known in closed form
+    # (X[5] = X[N-5] = N/2, every other bin zero), checks its own maximum bin
+    # error against a tolerance, and prints the sum of the two peaks -- which
+    # is why the pinned value is exactly 2^p.  A run that got the transform
+    # wrong prints FFT_DIST INVALID instead and extracts nothing.
+    scalar_re: 'FFT_DIST checksum\s*=\s*([\-+0-9.eE]+)'
+    tolerance: 1e-06
+    # Its own size, not the row it re-implements: a restructured tier is a
+    # separate row with a separate window, and this one strong-scales (4.8x
+    # from one node to eight), so it is calibrated against ~150 s while the
+    # recursion is calibrated against 10-30 s.  What actually fixes the size
+    # here is memory: at power 32 the anchor holds 176 GB in the widest of the
+    # three families against a 256 GB node, and a power doubles it.  The second
+    # argument is the tile count, this rewrite's decomposition, and the width
+    # rule sets it.  The rewrite is a dataflow DAG, so the rule asks for ~4x the 3456
+    # persistent units the largest geometry provides -- 13,824 -- and t is the
+    # width of every phase.  t must be a power of two dividing both matrix
+    # dimensions (65536 each at power 32), so 8192 is the nearest at or above.  The
+    # decomposition is place-persistent: each place builds its own tiles where
+    # it runs, and the transpose is packed per place in waves, so no phase is
+    # wider or narrower than the rule set it.
+    #
+    # It is not the fastest tile count and is not meant to be: smaller tile
+    # counts run faster and fill a fraction of the machine (t=128 is 257 tasks
+    # against 3,456 workers), and performance is not a reason to narrow a
+    # width.  What this width used to cost was a t*t exchange -- 67 million
+    # blocks carrying four points each, which at eight nodes exhausted the
+    # host.  The transpose is pair-wise instead: a place packs everything it
+    # owes a peer into one block and the receiver's unpack cuts it into
+    # per-reader blocks, so the count is P(P-1) whatever the width.  Splitting
+    # the pack per destination row block removes the unpack but puts
+    # places*waves*t blocks of 2 KB on the wire, which measured 5.3x WORSE at
+    # eight nodes than at one.
+    # The last argument is the place count -- the number of partitions the
+    # program owns its work and aggregates its exchange in.  It is an argument
+    # and not the rank count, so the task and datablock counts, and the order
+    # the partials combine in, are identical in every geometry; the runtime
+    # maps the places onto whatever ranks exist through a hint.  32 is one
+    # place per node at the largest geometry, which is where the calibration
+    # is taken, and it is the same convention XSBench's `-p 32` uses.
+    expect: '4294967296.023932'
+    expect_args: ['32', '8192', '32']
+    args: ['32', '8192', '32']
+    restructured_from: fft
 
   fibonacci:
     binary: fibonacci
@@ -692,29 +743,74 @@ apps:
     binary: quicksort
     class: task
     provenance: 'Quicksort'
-    marker: 'Sorting Finished'
-    scalar_re: '(\d+)\s*\n\s*(?:\[\d+\]\s*)?Sorting Finished'
+    marker: 'QSORT_VALID'
+    # The row used to pin the digits printed just before "Sorting Finished",
+    # which is the thirtieth element of the sorted array -- a sort that
+    # misordered values passed it, and one did.  Both tiers now print the check
+    # the rewrite already had: non-decreasing over the whole array, the element
+    # count, and the sum a permutation must preserve.  `sorted=0` makes the
+    # pattern miss and the cell fail.
+    scalar_re: 'QSORT_VALID sum=(\d+) sorted=1'
     scalar_kind: int
-    expect: '26648'
-    expect_args: []
-    args: ['4000000', '1000000']
-    # restructured_as: quicksort_dist   # held back — see the entry below
+    # Size is the array.  This tier anti-scales, so the anchor window is 10-30 s
+    # rather than the ~150 s a strong scaler gets: 6,000,000 puts the hinted
+    # tier at 21.6 s, with base at 21.7 s beside it.  The restructured row is
+    # calibrated separately -- it is a different program with its own
+    # scaling behaviour, and at this size it finishes in a quarter of a second
+    # and shows nothing.
+    # The range is the program's own default (RANGE in quicksort.c): nothing
+    # about the experiment picks it, and it changes only how many values
+    # repeat, not the decomposition or the task count.
+    # Most of that is the input: the program's own generator walks a
+    # thousand-entry table per element, in one task, before any sorting starts.
+    # That is the base tier's structure and the restructured tier is what
+    # removes it.
+    expect: '3000132336560'
+    expect_args: ['6000000', '1000000']
+    args: ['6000000', '1000000']
+    # The source carries a placement layer that had never been built.  Every
+    # task in the recursion acquires the SAME block RW -- the children are
+    # handed the same GUID and differ only in their index range -- so the layer
+    # cannot distribute the work; what it can do is stop the block from chasing
+    # the recursion, by placing a subarray's tasks where the range they sort
+    # lives.  That covers every node, and it holds the anchor flat where base
+    # degrades: 14.1 s at one node and 14.2 s at four, against base's 57.6 s.
+    hinted: true
+    restructured_as: quicksort_dist
 
-  # Held back with the target: the program's source is not carried by the
-  # application submodule yet, so the build has no target for it.  Restore
-  # this entry, and its parent's restructured_as, with the registration in
-  # benchmarks/apps/CMakeLists.txt once the submodule carries the source.
-  #quicksort_dist:
-  #binary: quicksort_dist
-  #class: task
-  #provenance: 'Sample-splitter distributed sort'
-  #marker: 'QSORT_VALID'
-  #scalar_re: 'QSORT_VALID sum=(\d+) sorted=1'
-  #scalar_kind: int
-  #expect: '496344943'
-  #expect_args: []
-  #args: ['8000000', '1000000', '384', '384']
-  #restructured_from: quicksort
+  quicksort_dist:
+    binary: quicksort_dist
+    class: task
+    provenance: 'Sample-splitter distributed sort'
+    marker: 'QSORT_VALID'
+    scalar_re: 'QSORT_VALID sum=(\d+) sorted=1'
+    scalar_kind: int
+    # The same array and range as the row it re-implements, so the same answer:
+    # the generator is a pure function of the index, and each chunk now
+    # produces its own slice rather than reading a block one task filled.
+    #
+    # The third and fourth arguments are this rewrite's decomposition, buckets
+    # and chunks, and the width rule sets them: a dataflow DAG asks for ~4x the
+    # 3456 persistent units the largest geometry provides, and 6912 each gives
+    # 13,824.  What the rule fixes is the width, and the width is what these
+    # two arguments are; the decomposition is place-persistent, so each place
+    # builds its own chunks and buckets where it runs and no phase is wider or
+    # narrower than the rule set it.
+    # A direct chunk-to-bucket exchange would make their product the block
+    # count -- 47.8 million blocks carrying 0.84 elements each.  The exchange
+    # is aggregated per place instead: a place packs everything it owes a peer
+    # into one buffer, so it costs P(P-1) messages whatever the width.
+    # The last argument is the place count -- the number of partitions the
+    # program owns its work and aggregates its exchange in.  It is an argument
+    # and not the rank count, so the task and datablock counts, and the order
+    # the partials combine in, are identical in every geometry; the runtime
+    # maps the places onto whatever ranks exist through a hint.  32 is one
+    # place per node at the largest geometry, which is where the calibration
+    # is taken, and it is the same convention XSBench's `-p 32` uses.
+    expect: '1999775745532436'
+    expect_args: ['4000000000', '1000000', '6912', '6912', '32']
+    args: ['4000000000', '1000000', '6912', '6912', '32']
+    restructured_from: quicksort
 
   reduction_intel:
     binary: reduction_intel

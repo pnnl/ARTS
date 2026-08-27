@@ -4,9 +4,8 @@
 and every task shares the same one datablock.*
 Source: `third_party/ocr-apps/apps/quicksort/ocr/quicksort.c` (~220
 lines). A restructured twin, `quicksort_dist.c` (sample-splitter/PSRS-style
-distributed sort with per-bucket local quicksort), exists alongside it but
-is currently held back — its source is untracked in the app submodule and
-the catalog's `quicksort_dist` entry is commented out pending registration.
+distributed sort whose exchange is staged and whose buckets sort locally),
+is registered beside it as this row's `restructured` version.
 
 ## Overview
 
@@ -146,8 +145,7 @@ The layer (`qsHereEdtHint` in `quicksort.c`, both recursion children plus the
 root and finish EDTs) pins the whole task chain to the creating rank, keeping
 the block's ownership where the work is.  Like fft, this is CONTAINMENT of a
 single-RW-block structure, not a scaling fix — hints cannot decompose the
-array; that is the restructured version's job (`quicksort_dist`, held out of
-the catalog until its source lands).  `pdCount <= 1` returns `NULL_HINT`
+array; that is the restructured version's job (`quicksort_dist`).  `pdCount <= 1` returns `NULL_HINT`
 (verified: 1-node run bit-identical, sorts and shuts down cleanly).
 
 ## Sizing
