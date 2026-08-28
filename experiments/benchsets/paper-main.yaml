@@ -20,12 +20,9 @@ apps:
   cache_offset:
     enabled: false
     versions: [base]
-  cholesky:
-    enabled: true
-    versions: [hinted]
   cholesky_blas:
     enabled: true
-    versions: [hinted]
+    versions: [base, hinted, restructured]
   CoMD_intel_chandra:
     enabled: false   # unsupported: needs EW semantics the runtime does not implement
   CoMD_intel_chandra_tiled:

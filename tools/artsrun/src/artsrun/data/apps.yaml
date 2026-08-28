@@ -47,23 +47,6 @@ apps:
     expect_args: []
     args: []
     default_enabled: false
-
-  cholesky:
-    binary: cholesky
-    class: task
-    provenance: 'Tiled Cholesky factorization'
-    marker: 'CHOLESKY trace'
-    scalar_re: 'CHOLESKY trace\s*=\s*([0-9.eE+-]+)'
-    tolerance: 1e-09
-    expect: '50'
-    expect_args: ['--ds', '50', '--ts', '10', '--fi', '{repo}/datasets/cholesky/cholesky_input.mat']
-    # Perf input rides the tile-stream binary: parsing 25M text numbers is an
-    # arm-neutral constant, but it still pads every cell's absolute time.
-    # The tile size is part of the stream layout, hence part of the name.
-    args: ['--ds', '5000', '--ts', '100', '--fib', '{repo}/datasets/cholesky/cholesky_perf5k_ts100.bin']
-    fixtures: ['{repo}/datasets/cholesky/cholesky_input.mat', '{repo}/datasets/cholesky/cholesky_perf5k_ts100.bin']
-    hinted: true
-
   cholesky_blas:
     binary: cholesky_blas
     class: task
@@ -71,11 +54,77 @@ apps:
     marker: 'CHOLESKY trace'
     scalar_re: 'CHOLESKY trace\s*=\s*([0-9.eE+-]+)'
     tolerance: 1e-09
-    # The BLAS port has no tile-stream reader (separate source); it stays on
-    # the text path.
-    args: ['--ds', '7500', '--ts', '100', '--fi', '{repo}/datasets/cholesky/cholesky_perf7k5.mat']
-    fixtures: ['{repo}/datasets/cholesky/cholesky_perf7k5.mat']
+    # The tiled Cholesky, with BLAS3 kernels.  The hand-written-kernel port
+    # shares this row's exact decomposition and is not registered: at eight
+    # nodes the two are indistinguishable (15.48 s against 15.54 s), and its
+    # slower kernels MASK what the campaign is measuring -- on the identical
+    # DAG it anti-scales 1.55x where this one shows 4.97x.
+    #
+    # ts is the tile edge, t = ds/ts the tiles per dimension, so peak width is
+    # t(t-1)/2 and the class rule -- four times the largest geometry's 3456
+    # workers -- puts t at 167, which is ds=16700 at ts=100.  Identity input
+    # gives a unit factor and a trace of exactly ds, so the pin is analytic.
+    #
+    # Input is the tile-stream binary.  Reading the same matrix as text costs
+    # one fscanf per ELEMENT -- 100 million calls at this size, 7.05 s, which
+    # was 85% of this row's anchor before --fib was ported to it.  Every
+    # earlier calibration of this row measured the scanner.
+    args: ['--ds', '16700', '--ts', '100', '--fib', '{repo}/datasets/cholesky/cholesky_perf16700_ts100.bin']
+    expect: '16700'
+    expect_args: ['--ds', '16700', '--ts', '100', '--fib', '{repo}/datasets/cholesky/cholesky_perf16700_ts100.bin']
+    fixtures: ['{repo}/datasets/cholesky/cholesky_perf16700_ts100.bin']
     hinted: true
+
+    restructured_as: cholesky_dist
+
+  cholesky_dist:
+    binary: cholesky_dist
+    class: task
+    provenance: 'Tiled Cholesky, place-persistent SPMD rewrite'
+    marker: 'CHOLESKY trace'
+    scalar_re: 'CHOLESKY trace\s*=\s*([\-+0-9.eE]+)'
+    tolerance: 1e-06
+    # The same factorisation and the same 2-D block-cyclic ownership as the row
+    # it re-implements, decomposed so that each place builds its own tasks where
+    # they run rather than one rank creating t^3/6 of them.  The answer is the
+    # trace of the factor, which the identity input makes exactly ds; verified
+    # against an independent sequential Cholesky on three non-trivial SPD
+    # matrices where all 500,500 elements agree to 1.5e-15, and invariant across
+    # places 1/2/4/8/16/32/64 and nodes 1/2/4/8.
+    #
+    # This is the cycle's one strong scaler, so it is calibrated against ~150 s
+    # rather than 10-30 s.
+    #
+    # The two knobs divide cleanly and neither is tuned for speed: ts is the
+    # WIDTH knob and the class rule fixes it, ds is the SIZE knob and the window
+    # fixes that.  Peak width is t(t-1)/2 and the rule asks four times the
+    # largest geometry's 3456 workers, so t >= 167; t=180 at ds=90000 makes
+    # ts=500 and a peak of 16,110, which is 4.66x the workers.  A larger tile
+    # runs faster and is not used: it would give 1.16x the workers instead of
+    # 4x, and narrowing the width for a timing gain is what the rule forbids.
+    #
+    # Anchor across the three families: 145.5 s / 89 GB (val_wb_comb),
+    # 159.7 s / 83 GB (inv_wb), 151.8 s / 85 GB (excl_retain).  The tightest
+    # decides, so the window figure is inv_wb's 160 s.  Memory does
+    # not bound this row -- eight nodes hold 45 GB EACH, less than one node
+    # does, because the tiles divide while the runtime's own structures do not
+    # grow with the node count.  Per-node is the figure that matters: a runner
+    # that sums VmRSS over the ranks it started reports a whole-machine total
+    # when every rank is on the same host.
+    #
+    # The trend is taken at ds=40000 with ts UNCHANGED at 500 (15 workers a
+    # node): 32.76 / 22.26 / 16.67 / 13.77 s, 2.38x from one node to eight.
+    # The catalog arguments are run at the anchor and nowhere else: a node sweep
+    # at that size is a campaign result, not a calibration input.  Shrinking
+    # ts instead reverses the verdict -- ds=10000/ts=100 anti-scales, 2.30 s to
+    # 6.07 s -- because arithmetic per byte moved goes with ts, so a fifth the
+    # tile is a fifth the intensity and a different program.  A trend size must
+    # shrink ds alone.
+    args: ['--ds', '90000', '--ts', '500', '--places', '32', '--fib', '{repo}/datasets/cholesky/cholesky_perf90000_ts500.bin']
+    expect: '90000'
+    expect_args: ['--ds', '90000', '--ts', '500', '--places', '32', '--fib', '{repo}/datasets/cholesky/cholesky_perf90000_ts500.bin']
+    fixtures: ['{repo}/datasets/cholesky/cholesky_perf90000_ts500.bin']
+    restructured_from: cholesky_blas
 
   CoMD_intel_chandra:
     binary: CoMD_intel_chandra

@@ -153,23 +153,39 @@ hints are not used (ownership follows the pinned EDTs).  `nranks <= 1` returns
 
 ## Sizing
 
-Same two dials as `cholesky` (`ts` = grain, `ds`/`ts` = DAG depth/width),
-but the compute side of the trade is different: BLAS3 kernels turn the
-same `ts³` flop count into far fewer wall-clock cycles per tile, so this
-variant can profitably run at a larger `t` before per-tile overhead
-dominates. The calibrated `args` use `ds=7500` against `cholesky`'s
-`ds=5000` at the same `ts=100` (`t=75` vs `t=50`, peak width 2775 vs
-1225) — consistent with needing a bigger DAG to keep wall time in the same
-regime once the per-tile kernel got cheaper, though the exact calibration
-procedure that picked `7500` isn't in this source tree.
+`ts` is the tile edge and sets grain (`~ts³` flops a kernel, `ts²·8` bytes a
+block); `t = ds/ts` sets DAG depth (`t` serial POTRF steps) and peak width
+(`t(t-1)/2`).
 
-- Peak width `t(t-1)/2 ≳ N·C` for `N` nodes × `C` workers (≤128 total) is
-  satisfied at `t ≳ 17` already — `ts` and `ds` are chosen for compute
-  grain/memory, not to fill the machine.
-- 1 node × 15 workers: `t ≳ 6` saturates peak width; the calibrated `t=75`
-  is comfortably oversized through 8 nodes.
-- Memory: peak resident tile payload ≈217 MiB at `t=75` (never the limiting
-  factor) — about half of `cholesky`'s figure at the same `t`, since no
-  pre-factor generation is ever left dangling here (Structure); the
-  `temp2D` staging DBs never accumulate either (freed immediately after
-  use).
+Width comes from the class rule -- four times the largest geometry's 3456
+workers, so 13,824 -- which puts `t` at 167, i.e. `ds = 16700` at `ts = 100`.
+The identity input is SPD with a unit factor, so the trace is exactly `ds` and
+the pin is analytic rather than measured.
+
+This row anti-scales mildly:
+
+| geometry, `--ds 10000 --ts 100` | time |
+|---|---|
+| 1 node x 15 workers | 9.51 s |
+| 2 nodes | 10.65 s |
+| 4 nodes | 12.76 s |
+
+so the window is 10-30 s.
+
+At the calibrated arguments the row measures 31.1 s, 31.2 s and 35.2 s on the
+three coherence families, holding 7 GB.
+
+**Deliberate deviation from the window.**  The anchor reaches 35.2 s against a
+10-30 s window.  Trimming `ds` to 15000 would fit, but that narrows the width to
+0.81x of the rule for a timing reason, which is the one move the width rule
+forbids; and this row degrades only 1.36x per node doubling, so a slightly
+longer anchor costs nothing at 32 nodes -- unlike tempest, where the window is
+what keeps the campaign finite.
+
+Most of the gap to `cholesky` is input, not arithmetic.  This port has no binary
+input option, so it parses a 1.12 GB text matrix with `fscanf`, and that parse is
+about 65% of the run: the same DAG from the tile stream is 12.3 s.  That is the
+application's own structure and the base tier's business to exhibit.
+
+The placement layer clears its gate: 5.35 s to 4.53 s at two nodes and 6.01 s to
+5.08 s at four, the same 1.18x both times.

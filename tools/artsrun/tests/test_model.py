@@ -346,7 +346,7 @@ def test_no_microbenchmark_is_enabled_by_default():
 def test_the_suite_core_is_made_of_applications():
     catalog = load_catalog()
     for name in ("graph500", "hpcg_intel", "CoMD_sdsc2", "quicksort",
-                 "nekbone", "hpgmg", "npb_cg", "cholesky"):
+                 "nekbone", "hpgmg", "npb_cg", "cholesky_blas"):
         assert catalog.apps[name].kind is Kind.APPLICATION, name
 
 

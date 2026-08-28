@@ -528,13 +528,13 @@ add_benchmark_app(NAME tempest
 # Tier 4: Medium-complexity apps
 # ==========================================================================
 
-add_benchmark_app(NAME cholesky
-    DIR cholesky/ocr
-    SOURCES cholesky.c
-    EXTRA_LINK_LIBS m
-    HINTED_PLACEMENT
-)
-
+# The hand-written-kernel port is not registered: it shares this row's exact
+# decomposition -- same tiles, same DAG, same acquires -- and at eight nodes the
+# two are indistinguishable (15.48 s against 15.54 s).  What differs is kernel
+# speed, and the slower kernels MASK the effect this campaign exists to show:
+# on the identical DAG the hand-written port anti-scales 1.55x and this one
+# 4.97x, because 6x faster kernels stop hiding the acquires.  Its source stays
+# in the submodule -- it is where this port's --fib reader came from.
 # The app tree's standalone input/output converters — plain host C, no OCR.
 # convertData turns a whitespace-text matrix into the tile-stream binary the
 # app's --fib path (and the TG build) reads; convertOut turns the app's
@@ -548,6 +548,16 @@ set_target_properties(cholesky_convertData cholesky_convertOut PROPERTIES
 
 # Tiled Cholesky whose per-tile kernels are the standard CBLAS/LAPACKE calls
 # (dpotrf/dtrsm/dsyrk/dgemm), served by the third_party OpenBLAS submodule.
+# --- Restructured: cholesky_dist ---
+# Same factorisation, same 2-D block-cyclic ownership and the same kernels;
+# what changes is that each place builds the tasks for the tiles it owns, on
+# itself, instead of one rank prescribing the whole t^3/6 graph.
+add_benchmark_app(NAME cholesky_dist
+    DIR cholesky/ocr-mkl
+    SOURCES cholesky_dist.c
+    EXTRA_LINK_LIBS arts::openblas m
+)
+
 add_benchmark_app(NAME cholesky_blas
     DIR cholesky/ocr-mkl
     SOURCES ocr_mkl_cholesky.c

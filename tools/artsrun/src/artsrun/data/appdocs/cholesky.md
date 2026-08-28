@@ -182,23 +182,33 @@ hints are not used (ownership follows the pinned EDTs).  `nranks <= 1` returns
 
 ## Sizing
 
-`ts` sets task grain (compute `~ts³` flops per kernel call via the
-element-wise triple loop; DB size `ts²·8` bytes); `ds` (via `t=ds/ts`) sets
-DAG depth (`t` serial POTRF steps) and peak width (`t(t-1)/2`). Both
-calibrated configurations keep `t` comfortably above the 128-physical-core
-machine, so worker count is not the bottleneck — wall time is set by the
-`~3t`-deep serial critical path and by per-tile compute (expensive here;
-`cholesky_blas` trades that for BLAS3 kernels at the same DAG shape).
+`ts` is the tile edge and sets grain (`~ts³` flops a kernel, `ts²·8` bytes a
+block); `t = ds/ts` sets DAG depth (`t` serial POTRF steps) and peak width
+(`t(t-1)/2`).
 
-- Given `N` nodes × `C` workers (≤128 total), peak width `t(t-1)/2 ≳ N·C`
-  already holds at `t ≳ 17` for the largest configured machine (8×15=120),
-  so `ts` is really chosen for compute grain and memory, not parallelism.
-- 1 node × 15 workers: any `t ≳ 6` (`t(t-1)/2 > 15`) saturates the workers
-  at peak width; `--ds 5000 --ts 100` (`t=50`) is comfortably oversized
-  for strong scaling up to 8 nodes.
-- Memory: peak resident tile payload is `≈2·(t(t+1)/2)·ts²·8` bytes
-  (Structure's dead-weight note) — ≈195 MiB at the calibrated `t=50`,
-  never the limiting factor on this machine.
-- Output byproducts (`cholesky.out`, and `ocr_cholesky_stats.csv` under
-  `--ol 5`) land in the process's working directory, not under `--ds`/
-  `--ts` control.
+Width comes from the class rule -- four times the largest geometry's 3456
+workers, so 13,824 -- which puts `t` at 167, i.e. `ds = 16700` at `ts = 100`.
+The identity input is SPD with a unit factor, so the trace is exactly `ds` and
+the pin is analytic rather than measured.
+
+This row anti-scales mildly:
+
+| geometry, `--ds 10000 --ts 100` | time |
+|---|---|
+| 1 node x 15 workers | 9.51 s |
+| 2 nodes | 10.65 s |
+| 4 nodes | 12.76 s |
+
+so the window is 10-30 s.
+
+At the calibrated arguments the row measures 12.3 s, 12.4 s and 13.1 s on the
+three coherence families, holding 7 GB.  Input arrives as the tile-stream binary
+(`--fib`), which streams straight into the datablocks with no whole-matrix host
+buffer.
+
+The placement layer earns its tier: 12.8 s to 10.0 s at four nodes, and the
+counters show it does that while USING every rank -- EDT counts stay even
+(1.06x) and the useful-work spread actually improves, 1.30x to 1.25x.  Placing a
+kernel on the coordinate of the tile it writes co-locates it with its own RW
+output, and the two independent mod axes keep the active trailing submatrix
+spread rather than folding a frontier onto one rank.
