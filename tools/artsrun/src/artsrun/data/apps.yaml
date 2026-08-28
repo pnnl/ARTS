@@ -564,6 +564,10 @@ apps:
   miniAMR_intel_bryan:
     binary: miniAMR_intel_bryan
     kind: microbench
+    # Reclassified from application: the same physics as miniAMR_intel and
+    # dominated by it, with every EDT pinned to the rank that created it, so
+    # nothing distributes.  A microbenchmark is not campaign material.
+    default_enabled: false
     class: task
     provenance: 'miniAMR (Mantevo); full refinement and communication'
     marker: 'miniAMR complete'

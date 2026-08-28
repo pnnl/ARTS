@@ -396,15 +396,19 @@ def test_every_catalog_entry_states_where_it_came_from():
     assert not missing, f"no provenance for: {', '.join(sorted(missing))}"
 
 
-def test_the_whole_sar_size_ladder_is_present():
-    # The catalog was seeded from the perf list, which carried only the
-    # runtime-input variant; the compiled-in sizes live in the suite too.
+def test_sar_is_one_application_and_its_restructured_tier():
+    # sar_tiny/small/medium/large were rungs of one program's shipped
+    # parameter ladder, carried as if they were different applications.  A
+    # rung is an argument, so the roster keeps the one row and gives it the
+    # restructured tier instead.
     catalog = load_catalog()
-    for name in ("sar_tiny", "sar_small", "sar_medium", "sar_large", "sar_pss"):
-        assert name in catalog.apps, name
-    # The compiled-in sizes have a fixed answer; the runtime-input variant
-    # takes its problem size from the arguments, so it has none.
-    for name in ("sar_tiny", "sar_small", "sar_medium", "sar_large"):
+    for rung in ("sar_tiny", "sar_small", "sar_medium", "sar_large"):
+        assert rung not in catalog.apps, f"{rung} is a rung, not an application"
+    assert "sar_pss" in catalog.apps
+    assert catalog.apps["sar_dist"].restructured_from == "sar_pss"
+    # Both rows answer for themselves: each runs a rung of its own, so each
+    # carries its own pinned answer.
+    for name in ("sar_pss", "sar_dist"):
         assert catalog.apps[name].expect, f"{name} has no pinned answer"
 
 
