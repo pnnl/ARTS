@@ -38,12 +38,12 @@ per-node-exclusive block migration — a coherence probe, not a FLOPS benchmark.
 |-----|---------|---------|------------------|
 | `argv[1]` = `k` | patches per panel side; total patches `6k²` | 2 | ✓ parsed in `mainEdt` (`atoi`), passed as `realmainEdt`'s `paramv[0]`, stored in every panel DB and copied into every patch DB — multinode-safe |
 | (arg count) | `argc == 1` (no args) keeps the documented default `k=2`; `argc == 2` parses `argv[1]` | — | ✓ no-args default is intentional; a wrong argument count or a non-numeric `argv[1]` is now a loud usage error (prints `USAGE:` and shuts down) instead of silently running `k=2` |
-| `DURATION` | timesteps, i.e. `patchEdt` generations per patch | 100 | ✗ bare `#define`, no `#ifndef` guard — not settable from the build either, only by editing the source |
+| `duration` | timesteps, i.e. `patchEdt` generations per patch | **the second argument**; the source's `#define DURATION` is 100 and remains the default when the argument is absent | ✓ an argument — width comes from `k`, run length from here, and the two are therefore independent |
 | `TEST_PATCH` | which patch prints the cross-check | 0 | ✗ compile-time (`#ifndef`-guarded, so `-DTEST_PATCH=` would work, but the CMake target does not set it) |
 | channel `maxGen`/`nbSat`/`nbDeps` | requested `2`/`1`/`1` per halo channel | — | ✗ in-source; the shim *requires* `nbSat=nbDeps=1` and ignores `maxGen` (ARTS channels are unbounded MPSC), so there is no backpressure knob |
 
-`k` is the only dial, and it moves parallel width, object count and memory
-together — nothing scales the work *per* task.
+`k` moves parallel width, object count and memory together — nothing scales the
+work *per* task — so `k` is the width dial and `duration` is the length dial.
 
 ## Structure
 
@@ -72,7 +72,7 @@ pre-creates: `+2`. Every other `ocrEdtCreate` passes NULL and creates nothing.
 Worked numbers at the calibrated `args: ['96']` — 55,296 patches, 442,344 halo
 edges: **5,640,201** EDTs (5,529,600 of them `patchEdt`), **940,014** DBs,
 **1,327,034** event creates for **884,690** live events, ≈18.6 MiB of payload,
-≈49.8 M RW acquires over the run (`9 · 6k² · DURATION`). Default `k=2` → 24
+≈49.8 M RW acquires over the run (`9 · 6k² · duration`). Default `k=2` → 24
 patches, 2,457 EDTs, 390 DBs, 506 event creates.
 
 Counter cross-check: verified (1 node, `k=4` vs `k=8`, measured totals
@@ -179,24 +179,30 @@ blocks' ownership settles on the consumer's rank after the first turn.  Below
 
 ## Sizing
 
-`k` scales the *number* of tasks and blocks (`∝ k²`), never their size — a
-`patchEdt` does the same eight stores at any `k`. Pick `k` for width and run
-length; memory never decides.
+`k` scales the *number* of tasks and blocks (`6k²` patches, `∝ k²` time) and
+never their size -- a `patchEdt` does the same eight stores at any `k` -- so `k`
+is the width dial and `duration`, the second argument, is the length dial.  Memory
+never decides: 1-2 GB at any size measured here.
 
-- **Width per timestep is `6k²`.** `6k² ≥ N·C` merely fills an `N`-node ×
-  `C`-worker machine; `k ≳ sqrt(50·N·C/6)` (≈50 patches/worker) is the floor
-  for surviving the wavefront's uneven progress, and useful sizes sit well
-  above it.
-- 1 node × 15 workers: `k = 16` → 1,536 patches (~102/worker, ~157 k EDTs), a
-  quick smoke size; `k = 32` → 6,144 patches (~410/worker).
-- 8 nodes × 120 workers: the calibrated `k = 96` → 55,296 patches
-  (~461/worker at 8 nodes, ~3,686 at 1 node), 5.64 M EDTs, ≈49.8 M RW
-  acquires — long enough to measure at 1 node and still wide enough not to
-  starve at 8, which is what makes it a strong-scaling point rather than a
-  width cliff.
-- Run length is not independently tunable: `DURATION` is fixed at 100 in the
-  source, so the only lever is `k`, which changes width in the same breath.
-- Memory is `≈ 2112k²` bytes of payload (18.6 MiB at `k=96`) plus never-
-  reclaimed metadata for `~102k²` DBs and `~96k²` events. The ceiling is that
-  metadata, not payload: `k = 192` already means 3.8 M live DBs and 3.5 M live
-  events.
+Width comes from the class rule: four times the largest geometry's 3456 workers
+is 13,824, and `6k² = 13,824` puts `k` at 48 exactly.
+
+The length then comes from the window, and this row's window is the short one,
+because it anti-scales harder than anything else in the roster:
+
+| geometry, k=16 | time |
+|---|---|
+| 1 node x 15 workers | 4.78 s |
+| 2 nodes x 15 workers | ~1125 s (still running at the 900 s cap, 3513 of 4400 timesteps) |
+
+**235x worse across one node boundary.**  That is what a program whose task does
+eight stores and then exchanges with eight neighbours looks like once half those
+exchanges cross a rank -- the communication is the entire program.  So the
+anchor is calibrated against 10-30 s, and `duration=1900` at `k=48` measures
+19.0 s, 19.3 s and 20.2 s on the three coherence families, holding 1 GB.
+
+The placement layer matters here more than anywhere else in its cycle: at four
+nodes it turns 454.2 s into **34.7 s, a factor of 13.1**.  Cutting the cube's six
+faces into minimum-cut 2-D blocks makes almost every halo neighbour rank-local,
+and in a program that is nothing but halo exchange that is nearly the whole
+cost.

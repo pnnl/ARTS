@@ -425,6 +425,14 @@ add_benchmark_app(NAME smithwaterman_dist
     SOURCES smithwaterman_dist.c
 )
 
+# --- Restructured: tempest_dist ---
+# The same cube-sphere exchange and the same cross-check, with the halo
+# batched per rank pair instead of one datablock per patch edge.
+add_benchmark_app(NAME tempest_dist
+    DIR tempest/refactored/ocr/intel-bryan
+    SOURCES tempest_dist.c
+)
+
 add_benchmark_app(NAME quicksort
     DIR quicksort/ocr
     SOURCES quicksort.c
@@ -538,7 +546,6 @@ add_benchmark_app(NAME triangle
 add_benchmark_app(NAME tempest
     DIR tempest/refactored/ocr/intel-bryan
     SOURCES tempestCommunication.c
-    EXTRA_DEFINES DURATION=4400
     HINTED_PLACEMENT
 )
 

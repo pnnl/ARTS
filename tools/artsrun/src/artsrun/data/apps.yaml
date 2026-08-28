@@ -1279,11 +1279,66 @@ apps:
     marker: 'CROSS-CHECKING NEIGHBOR DATA EXCHANGE'
     scalar_re: 'CROSS-CHECKING NEIGHBOR DATA EXCHANGE\*(?:[ \t]*\n|[ \t]+|[A-Za-z*][^\n]*\n)*-?\d+[ \t]+-?\d+[ \t]+-?\d+(?:[ \t]*\n|[ \t]+|[A-Za-z*][^\n]*\n)*-?\d+[ \t]+-?\d+[ \t]+-?\d+(?:[ \t]*\n|[ \t]+|[A-Za-z*][^\n]*\n)*-?\d+[ \t]+-?\d+[ \t]+(-?\d+)'
     scalar_kind: int
-    expect: '21'
-    expect_args: []
-    args: ['96']
+    expect: '11521'
+    expect_args: ['48']
+    # Both dials are arguments now: k sets how many patches there are (6k^2, each
+    # the same size) and duration how many timesteps they take.  The shipped
+    # default duration stands -- the README calls the run "a few timesteps" and
+    # the recommended argument is the patch range -- so the window is reached
+    # with k, and the width follows: 6k^2 patches is far past the 3456 workers
+    # the largest geometry offers, which is what the width rule asks for.
+    # This row anti-scales harder than anything else in the roster (4.8 s at one
+    # node; at two it was still running at 900 s, three quarters through, so
+    # about 1125 s -- 235x), which is what a program whose task does eight
+    # stores and then exchanges with eight neighbours looks like once half those
+    # exchanges cross a rank.  So the window is 10-30 s.
+    args: ['48', '1900']
     hinted: true
-    multinode_timeout: 40
+    # No multinode cap of its own.  This row's whole result is how badly it
+    # degrades across a node boundary, and a cap shorter than that degradation
+    # records it as a timeout instead of measuring it: at four nodes the base
+    # tier takes 818 s and the hinted 16 s, so a 40 s cap failed the one and
+    # passed the other.  The profile's budget is what bounds a runaway.
+
+  tempest_dist:
+    binary: tempest_dist
+    class: task
+    provenance: 'Tempest neighbour exchange (Intel OCR app, B. Pawlowski); rank-pair batched halo'
+    marker: 'CROSS-CHECKING NEIGHBOR DATA EXCHANGE'
+    scalar_re: 'CROSS-CHECKING NEIGHBOR DATA EXCHANGE\*(?:[ \t]*\n|[ \t]+|[A-Za-z*][^\n]*\n)*-?\d+[ \t]+-?\d+[ \t]+-?\d+(?:[ \t]*\n|[ \t]+|[A-Za-z*][^\n]*\n)*-?\d+[ \t]+-?\d+[ \t]+-?\d+(?:[ \t]*\n|[ \t]+|[A-Za-z*][^\n]*\n)*-?\d+[ \t]+-?\d+[ \t]+(-?\d+)'
+    scalar_kind: int
+    # The same exchange and the same cross-check as the row it re-implements, so
+    # the same answer: verified identical at one, two, four and eight nodes.
+    #
+    # Placement had already done all a hint can do -- remote acquires 74.93% ->
+    # 1.32%, what crosses 14.4 GB -> 265 MB, under half a percent of the edges
+    # left crossing -- and the row still lost 2.75x across the first node
+    # boundary.  What remains is not the size of the cut but the price of
+    # crossing it: a patch edge bounces one datablock RW between its two
+    # patches, so a crossing edge migrates exclusive ownership twice a
+    # timestep, and the payload is eight bytes against 349 bytes of protocol
+    # per remote acquire.  This row batches everything a rank owes a peer into
+    # one block per timestep.  The same stamps cross the same number of times.
+    #
+    # Placement cannot reach it because the dependence graph is a mesh, not a
+    # tree: a divide-and-conquer program's subtrees are independent, so its
+    # edges are crossed once, while every patch here talks to eight neighbours
+    # every timestep and any partition leaves a cut that is paid `duration`
+    # times.
+    #
+    # This row SCALES, so it is calibrated against the scaler window: duration
+    # keeps the shipped default and k reaches it.  The ladder measures 22.6 s
+    # at k=96, 118.7 s at 224, 149.7 s at 248 and 189.4 s at 272, so k is 248,
+    # where the three coherence arms run 155.1 / 121.9 / 131.2 s holding 2 GB --
+    # memory never enters the choice here, and it does not grow with the run:
+    # the slices are made once and reused and the channel bounds what is in
+    # flight, so k=96 and k=248 hold the same 2 GB.
+    # The width follows for free: 6k^2 = 369,024 patches is far past the 3456
+    # workers the largest geometry offers, which is all the width rule asks.
+    # (The row it re-implements anti-scales, so ITS window is the short one --
+    # the two tiers are calibrated against different windows on purpose.)
+    args: ['248', '100']
+    restructured_from: tempest
 
   testlibs:
     binary: testlibs
