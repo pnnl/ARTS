@@ -321,6 +321,13 @@ function(add_benchmark_app)
             # addresses across MPI ranks.  With PIE + ASLR each rank gets a
             # different base address and deserialized funcPtrs become invalid.
             target_link_options(${_app}_xsocr PRIVATE -no-pie -fno-pie)
+            # A vendored static libnuma/hwloc inside the executable would
+            # otherwise be exported: the loader then binds the SYSTEM libnuma's
+            # references -- and those of anything MPI drags in -- to this
+            # executable's copy, leaving two libraries sharing half a state
+            # each.  The topology query returns zero nodes and the run dies in
+            # numa_bitmask_alloc before main.  Keep archive symbols local.
+            target_link_options(${_app}_xsocr PRIVATE -Wl,--exclude-libs,ALL)
             set_target_properties(${_app}_xsocr PROPERTIES
                 C_STANDARD 11 C_EXTENSIONS ON
                 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
@@ -381,6 +388,9 @@ function(add_benchmark_app)
                 target_link_libraries(${_app}_ocrvx PRIVATE
                     ocr_vdm_mpi ${APP_EXTRA_LINK_LIBS})
                 target_link_options(${_app}_ocrvx PRIVATE -no-pie -fno-pie)
+                # Same reason as the sibling above: archive symbols stay local
+                # so a system copy of the same library keeps its own state.
+                target_link_options(${_app}_ocrvx PRIVATE -Wl,--exclude-libs,ALL)
                 set_target_properties(${_app}_ocrvx PROPERTIES
                     C_STANDARD 11 C_EXTENSIONS ON
                     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"

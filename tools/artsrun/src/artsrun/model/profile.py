@@ -71,7 +71,12 @@ class Profile(BaseModel):
     # Applying one value to all of them is what keeps a difference between
     # them a difference in the runtimes.  Stacks are reserved, not committed,
     # so the cost is address space until a recursion actually descends.
-    stack_size_mb: int = Field(default=256, ge=0)
+    # 8 MiB is what both runtimes fall back to on their own -- ARTS skips the
+    # attribute when the key is zero, the reference substitutes 8388608 -- and
+    # it is the platform's own thread default.  Stating it rather than leaving
+    # it implicit keeps the two measured at the same size; raise it only for a
+    # runtime whose depth the stack actually bounds, and say why in the profile.
+    stack_size_mb: int = Field(default=8, ge=0)
 
     # Parallel connections each node opens.  A local run has the runtime find
     # its own block of node_count x port_count; a remote one must be told which
