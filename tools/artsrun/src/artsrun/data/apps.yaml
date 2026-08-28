@@ -1001,10 +1001,94 @@ apps:
     marker: 'score:\s*\d+'
     scalar_re: 'score:\s*(\d+)'
     scalar_kind: int
-    expect: '1460'
-    expect_args: ['50', '50', '{repo}/third_party/ocr-apps/apps/smithwaterman/datasets/string1-medium-large.txt', '{repo}/third_party/ocr-apps/apps/smithwaterman/datasets/string2-medium-large.txt', '{repo}/third_party/ocr-apps/apps/smithwaterman/datasets/score-medium-large.txt']
-    args: ['100', '100', '{repo}/third_party/ocr-apps/apps/smithwaterman/datasets/string1-large.txt', '{repo}/third_party/ocr-apps/apps/smithwaterman/datasets/string2-large.txt', '{repo}/third_party/ocr-apps/apps/smithwaterman/datasets/score-large.txt']
-    fixtures: ['{repo}/third_party/ocr-apps/apps/smithwaterman/datasets/string1-large.txt', '{repo}/third_party/ocr-apps/apps/smithwaterman/datasets/string2-large.txt', '{repo}/third_party/ocr-apps/apps/smithwaterman/datasets/score-large.txt']
+    expect: '86360'
+    expect_args: ['100', '100', '{repo}/datasets/smithwaterman/string1-cal.txt', '{repo}/datasets/smithwaterman/string2-cal.txt', '{repo}/datasets/smithwaterman/score-cal.txt']
+    # Two knobs and they are independent: total DP work is the product of the
+    # two sequence lengths, while the wavefront's peak width is min(len)/tile.
+    # The tile the app documents is 10, but its example runs a 51-character
+    # sequence, so it says nothing about scale; the width rule has to derive it.
+    #
+    # DELIBERATE DEVIATION on width, and it is structural.  A wavefront needs
+    # W^2 tasks to offer width W: the rule's 4x slack (13,824) would be 191 M
+    # tasks and even 1x (3,456) is 11.9 M.  This row builds its whole graph in
+    # mainEdt -- measured at 9.82 s of a 9.93 s run, against 0.001 s to read
+    # the input -- so creation cost tracks the task count and width cannot be
+    # bought without leaving the window: tile 100 puts the anchor at 11.8 s
+    # with width 0.41x, tile 50 at 100.8 s with width 0.81x.  The window is the
+    # binding constraint for an anti-scaler, so the tile stays 100 and the
+    # width is given up, with the reason recorded rather than the tile tuned.
+    # Both tiers share these arguments and both land in the window: 11.8 s for
+    # base and 11.0 s for hinted, each holding 3 GB.
+    # (An earlier note blamed 210 GB of tile memory.  That was wrong: the tiles
+    # are reclaimed by their consumers.  What accumulated was the readiness
+    # events, and those are reclaimed now too.)
+    #
+    # This row anti-scales steeply -- 1.45 s at one node against 51.3 s at two
+    # on the trend size -- and also INSIDE a node, 7.91 s at 15 workers against
+    # 10.88 s at 112, which is what a single-threaded creation loop looks like
+    # when workers are added around it.
+    args: ['100', '100', '{repo}/datasets/smithwaterman/string1-cal.txt', '{repo}/datasets/smithwaterman/string2-cal.txt', '{repo}/datasets/smithwaterman/score-cal.txt']
+    fixtures: ['{repo}/datasets/smithwaterman/string1-cal.txt', '{repo}/datasets/smithwaterman/string2-cal.txt', '{repo}/datasets/smithwaterman/score-cal.txt']
+    hinted: true
+    restructured_as: smithwaterman_dist
+
+  smithwaterman_dist:
+    binary: smithwaterman_dist
+    class: task
+    provenance: 'Smith-Waterman sequence alignment, place-persistent SPMD rewrite'
+    marker: 'score:\s*\d+'
+    scalar_re: 'score:\s*(\d+)'
+    scalar_kind: int
+    expect: '493680'
+    expect_args: ['100', '100', '{repo}/datasets/smithwaterman/string1-swd.txt', '{repo}/datasets/smithwaterman/string2-swd.txt', '{repo}/datasets/smithwaterman/score-swd.txt', '32']
+    # The same wavefront and the same kernel as the row it re-implements; what
+    # changes is that each place builds the tasks for its own band of rows
+    # instead of one rank prescribing the whole W^2 graph.  That row spends
+    # 9.82 s of a 9.93 s run inside mainEdt, so it cannot finish before its
+    # creation loops do -- more workers make it slower (7.91 s at 15 against
+    # 10.88 s at 112) and more ranks turn every placed task into a message.
+    #
+    # Rows are banded rather than scattered because a wavefront is a pipeline:
+    # only the band's top edge crosses, O(P*W) against the O(W^2) a cyclic map
+    # pays, and the fill is P of the 2W-1 anti-diagonal steps, under a percent
+    # here.  Measured, cyclic was worse than the base row's own hinted banding.
+    #
+    # Names are created in a phase of their own, before the phase that binds
+    # to them: a band's builder waits on the announcements of its own names
+    # and of the band above, which is every name its tasks can reach.  A
+    # chain that made each band wait for the whole band above instead is
+    # portable too, but it serialises creation and the row stops scaling
+    # (0.95x against 6.19x over 1..8 nodes, same input, interleaved).
+    #
+    # This row is a SCALER, so it is calibrated against ~150 s.  ds comes from
+    # the window (the anchor goes as L^2.2: 7.9 s at 200k, 40.1 s at 400k,
+    # 92.7 s at 600k, 178.5 s at 800k) and the tile then sets the width.
+    # The anchor is the tightest of the three coherence arms; at 800,000 they
+    # run 178.5 / 163.6 / 155.6 s holding 106 / 88 / 106 GB, so the window
+    # decides the size and the node's memory has room to spare.
+    #
+    # places is the ownership decomposition, not the width knob: the width is
+    # the tile grid, and 800,000 at tile 100 is 6.4e7 tiles against the 13,824
+    # a 4x-slack DAG rule asks for.  places follows the SPMD rule instead --
+    # one persistent unit per node, each owning a partition -- fixed at the
+    # largest geometry (32) and packed by placeRank at smaller node counts, so
+    # the decomposition does not move with the sweep.  It is not a performance
+    # choice: at one node the fastest value is 4 (12.9 s), not 32 (14.4 s).
+    #
+    # DELIBERATE DEVIATION on width, structural and smaller than the base
+    # row's.  A wavefront needs W^2 tasks for width W, and distributing the
+    # creation does not reduce the count: at 800,000 a tile of 50 quadruples
+    # the tiles and passed 417 GB before it was stopped, against tile 100's
+    # 106 GB -- past what a node has.  The tile stays 100 and the row runs at
+    # 6.19x -- against the base row's 0.41x, which is the width this tier
+    # actually bought.
+    #
+    # The answer is pinned by agreement between two independently built graphs
+    # (this row and the port it re-implements) rather than by a sequential
+    # reference: 800,000 x 800,000 is 6.4e11 cells.
+    args: ['100', '100', '{repo}/datasets/smithwaterman/string1-swd.txt', '{repo}/datasets/smithwaterman/string2-swd.txt', '{repo}/datasets/smithwaterman/score-swd.txt', '32']
+    fixtures: ['{repo}/datasets/smithwaterman/string1-swd.txt', '{repo}/datasets/smithwaterman/string2-swd.txt', '{repo}/datasets/smithwaterman/score-swd.txt']
+    restructured_from: smithwaterman
 
   stencil1D_channel:
     binary: stencil1D_channel

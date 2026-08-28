@@ -49,18 +49,16 @@ def _identity_tiles_bin(path: Path, n: int, ts: int) -> None:
                 fh.write(diag if i == j else zero_tile)
 
 
-def _acgt_pair(path: Path, which: int, lens=(515000, 517000),
-               seed=20260819) -> None:
+def _acgt_pair(path: Path, which: int, lens, seed, names) -> None:
     # The two alignment inputs are one seeded ACGT stream split at lens[0];
-    # regenerating either file alone must not restart the stream, so one
-    # call derives both and writes the sibling (atomically) when absent.
+    # regenerating either file alone must not restart the stream, so one call
+    # derives both and writes the sibling (atomically) when absent.
     import random
 
     rng = random.Random(seed)
     both = ["".join(rng.choice("ACGT") for _ in range(n)) for n in lens]
     path.write_text(both[which])
-    sibling_name = ["string1-huge.txt", "string2-huge.txt"][1 - which]
-    sibling = path.parent / sibling_name
+    sibling = path.parent / names[1 - which]
     if not sibling.exists():
         tmp = sibling.with_name(sibling.name + ".staging")
         tmp.write_text(both[1 - which])
@@ -72,16 +70,31 @@ def _counting_file(path: Path) -> None:
     path.write_text("\n".join(str(i) for i in range(10)) + "\n")
 
 
+_SW_HUGE  = ("string1-huge.txt", "string2-huge.txt")
+_SW_CAL   = ("string1-cal.txt", "string2-cal.txt")
+_SW_TREND = ("string1-trend.txt", "string2-trend.txt")
+_SW_SWD   = ("string1-swd.txt", "string2-swd.txt")
+
 GENERATORS = {
     "cholesky_input.mat": lambda p: _identity_matrix(p, 50),
     "cholesky_perf16700_ts100.bin": lambda p: _identity_tiles_bin(p, 16700, 100),
     "cholesky_perf90000_ts500.bin": lambda p: _identity_tiles_bin(p, 90000, 500),
-    "string1-huge.txt": lambda p: _acgt_pair(p, 0),
-    "string2-huge.txt": lambda p: _acgt_pair(p, 1),
-    # The alignment's expected global score for the pair above, computed by an
+    # Three alignment pairs, each a seeded ACGT stream split in two.  The
+    # scores are the expected global alignment of the pair, each computed by an
     # independent sequential reference of the same DP (border = gap*position,
     # match 2 / transition -2 / transversion -4 / gap -1, no zero clamp).
-    "score-huge.txt": lambda p: p.write_text("318128\n"),
+    "string1-huge.txt":  lambda p: _acgt_pair(p, 0, (515000, 517000), 20260819, _SW_HUGE),
+    "string2-huge.txt":  lambda p: _acgt_pair(p, 1, (515000, 517000), 20260819, _SW_HUGE),
+    "score-huge.txt":    lambda p: p.write_text("318128\n"),
+    "string1-cal.txt":   lambda p: _acgt_pair(p, 0, (140000, 140400), 20260819, _SW_CAL),
+    "string2-cal.txt":   lambda p: _acgt_pair(p, 1, (140000, 140400), 20260819, _SW_CAL),
+    "score-cal.txt":     lambda p: p.write_text("86360\n"),
+    "string1-trend.txt": lambda p: _acgt_pair(p, 0, (70000, 70000), 20260828, _SW_TREND),
+    "string2-trend.txt": lambda p: _acgt_pair(p, 1, (70000, 70000), 20260828, _SW_TREND),
+    "score-trend.txt":   lambda p: p.write_text("43068\n"),
+    "string1-swd.txt":   lambda p: _acgt_pair(p, 0, (800000, 800000), 20260830, _SW_SWD),
+    "string2-swd.txt":   lambda p: _acgt_pair(p, 1, (800000, 800000), 20260830, _SW_SWD),
+    "score-swd.txt":     lambda p: p.write_text("493680\n"),
     "basicIO_test.dat": _counting_file,
 }
 

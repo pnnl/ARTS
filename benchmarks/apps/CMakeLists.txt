@@ -414,6 +414,14 @@ add_benchmark_app(NAME fibonacci
 
 add_benchmark_app(NAME printf
     DIR printf/ocr
+# --- Restructured: smithwaterman_dist ---
+# Same wavefront and the same kernel; each place builds the tasks for the tiles
+# it owns instead of one rank prescribing the whole W^2 graph.
+add_benchmark_app(NAME smithwaterman_dist
+    DIR smithwaterman/ocr
+    SOURCES smithwaterman_dist.c
+)
+
     SOURCES printf.c
 )
 

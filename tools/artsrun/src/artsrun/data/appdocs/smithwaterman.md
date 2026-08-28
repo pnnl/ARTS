@@ -142,19 +142,52 @@ producer's band rank, which is its consumer's rank for the in-band edges.
 
 ## Sizing
 
-`tileWidth`/`tileHeight` set per-task grain (compute grows with
-`tileWidth·tileHeight`; message sizes with `tileWidth` or `tileHeight`
-alone); `W`, `H` are *derived* from a chosen dataset's fixed sequence
-lengths against that tile size — the datasets fixture set spans
-`tiny`/`small`/`medium`/`medium-large`/`large`.
+The total DP work is the product of the two sequence lengths and does **not**
+depend on the tiling.  So the tile size sets width and grain, while the run
+length is set by the DATASET -- which makes the dataset this row's size knob.
 
-- To keep `N` nodes × `C` workers busy, aim for the wavefront's peak width
-  `min(W,H)` at or above `N·C`: pick a longer dataset and/or shrink the
-  tile size.
-- Shrinking tiles grows EDT/DB/event counts roughly with `1/tileSize²`
-  while per-tile compute shrinks with `tileSize²` — past a point this
-  turns the app into a scheduling/coherence-churn probe rather than a
-  compute benchmark.
-- The calibrated `args=[100, 100, ...large...]` gives `W=1008, H=1012`
-  (peak width 1008) — comfortably above 8 nodes × 15 workers = 120 workers
-  even accounting for the wavefront's ramp-up/ramp-down edges.
+| geometry, 178k pair | time |
+|---|---|
+| 1 node x 15 workers | 16.37 s |
+| 2 nodes | 316.06 s |
+| 4 nodes | 283.89 s |
+
+A 19x degradation across the first node boundary, so the window is 10-30 s and
+the calibrated pair is 140,000/140,400: 14.5 s, 14.7 s and 15.3 s on the three
+coherence families, holding 3 GB.  Its expected score, 86360, comes from an
+independent sequential reference of the same recurrence, validated by
+reproducing the 515,000-pair's long-pinned 318128.
+
+This row also anti-scales INSIDE a node, and the phase measurement says why:
+7.91 s at 15 workers against 10.88 s at 112, on the same problem.  The run is
+bounded below by a single-threaded creation loop, so workers added around it
+only contend -- `max(creation, work/workers)` predicts every point of that
+sweep, with creation at 9.82 s.
+
+**Deliberate deviation from the width rule, and not for the reason recorded
+here before.**  A wavefront needs `W^2` tasks to offer width `W`: the rule's 4x
+slack (13,824) is 191 M tasks and even 1x (3,456) is 11.9 M.  This row builds
+its whole graph in `mainEdt` -- 9.82 s of a 9.93 s run, against 0.001 s to read
+the input -- so creation cost tracks the task count, and width cannot be bought
+without leaving the window: tile 100 puts the anchor at 11.8 s with width
+0.41x, tile 50 at 100.8 s with 0.81x.  The window binds for an anti-scaler, so
+the tile stays 100 and the width is given up.  Both tiers share these
+arguments and both land in the window: 11.8 s base, 11.0 s hinted, each
+holding 3 GB.
+
+An earlier note blamed 210 GB of tile memory.  That was wrong twice over: the
+tiles ARE reclaimed -- the task destroys the three blocks it read -- and the
+figure was arithmetic for a 515,000 pair this row no longer runs, while the
+arguments beside it were a 140,000 one at 0.41x rather than the 1.49x claimed.
+What did accumulate was the readiness events, three per tile and never
+destroyed; they are reclaimed now by the same consumer that frees the blocks
+they carried, which is 9.10 s and 2 GB before against 7.99 s and 1 GB after.
+
+The placement layer is worth its tier here, and the counters say exactly what
+it buys.  Over four nodes the EDT counts are already even without it -- 122,500
+finished per rank either way, an imbalance of 1.00x, because a hintless create
+round-robins -- so what the layer changes is not who works but where the data
+is: remote acquires fall from **49.95% to 0.27%** (978,954 of 1,959,999 against
+5,250) and the bytes crossing from 605 MB to 262 MB.  Banding by row makes each
+tile's neighbours rank-local.  Banding by row makes each tile's row neighbour rank-local, so the ranks
+stop waiting on remote acquires.
