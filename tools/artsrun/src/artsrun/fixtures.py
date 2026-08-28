@@ -74,17 +74,8 @@ def _counting_file(path: Path) -> None:
 
 GENERATORS = {
     "cholesky_input.mat": lambda p: _identity_matrix(p, 50),
-    "cholesky_perf5k.mat": lambda p: _identity_matrix(p, 5000),
-    "cholesky_perf7k5.mat": lambda p: _identity_matrix(p, 7500),
-    "cholesky_perf5k_ts100.bin": lambda p: _identity_tiles_bin(p, 5000, 100),
-    "cholesky_perf7k5_ts100.bin": lambda p: _identity_tiles_bin(p, 7500, 100),
-    "cholesky_perf28k.mat": lambda p: _identity_matrix(p, 28000),
-    "cholesky_perf40k_ts100.bin": lambda p: _identity_tiles_bin(p, 40000, 100),
-    "cholesky_perf16700.mat": lambda p: _identity_matrix(p, 16700),
-    "cholesky_trend8300_ts100.bin": lambda p: _identity_tiles_bin(p, 8300, 100),
-    "cholesky_trend4000.mat": lambda p: _identity_matrix(p, 4000),
     "cholesky_perf16700_ts100.bin": lambda p: _identity_tiles_bin(p, 16700, 100),
-    "cholesky_perf33400_ts200.bin": lambda p: _identity_tiles_bin(p, 33400, 200),
+    "cholesky_perf90000_ts500.bin": lambda p: _identity_tiles_bin(p, 90000, 500),
     "string1-huge.txt": lambda p: _acgt_pair(p, 0),
     "string2-huge.txt": lambda p: _acgt_pair(p, 1),
     # The alignment's expected global score for the pair above, computed by an
