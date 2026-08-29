@@ -543,8 +543,8 @@ apps:
     args: ['131072', '1024']
 
   # Reclassified 2026-08-23: its EDT set is a strict subset of
-  # miniAMR_intel_bryan's (the same block chain with halo send and receive,
-  # minus the checksum, reduction and wrap-up path), so it computes no
+  # miniAMR_intel_bryan's (same block-per-EDT chain with halo send/recv,
+  # minus the checksum, reduction and wrapup path), so it computes no
   # result at all -- what it exercises is the refinement spawn storm.
   miniAMR_forkbomb:
     binary: miniAMR_forkbomb
@@ -1126,13 +1126,14 @@ apps:
     # the decomposition does not move with the sweep.  It is not a performance
     # choice: at one node the fastest value is 4 (12.9 s), not 32 (14.4 s).
     #
-    # DELIBERATE DEVIATION on width, structural and smaller than the base
-    # row's.  A wavefront needs W^2 tasks for width W, and distributing the
-    # creation does not reduce the count: at 800,000 a tile of 50 quadruples
-    # the tiles and passed 417 GB before it was stopped, against tile 100's
-    # 106 GB -- past what a node has.  The tile stays 100 and the row runs at
-    # 6.19x -- against the base row's 0.41x, which is the width this tier
-    # actually bought.
+    # The width the base row could not reach, this one does.  A wavefront
+    # needs W^2 tasks to offer width W, and distributing the creation does not
+    # reduce the count, so the tile is what sets it: tile 100 puts the
+    # wavefront at 2.31x the largest geometry's workers -- past the machine
+    # with room to spare -- where the base row's own window left it at 0.41x,
+    # short of the machine.  A finer tile is not available to buy more: at
+    # 800,000 a tile of 50 quadruples the tiles and passed 417 GB before it
+    # was stopped, against tile 100's 106 GB, past what a node has.
     #
     # The answer is pinned by agreement between two independently built graphs
     # (this row and the port it re-implements) rather than by a sequential
@@ -1341,6 +1342,7 @@ apps:
     # exchanges cross a rank.  So the window is 10-30 s.
     args: ['48', '1900']
     hinted: true
+    restructured_as: tempest_dist
     # No multinode cap of its own.  This row's whole result is how badly it
     # degrades across a node boundary, and a cap shorter than that degradation
     # records it as a timeout instead of measuring it: at four nodes the base

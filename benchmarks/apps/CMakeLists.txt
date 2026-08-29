@@ -72,6 +72,7 @@ target_compile_options(ocr_lib_reductionTwoLevel PRIVATE ${BENCH_C_OPT})
 target_compile_definitions(ocr_lib_reductionTwoLevel PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
 target_include_directories(ocr_lib_reductionTwoLevel PRIVATE ${BENCH_OCR_OPTIONS_DIR})
 
+# --- timer library (x86) ---
 add_library(ocr_lib_timer OBJECT
     ${OCR_LIBS_ROOT}/timer/x86/timer.c
 )
@@ -154,6 +155,7 @@ set_target_properties(ocr_lib_reductionTwoLevel_ocrvx PROPERTIES C_STANDARD 11 C
 target_compile_options(ocr_lib_reductionTwoLevel_ocrvx PRIVATE ${BENCH_C_OPT}
     "-include" "${OCRVX_COMPAT_H}")
 target_compile_definitions(ocr_lib_reductionTwoLevel_ocrvx PRIVATE ${OCR_EXT_DEFINES} "OCR_TYPE_H=vdm.h")
+
 
 add_library(ocr_lib_timer_ocrvx OBJECT
     ${OCR_LIBS_ROOT}/timer/x86/timer.c
@@ -384,22 +386,6 @@ add_benchmark_app(NAME printf
     SOURCES printf.c
 )
 
-# --- Restructured: smithwaterman_dist ---
-# Same wavefront and the same kernel; each place builds the tasks for the tiles
-# it owns instead of one rank prescribing the whole W^2 graph.
-add_benchmark_app(NAME smithwaterman_dist
-    DIR smithwaterman/ocr
-    SOURCES smithwaterman_dist.c
-)
-
-# --- Restructured: tempest_dist ---
-# The same cube-sphere exchange and the same cross-check, with the halo
-# batched per rank pair instead of one datablock per patch edge.
-add_benchmark_app(NAME tempest_dist
-    DIR tempest/refactored/ocr/intel-bryan
-    SOURCES tempest_dist.c
-)
-
 add_benchmark_app(NAME quicksort
     DIR quicksort/ocr
     SOURCES quicksort.c
@@ -426,6 +412,22 @@ add_benchmark_app(NAME smithwaterman
     DIR smithwaterman/ocr
     SOURCES smithwaterman.c
     HINTED_PLACEMENT
+)
+
+# --- Restructured: smithwaterman_dist ---
+# Same wavefront and the same kernel; each place builds the tasks for the tiles
+# it owns instead of one rank prescribing the whole W^2 graph.
+add_benchmark_app(NAME smithwaterman_dist
+    DIR smithwaterman/ocr
+    SOURCES smithwaterman_dist.c
+)
+
+# --- Restructured: tempest_dist ---
+# The same cube-sphere exchange and the same cross-check, with the halo
+# batched per rank pair instead of one datablock per patch edge.
+add_benchmark_app(NAME tempest_dist
+    DIR tempest/refactored/ocr/intel-bryan
+    SOURCES tempest_dist.c
 )
 
 add_benchmark_app(NAME basicIO

@@ -68,13 +68,11 @@ periodic-BC branch this build compiles out).
 
 ## Parameters
 
-Same dials as `hpgmg` (`log2_box_dim`, `target_boxes`), but calibrated as
-what it now is — a scaling application: catalog args `['6','4096']`
-(a 1024³ grid of 64³-cell boxes, ~113 GiB), whose dane1 anchor (108w+4p)
-runs ~128 s in the ~150 s class and IS the worst cell.  The pinned
+Same dials as `hpgmg` (`log2_box_dim`, `target_boxes`).  The pinned
 `||error||` 9.2779e-10 is O(h²)-consistent with the 512³ pin (ratio 3.985
 ≈ 4) and identical across arms and geometries.  At most 64 ranks (a
-loud-failed compile-time bound of the slice tables).
+loud-failed compile-time bound of the slice tables).  What the dials are
+set to, and why, is under **Sizing**.
 
 ## Structure deltas vs the base program
 
@@ -108,7 +106,42 @@ reserved tail (`b_norms + N·8` — space the original allocation always
 reserved), so `level_type` itself is unchanged.  Guids ride paramv as
 64-bit images (`memcpy`, matching the base port's own PRM-struct idiom).
 
-## Measured (bentley trend sweep, 15w+1p, at the trend size `['5','4096']`, E2E / solve)
+## Flow
+
+A phase is one pinned FINISH slice.  It fires when its gate events have
+fired — the rank's own previous phase for a phase that touches only that
+rank's boxes, the rank-grid neighbourhood at a halo hand-off, everyone at a
+level transition, at the bottom solve and at the norm — then creates its
+rank's per-box tasks locally and counts their completions locally, and its
+completion event fires when the slice and all its children have left the
+finish scope.  An exchange is two subphases: pack fills a box's own six
+face slabs from the exchanged vector's interior boundary planes, and
+unpack, gated on the pack subphase's finish, fills every ghost layer from
+the neighbours' slabs.  Finalization reduces `||error||` per box, then per
+rank, then in a printing final that shuts down.  The schedule is the exact
+serial phase order, so the arithmetic is order-identical to the base
+program.
+
+## Placement (base)
+
+Boxes have spatial homes (`boxHomePD`) and every box task is pinned with
+its box, so a box datablock's RW turns never leave its rank.  Per-rank
+creator EDTs allocate, zero and describe their own boxes and slabs on their
+own rank, so a box's payload is born where it lives; under the base program
+every box was first-touched on rank 0 and had to migrate out.  Phase
+completion events are homed per rank as well, which is what lets a phase
+wait point-to-point instead of on a central spine.
+
+There is no separate `hinted` version.  The decomposition is the placement
+here -- it is structural, not a layer a hint could add or remove.
+
+## Sizing
+
+Calibrated as what this row now is, a scaling application: catalog args
+`['6','4096']` — a 1024³ grid of 64³-cell boxes, ~113 GiB — whose dane1
+anchor (108w+4p) runs ~128 s in the ~150 s class and IS the worst cell.
+
+Trend sweep (bentley, 15w+1p, at the trend size `['5','4096']`, E2E / solve):
 
 | arm | 1 n | 2 n | 4 n | 8 n |
 |-----|-----|-----|-----|-----|

@@ -106,6 +106,45 @@ iterations, one residual matvec, one outer EDT.  Setup: `R` rank-init EDTs,
 persistent channels (`2·R·(R−1)` total) plus the one-time labeled
 stickies; nothing grows with the iteration count.
 
+## Flow
+
+One chain per rank, and inside an inner iteration the links fire in the
+order conjugate gradient asks for: a bcast publishes the rank's fragment of
+the operand, an spmv fans out `nchunk` row-slice tasks over the rank's rows,
+a join folds their partials, an alpha reduces `p·q` and forms the step, and
+a beta reduces `r·r` and forms the direction — beta on every inner iteration
+but the last.  An outer iteration is 25 of those plus one residual matvec,
+which reuses the same bcast/spmv links with a flag switching the operand
+from `p` to `z` and the successor from alpha to the outer EDT.  Setup runs
+per-rank init, `nchunk` row builders a rank, a slice join and a channel-init
+EDT before the first outer iteration.
+
+## Placement (base)
+
+The decomposition is a band of rows a rank, and the placement follows from
+it rather than from a hint: each rank's chain hands its four datablocks --
+the private state, the packed vector block, the timer on the reporting rank
+and the reduction library's private block -- RW from link to link, so they
+are created once on that rank and stay there for the whole run.  Fragments
+ride persistent channels as fresh datablocks, so what crosses is the
+operand fragments and the two reductions, never the matrix: every rank
+replays the draw stream itself, so the matrix is built where it is used and
+construction never crosses the wire.
+
+There is no separate `hinted` version.  The row band is the placement, and a
+hint layer could not express or change it.
+
+## Sizing
+
+The catalog pins class D (`-t D`), and the dane1 anchor (108w+4p) IS the
+worst cell at **471 s**.  That is over the ~150 s a scaler is calibrated
+against, and it is a property of the ladder rather than a choice: the
+shipped classes measure 32.6 s (C), 471 s (D) and over 19 h (E) at that
+anchor, so no rung lands in the window, and `-i` cannot bridge the gap
+because class D reaches the benchmark's own 1e-8 bar only near iteration 85
+of its published 100.  Class D is the largest class that runs; the next
+section says why E is a cliff rather than a cost.
+
 ## What still bounds it
 
 - **The draw stream — the benchmark's own Amdahl term, and worth reading off
