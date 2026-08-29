@@ -55,8 +55,8 @@ target_include_directories(ocr_lib_reduction PRIVATE ${BENCH_OCR_OPTIONS_DIR})
 # --- reductionTwoLevel library ---
 # The same interface as `reduction`, with the tree built in two levels around
 # a place-major numbering instead of flat over participant indices.  A separate
-# library rather than a switch inside the shared one, the way reductionEager is:
-# an application links one of them.
+# library rather than a switch inside the shared one: an application links one
+# of them.
 add_library(ocr_lib_reductionTwoLevel OBJECT
     ${OCR_LIBS_ROOT}/reductionTwoLevel/reductionTwoLevel.c
 )
@@ -72,24 +72,6 @@ target_compile_options(ocr_lib_reductionTwoLevel PRIVATE ${BENCH_C_OPT})
 target_compile_definitions(ocr_lib_reductionTwoLevel PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
 target_include_directories(ocr_lib_reductionTwoLevel PRIVATE ${BENCH_OCR_OPTIONS_DIR})
 
-# --- reductionEager library ---
-add_library(ocr_lib_reductionEager OBJECT
-    ${OCR_LIBS_ROOT}/reductionEager/reductionEager.c
-)
-target_include_directories(ocr_lib_reductionEager PUBLIC
-    ${OCR_LIBS_ROOT}/reductionEager
-)
-target_include_directories(ocr_lib_reductionEager PRIVATE
-    ${OCR_LIBS_ROOT}/macros/macros
-    ${OCR_INC_DIR}
-)
-# target_link_libraries(ocr_lib_reductionEager PRIVATE ocr_xsocr_static)
-set_target_properties(ocr_lib_reductionEager PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
-target_compile_options(ocr_lib_reductionEager PRIVATE ${BENCH_C_OPT})
-target_compile_definitions(ocr_lib_reductionEager PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
-target_include_directories(ocr_lib_reductionEager PRIVATE ${BENCH_OCR_OPTIONS_DIR})
-
-# --- timer library (x86) ---
 add_library(ocr_lib_timer OBJECT
     ${OCR_LIBS_ROOT}/timer/x86/timer.c
 )
@@ -172,21 +154,6 @@ set_target_properties(ocr_lib_reductionTwoLevel_ocrvx PROPERTIES C_STANDARD 11 C
 target_compile_options(ocr_lib_reductionTwoLevel_ocrvx PRIVATE ${BENCH_C_OPT}
     "-include" "${OCRVX_COMPAT_H}")
 target_compile_definitions(ocr_lib_reductionTwoLevel_ocrvx PRIVATE ${OCR_EXT_DEFINES} "OCR_TYPE_H=vdm.h")
-
-add_library(ocr_lib_reductionEager_ocrvx OBJECT
-    ${OCR_LIBS_ROOT}/reductionEager/reductionEager.c
-)
-target_include_directories(ocr_lib_reductionEager_ocrvx PUBLIC
-    ${OCR_LIBS_ROOT}/reductionEager
-)
-target_include_directories(ocr_lib_reductionEager_ocrvx PRIVATE
-    ${OCR_LIBS_ROOT}/macros/macros
-    ${OCRVX_OCR_INC}
-)
-set_target_properties(ocr_lib_reductionEager_ocrvx PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
-target_compile_options(ocr_lib_reductionEager_ocrvx PRIVATE ${BENCH_C_OPT}
-    "-include" "${OCRVX_COMPAT_H}")
-target_compile_definitions(ocr_lib_reductionEager_ocrvx PRIVATE ${OCR_EXT_DEFINES} "OCR_TYPE_H=vdm.h")
 
 add_library(ocr_lib_timer_ocrvx OBJECT
     ${OCR_LIBS_ROOT}/timer/x86/timer.c
@@ -683,25 +650,6 @@ add_benchmark_app(NAME hpcg_intel
     EXTRA_LINK_LIBS m
 )
 
-add_benchmark_app(NAME hpcg_intel_Eager
-    DIR hpcg/refactored/ocr/intel-Eager
-    SOURCES hpcgEager.c timers.c
-    LIBS reductionEager timer
-    EXTRA_LINK_LIBS m
-)
-
-# hpcg Eager-Collective uses ocrAddDependenceSlot and ocrEventCollectiveSatisfySlot.
-# These rely on MULTI_OUTPUT_SLOT + COLLECTIVE_EVT OCR extensions.  Both are
-# now enabled in the xsocr config (ocr_config_x86.h) and the oddContribs
-# vendor bug in hc-event.c is fixed, so both backends build and run this app.
-add_benchmark_app(NAME hpcg_intel_Eager_Collective
-    DIR hpcg/refactored/ocr/intel-Eager-Collective
-    SOURCES hpcgEagerRedevt.c timers.c
-    LIBS timer
-    EXTRA_DEFINES ENABLE_EXTENSION_COLLECTIVE_EVT ENABLE_EXTENSION_MULTI_OUTPUT_SLOT
-    EXTRA_LINK_LIBS m
-)
-
 # ==========================================================================
 # Tier 7: Stencil variants
 # ==========================================================================
@@ -862,7 +810,7 @@ add_benchmark_app(NAME miniAMR_intel_bryan
 )
 
 add_benchmark_app(NAME miniAMR_intel_chandra
-    EXTRA_DEFINES OCR_APP_DESTROY_REDUCTION_TEMPS OCR_APP_COUNTED_OEVT
+    EXTRA_DEFINES OCR_APP_COUNTED_OEVT
     DIR miniAMR/refactored/ocr/intel-chandra
     SOURCES main.c init.c check_sum.c refine.c move.c block.c comm_refine.c
     comm_parent.c driver.c comm.c comm_utils.c stencil.c util.c

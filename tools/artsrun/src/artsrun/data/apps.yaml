@@ -412,33 +412,45 @@ apps:
     marker: 'final deviation'
     scalar_re: 'final deviation:\s*([\-+0-9.eE]+)'
     tolerance: 0.0001
-    expect: '0.001279'
-    expect_args: ['1', '1', '1', '16', '5']
-    args: ['8', '4', '4', '64', '10']
-
-  hpcg_intel_Eager:
-    binary: hpcg_intel_Eager
-    class: spmd
-    provenance: 'HPCG; eager-datablock reduction variant'
-    marker: 'final deviation'
-    scalar_re: 'final deviation:\s*([\-+0-9.eE]+)'
-    tolerance: 0.0001
-    expect: '0.001279'
-    expect_args: ['1', '1', '1', '16', '5']
-    args: ['4', '4', '3', '64', '15']
-    default_enabled: false
-
-  hpcg_intel_Eager_Collective:
-    binary: hpcg_intel_Eager_Collective
-    class: spmd
-    provenance: 'HPCG; runtime collective-event reduction variant'
-    marker: 'final deviation'
-    scalar_re: 'final deviation:\s*([\-+0-9.eE]+)'
-    tolerance: 0.0001
-    expect: '0.001279'
-    expect_args: ['1', '1', '1', '16', '5']
-    args: ['8', '4', '4', '64', '10']
-
+    expect: '24636871.685191'
+    expect_args: ['16', '16', '16', '32', '50']
+    # The first three arguments are the rank grid and the fourth the edge of the
+    # cube each rank owns; the fifth is the CG iteration cap, which the README
+    # fixes at 50 and the program caps again in HPCGMAXITER.  T is that cap's
+    # default, not a timestep count -- its comment used to say otherwise and this
+    # catalog believed it.
+    #
+    # The edge is where this row was mis-sized.  A multigrid of four levels
+    # halves the edge four times, so m must be a multiple of 16 and 16 is the
+    # floor; m is therefore also the granularity, since a rank computes m^3 and
+    # exchanges 6m^2 -- the ratio is 6/m.  At the floor the exchange is not
+    # covered and the row falls apart at the first node boundary (6.3 s at one
+    # node against 32.9 s at two).  At m = 32 it scales monotonically instead:
+    # 524.7 / 288.6 / 188.4 / 130.7 s over 1-8 nodes, 4.02x, holding 87-141 GB.
+    # The previous cycle read that backwards -- it saw the collapse at m = 16,
+    # called the row an anti-scaler, and used the 10-30 s window that judgment
+    # implies to keep the edge AT the floor.
+    #
+    # So this is a strong scaler and is calibrated against ~150 s: the grid and
+    # edge above reach it at 155.2 s, 160.9 s and 159.0 s across the three
+    # coherence families, holding 125 GB.  The 4096 tiles are 1.19x the largest
+    # geometry's 3456 workers -- above the width floor but not by much, and there
+    # is no room to raise it: work is tiles x m^3 x maxIter, the iteration count
+    # is the benchmark's own and the edge cannot go below 32 without losing the
+    # scaling, so more tiles only leave the window.  Granularity wins that trade
+    # because without it the row does not scale at all.
+    #
+    # There is no hinted tier.  A consumer home for the per-exchange halo blocks
+    # was written and measured: at m = 16 it is worth 1.09-1.21x and the gain
+    # grows with node count, but at m = 32 it is neutral to three digits -- it
+    # was mitigating the cost that correct sizing removes outright, not fixing a
+    # placement defect.  The application already places well on its own: an
+    # unguarded AFFINITY define pins every EDT to its rank's domain and the
+    # rank->domain map is a recursive bisection of the 3D grid (getMyPDc), so
+    # the domains hold compact boxes.  A reduction tree renumbered into domain
+    # order was also tried and lost (1.00x / 0.92x / 0.84x at 2/4/8 nodes).
+    # No restructured tier either: the row scales.
+    args: ['16', '16', '16', '32', '50']
   hpgmg:
     binary: hpgmg
     class: task

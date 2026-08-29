@@ -155,21 +155,86 @@ block, GUID ranges, `finalOnceEVT`, `wrapUpEdt`) are NULL-hinted, on rank 0.
 
 ## Sizing
 
-`npx·npy·npz` sets parallel width and nothing else; `m` sets per-tile grain
-(`∝m³` flops and bytes, `∝m²` halo) and the whole memory footprint; `maxIter`
-sets chain length and wall time linearly. Because a tile is a serial chain,
-**pick `N` first**: `N ≥ 2×(nodes × workers)` keeps every deque fed, and `N`
-should factor so bisection lands compact blocks (powers of two per axis are
-ideal). Then pick `m` for grain — `m=64` gives ~107 MiB and ~14 Mflop per
-level-0 smoother sweep per tile, enough that per-EDT overhead is not the story;
-`m=16` (1.7 MiB) turns the app into a pure message-rate probe. Memory is
-`≈427·m³·N` bytes and is the real ceiling.
+`npx·npy·npz` sets the number of tiles and `m` the edge of the cube each tile
+owns.  Memory is `≈427·m³·N` bytes.  `m` is not only a size: a tile computes
+`∝m³` and exchanges `∝m²`, so **`m` is the granularity**, and the ratio the
+runtime has to cover is `6/m`.
 
-Worked: 1 node × 15 workers → `N=128`, `m=32` (≈14 MiB/tile, 1.7 GiB) runs in
-seconds; 8 nodes × 120 workers wants `N ≥ 240` unless `m` is large enough that
-halo latency dominates anyway. The catalog's `8 4 4 64 10` fixes `N=128`,
-`m=64` — 13.7 GiB resident, 128 tiles across 15…120 workers, so 1 node is 8.5
-tiles per worker and 8 nodes is 1.07: strong scaling is a race between
-shrinking per-node compute and a halo surface that shrinks only as fast as the
-block partition allows. Raising `m` rather than `N` buys wall time without
-eroding the 8-node width.
+Four levels of multigrid halve the edge four times, so `m` must be a multiple
+of 16 (the program rounds up) and 16 is the floor -- the coarsest grain the
+program can be given.  That floor is where the previous cycle left this row, and
+it is why the row looked like something it is not:
+
+| | `8 8 8 16 50` | `8 8 8 32 50` |
+|---|---|---|
+| 1 node x 15 workers | 6.31 s | 50.19 s |
+| 2 nodes | 32.86 s | 45.49 s |
+| | **0.19x -- collapses** | **1.10x -- scales** |
+
+Same tile count, same number of exchanged blocks, four times the face.  At the
+floor the exchange is not covered by the compute and the row falls apart at the
+first node boundary; one step above it, the row scales.  The earlier reading ran
+the causation backwards -- it saw the collapse at `m = 16`, concluded the row was
+an anti-scaler, and then used the 10-30 s window that judgment implies to keep
+`m` at the floor.
+
+At the campaign's own arguments the row is a strong scaler, and the gain does
+not run out by eight nodes:
+
+| geometry | `16 16 16 32 50` | cumulative | per doubling |
+|---|---|---|---|
+| 1 node x 15 workers | 524.7 s | 1.00x | -- |
+| 2 nodes | 288.6 s | 1.82x | 1.82x |
+| 4 nodes | 188.4 s | 2.78x | 1.53x |
+| 8 nodes | 130.7 s | **4.02x** | 1.44x |
+
+All four give the same deviation, holding 87-141 GB.  So it is calibrated
+against ~150 s, which those arguments reach at 155.2 s, 160.9 s and 159.0 s on
+the three coherence families, holding 125 GB at the anchor.
+
+A trend read at a smaller grid understates this row badly -- `8 8 8 32 50` gives
+2.05x over the same eight nodes against 4.02x here.  The reason is the same
+surface-to-volume ratio that makes `m` matter: at two nodes the bisection puts
+25% of an 8³ grid's tiles on the cut plane against 12.5% of a 16³ one, so the
+small grid is the least favourable size this application has.
+
+The 4096 tiles are 1.19x the largest geometry's 3456 workers -- above the width
+floor, but not by much, and there is no room to raise it.  Work is
+`tiles · m³ · maxIter`; the iteration count is the benchmark's own 50 and the
+edge cannot go below 32 without losing the scaling, so more tiles only leave the
+window.  Granularity wins that trade, because without it the row does not scale
+at all.
+
+`maxIter` stays at the application's own cap of 50: in HPCG the CG iteration
+count is fixed by the algorithm and the benchmark's variable is the grid.  `T`
+is that cap's default when the run gives no iteration argument -- its comment
+used to read "number of time steps", which is what led this catalog to describe
+the run as 50 timesteps of 50 iterations.
+
+## Placement (hinted)
+
+There is no hinted tier, and the source carries no placement guard.  A layer was
+written and measured before that conclusion: a consumer home for the per-exchange
+halo blocks, computed once per direction from the neighbour's rank, applied only
+to directions that actually leave the domain.
+
+At `m = 16` it pays -- 1.09x at two nodes, 1.11x at four, 1.21x at eight, the
+gain growing with node count exactly as more crossings would predict.  At
+`m = 32` it is neutral to three digits (50.21 / 45.54 / 31.38 / 24.63 s against
+50.19 / 45.49 / 31.35 / 24.44 s).  The layer was mitigating the cost that correct
+sizing removes outright, not fixing a placement defect, so it is not kept.
+
+The application already places itself well, which is why little was left to take.
+An unguarded `AFFINITY` define pins every EDT to its rank's domain, and the
+rank→domain map is a recursive bisection of the 3D grid (`getMyPDc`, splitting
+the longest axis), so each domain holds a compact box rather than a stride of
+scattered ranks.  A reduction tree renumbered into domain order was also tried --
+the library builds its tree on the participant index while the ranks are placed
+by bisection, so the two maps are unrelated -- and it lost: 1.00x, 0.92x, 0.84x
+at two, four and eight nodes, worsening with node count, since domain-ordered
+numbering concentrates the tree's upper levels in one domain.
+
+There is no restructured tier either: the row scales.  The structural fix a
+restructure would bring is the one `hpgmg_dist` made -- face buffers created once
+at init and reused instead of a fresh datablock per exchange -- and this row does
+not need it.
