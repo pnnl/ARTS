@@ -767,10 +767,45 @@ apps:
     marker: 'PASS checksum'
     scalar_re: 'PASS checksum\s*=\s*([\-+0-9.eE]+)'
     tolerance: 1e-08
-    expect: '228'
-    expect_args: ['2', '10', '30', '5']
-    args: ['128', '256', '100', '1400']
-    hinted: true
+    expect: '44706783.000000'
+    expect_args: ['6912', '1347840', '6913', '32']
+    # The hinted tier is DISCARDED, measured rather than assumed: 0.87x at two
+    # nodes over five interleaved runs a side, 0.99x at four, 0.97x at eight.
+    # What the layer homed is the per-phase boundary block, at its one consumer,
+    # which helps only a handoff that crosses a policy domain -- and the
+    # application's own unguarded `#define BLOCK` already lays its ranks out
+    # contiguously, so almost none do.  Forcing the strided map instead (the
+    # branch BLOCK turns off) costs 11x at one rank per worker, which is the
+    # size of the locality the application had already claimed for itself.  The
+    # resident blocks are not a surface either: homing `data` and `private`
+    # explicitly measures the same as first touch, because the rank's own init
+    # task creates them.  Nothing is left for a hint to take, so the source
+    # carries no placement guard and no hinted target is built.
+    #
+    # p is the number of virtual ranks, an application-level decomposition knob
+    # with no relation to the worker threads arts.cfg starts.  The wavefront's
+    # width is min(p, n-1) -- rank i phase j waits on rank i-1 phase j and on
+    # its own phase j-1 -- and its average over a sweep is p(n-1)/(p+n-2), so
+    # both p and the row count have to clear the worker total, not just one of
+    # them.  p = n-1 is where they balance: for a given array it buys the most
+    # width.  At p = 6912 = 2x the largest geometry's 3456 workers, with
+    # n = p+1, the peak width is 2.00x the workers and the AVERAGE is 1.00x --
+    # the bound met over the whole sweep, fill and drain included, rather than
+    # at the peak alone.  Columns stay at the application's own m, so raising p
+    # costs no memory in the array; what it does cost is live boundary blocks,
+    # since the channel's maxGen lets a producer run n generations ahead
+    # (159 GB here, 271 GB at p = 6912 with n = 10369, past the 256 GB ceiling).
+    # The catalog ran `3456 8192 50 2100` before this cycle -- 2.4 columns a
+    # rank and a width of 49 against 3456 workers, a latency probe rather than
+    # the benchmark -- and then `3456 1347840 500 515`, whose width was 499
+    # because the row count, not p, was the binding one.
+    # gf stays 1: the README calls any other value cheating and negates the
+    # reported flop rate.  This is the one row of its cycle that strong-scales,
+    # and the gain per doubling grows rather than fades -- 1.17x, 1.66x, 1.81x,
+    # 3.50x over eight nodes -- so it is calibrated against ~150 s, which the
+    # iteration count reaches at t = 32: 146.2 s, 145.3 s and 152.8 s across the
+    # three families, holding 159-175 GB.
+    args: ['6912', '1347840', '6913', '32']
 
   printf:
     binary: printf

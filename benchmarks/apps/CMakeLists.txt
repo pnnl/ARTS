@@ -782,11 +782,16 @@ add_benchmark_app(NAME Stencil2D_intel_channelEVTs
 # Tier 8: P2P and Reduction
 # ==========================================================================
 
+# The placement layer in this source homes the per-phase boundary block at its
+# consumer.  It was measured and does not pay -- the application already lays
+# its ranks out contiguously, so almost no handoff crosses a domain for the
+# home to help, while the hint is paid on every phase of every rank.  The
+# hinted target is therefore not built; the layer stays behind its guard with
+# the reasoning recorded there.
 add_benchmark_app(NAME p2p
     DIR p2p/refactored/ocr/intel
     SOURCES p2p.c wtime.c
     LIBS reduction
-    HINTED_PLACEMENT
 )
 
 add_benchmark_app(NAME reduction_intel

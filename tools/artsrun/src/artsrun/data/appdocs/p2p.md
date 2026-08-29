@@ -123,36 +123,111 @@ so `bufferOutDBK` homes at the sender (creator/first-touch) and the receiving
 rank's acquire is always a one-hop remote fetch from its immediate left
 neighbor — exactly the point-to-point traffic the benchmark is named for.
 
-## Placement (hinted)
-
-As-born already ships real placement (unguarded `BLOCK`/`AFFINITY` defines pin
-each rank's chain EDT to its PD; see Parameters).  What it does not place is
-the 16-byte boundary block each rank mints per generation for its right
-neighbour — `NULL_HINT` homes it on the CREATOR, so every consumer acquire
-pays a remote directory round on the critical path of the chain.
-
-The layer adds exactly one thing: a consumer-home `OCR_HINT_DB_AFFINITY` for
-those boundary blocks (`p2pBufHint`).  Each rank has a single fixed consumer
-(myRank+1, wrapping to 0), so the hint is invariant and computed once in
-`initp2pEdt`, mirroring realMain's BLOCK/WRAP rank->PD map.  This is the
-measured one-shot/high-frequency/small-DB exception to the EDT-only rule
-(2026-07-10 A/B: consumer-home recovered 2n 7.4x / 4n 6.3x, and consumer beats
-producer-home by ~35%).
-
 ## Sizing
 
-`p` sets the pipeline's parallel width and its critical-path floor (`~p`
-warm-up hops); `t` and `w` (driven by `n`, `gf`) set the steady-state length.
-To saturate `W` workers, want `p` close to or above `W` (`p ≈ W` keeps
-roughly one rank per worker at steady state) — the calibrated `p=128`
-slightly oversubscribes even the 8-node×15-worker profile (120 workers), by
-design (BLOCK placement then packs more than one rank onto some PDs). `m`
-(total columns) mostly sets per-rank grain (`k ≈ m/p`) and is cheap to move;
-`n`, `t`, `gf` set generation count and thus wall time roughly linearly
-(`G = (t+1)·⌈(n-1)/gf⌉`) — `gf=1` maximizes hop count (and thus the latency
-signal), so it should not be raised except to deliberately trade fewer,
-larger messages for less synchronization overhead. 1 node × 15 workers:
-`p ≈ 15`, keep `t`/`n` small for a quick run. 8 nodes × 120 workers: `p ≈
-120-128` (matches calibrated), `t=1400` gives a multi-second-to-minutes run.
-Memory is negligible throughout — every DB is at most a few hundred bytes per
-rank, and `bufferOutDBK` instances are transient and tiny.
+`p` is the number of virtual ranks the program decomposes into.  It is an
+application-level knob with no relation to the worker threads `arts.cfg` starts,
+so it is free to choose; what constrains it is memory, not a rule.
+
+The wavefront's width is `min(p, n-1)`: rank `i` phase `j` waits on rank `i-1`
+phase `j` and on its own phase `j-1`, so the runnable set is the diagonal and
+**both** `p` and the row count cap it.  The catalog had this wrong twice --
+first at `3456 8192 50 2100` (width 49) and then at `3456 1347840 500 515`,
+where `p` was read as "the pipeline's width" while the 500 rows held the real
+width to 499 against 3456 workers.
+
+Averaged over a sweep the width is `p(n-1)/(p+n-2)`, because half of every sweep
+is the pipeline filling and draining.  `p = n-1` is where the two caps balance,
+and for a given array it buys the most width.  At `p = 6912` -- twice the
+largest geometry's 3456 workers -- with `n = p+1`:
+
+| | |
+|---|---|
+| peak width `min(p, n-1)` | 6912 = **2.00x** the workers |
+| average width `p(n-1)/(p+n-2)` | 3456 = **1.00x** the workers |
+| columns a rank `m/p` | 195 |
+| resident | 159 GB at the one-node anchor |
+
+so the bound is met across the whole sweep, fill and drain included, rather than
+touched at the peak alone.
+
+Columns stay at the application's own `m = 1,347,840`, so raising `p` costs the
+array nothing -- it only divides it into more, smaller slices.  What raising `p`
+*does* cost is live boundary blocks: the channel's `maxGen` is `n`, so a producer
+may run a full sweep ahead and its unconsumed 16-byte blocks accumulate, one
+runtime object each.  That term, not the array, is what puts `p = 6912` with
+`n = 10369` at 271 GB, past the 256 GB ceiling, while the same `p` at `n = 6913`
+holds 159 GB.
+
+`gf` stays 1: the README calls any other value cheating and negates the flop
+rate the program reports.
+
+This is the one strong scaler of its cycle, and it does not run out on the way to
+eight nodes -- the gain per doubling grows rather than fades.  Measured at the
+arguments the campaign itself runs, so there is no short-run proxy to correct
+for (two runs a cell, all eight giving the same checksum):
+
+| geometry | time | cumulative | per doubling |
+|---|---|---|---|
+| 1 node x 15 workers | 389.8 / 390.4 s | 1.00x | -- |
+| 2 nodes | 331.4 / 336.8 s | 1.17x | 1.17x |
+| 4 nodes | 202.0 / 200.9 s | 1.94x | 1.66x |
+| 8 nodes | 111.3 / 111.6 s | **3.50x** | **1.81x** |
+
+which is what a pipeline does as it widens: the fill is a fixed number of phases,
+so it costs a smaller share of a shorter run.  From two nodes to eight that is
+3.00x on 4x the workers, 75% efficiency; the residual is a per-task cost that
+grows with the node count and has not been isolated to a mechanism -- it is not
+the boundary crossings, which stay under one percent of handoffs at every
+geometry, and not the fill, which is a node-count-independent constant.
+
+So the row is calibrated against ~150 s rather than 10-30 s, and the iteration
+count reaches it at `t = 32`: 146.2 s, 145.3 s and 152.8 s on the three coherence
+families.
+
+A short run is not a smaller version of this one.  Splitting end-to-end time into
+a fixed and a per-timestep part put setup at more than half the run at two
+timesteps, and setup is memory-bandwidth bound, so it scales *better* than the
+wavefront and inflates any trend read there.  That is why the table above is
+measured at `t = 32` and not at a cheaper length.
+
+There is no restructured tier either, and the reason is the same measurement: a
+row that scales does not need one.  The structure a restructure would attack is
+the boundary handoff -- one block of 16 bytes per phase per rank -- and the knob
+that batches them exists already: the group factor widens a block to `(gf+1)*8`
+bytes and divides the phase count by `gf`.  The PRK README calls a group factor
+other than 1 cheating, so the one aggregation available here is the one the
+benchmark forbids.
+
+## Placement (hinted)
+
+There is no hinted tier, and no placement guard in the source.  The layer that
+was tried homed each per-phase boundary block at its one consumer, and it was
+measured and **discarded**: 0.87x at two nodes over five interleaved runs a
+side, 0.99x at four, 0.97x at eight.
+
+The reason is that the application had already claimed the locality.  `p2p.c`
+carries an unguarded `#define BLOCK`, so ranks go to policy domains in
+contiguous runs rather than the strided map the `#else` branch would give.  That
+choice is worth measuring: forcing the strided map costs **11x** at one rank per
+worker (428 s against 37.7 s).  With the contiguous map only one handoff per
+domain crosses a boundary at all.
+
+A consumer home therefore helps only that handful of handoffs while being paid
+on every phase of every rank.  Holding the map fixed and varying only the home,
+at one rank per worker and fifteen ranks a domain:
+
+| map | producer home | consumer home |
+|---|---|---|
+| strided | 428.3 / 431.0 s | 303.1 / 305.8 s |
+| contiguous (base) | 37.7 / 38.3 s | 30.9 / 31.5 s |
+
+so the home is worth 1.22x-1.41x *there*, where one handoff in fifteen crosses.
+At the catalog's shape far fewer do, and the balance goes the other way -- which
+is what the two-node cell measures.
+
+The resident blocks are not a placement surface either: homing `data` and
+`private` explicitly measures the same as leaving them to first touch, because
+the rank's own init task is what creates them.  A rank's EDT chain is already
+pinned to its domain by the application's `AFFINITY` define.  Nothing is left, so
+the source carries no guard and the build produces no hinted target.
