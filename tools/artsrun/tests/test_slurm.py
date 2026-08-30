@@ -1,18 +1,18 @@
-"""Which cells get an srun wrapper in a Slurm cell script, and which don't --
-and, for the ones that don't, that mpirun is told to place one rank per
-node rather than packing them onto the first one.
+"""How a Slurm cell script launches its ranks, and what the local launcher
+builds -- after the envelope change.
 
-ARTS has no rank launcher of its own -- srun is what starts the one process
-per node the job needs.  XSOCR and OCRVX are MPI programs and already carry
-their own launcher (mpirun) in build_command's output, reading the Slurm
-allocation from its environment natively; wrapping that in srun a second
-time would start a copy of mpirun on every node, each spawning its own full
-set of ranks.  But mpirun's own default placement is not "one rank per
-node" either -- both major implementations fill the first node to its
-core/slot count before moving to the next -- so the generated command must
-say so explicitly: `-ppn 1` under MPICH's Hydra, `--map-by ppr:1:node`
-under Open MPI.  See docs cited in the ROUND note in
-research/appdocs/ledger.md for the primary sources.
+Under Slurm every kind launches through srun inside the cell's own sbatch
+script: srun spawns arts's one process per node, and it is how a
+site-PMI-integrated MPI launches the reference ranks (mpirun inside the
+allocation would bury them in launcher-managed step cgroups of its own).
+--cpus-per-task is explicit on the step because srun stopped inheriting it
+from the allocation (Slurm >= 22.05) and arts reads its width from exactly
+that value; --cpu-bind=none keeps the envelope wrapper the only affinity
+actor for the references.  A declared post-verify hook wraps OUTSIDE the
+srun line so it runs once per cell, not once per rank.
+
+Locally, both references run inside the envelope wrapper; mpirun appears
+wherever there are ranks to distribute and always carries -bind-to none.
 """
 
 from __future__ import annotations
@@ -25,9 +25,11 @@ from artsrun.model.benchset import ResolvedApp
 from artsrun.model.catalog import AppClass, Version
 from artsrun.model.plane import RuntimeKind, SelectionEntry
 from artsrun.model.profile import Profile
-from artsrun.run.command import build_command, mpirun
+from artsrun.paths import envelope_script
+from artsrun.run.command import build_command
 from artsrun.run.slurm import job_script
-from artsrun.run.types import Cell
+
+ENV = str(envelope_script())
 
 
 def _entry(kind: RuntimeKind) -> SelectionEntry:
@@ -36,20 +38,23 @@ def _entry(kind: RuntimeKind) -> SelectionEntry:
     )
 
 
-def _cell(kind: RuntimeKind, nodes: int, cfg: Path | None = None) -> Cell:
+def _cell(kind: RuntimeKind, nodes: int, cfg: Path | None = None,
+          post_verify: str | None = None):
+    from artsrun.run.types import Cell
+
     app = ResolvedApp(
         name="app", version=Version.BASE, binary="app", cls=AppClass.TASK,
-        marker="X", scalar_re="X",
+        marker="X", scalar_re="X", post_verify=post_verify,
     )
     return Cell(entry=_entry(kind), app=app, nodes=nodes, repeat=1,
                 binary=Path("/opt/bin/app"), args=["12", "4"], timeout_s=60,
                 cfg=cfg)
 
 
-def _slurm_profile() -> Profile:
+def _slurm_profile(**slurm) -> Profile:
     return Profile.model_validate({
         "name": "t", "launcher": "slurm", "nodes": [1, 2, 4],
-        "workers": 15, "progress": 1, "ports": [25000], "slurm": {},
+        "workers": 15, "progress": 1, "ports": [25000], "slurm": slurm,
     })
 
 
@@ -68,68 +73,78 @@ def _openmpi(monkeypatch):
     monkeypatch.setattr("artsrun.run.command._mpi_probe", lambda: "openmpi")
 
 
-# -- the flavor-detection unit itself: exact flag shape, per flavor ---------
-
-@pytest.mark.parametrize("flavor,flag,expected", [
-    ("mpich", ["-ppn", "1"], ["mpirun", "-ppn", "1", "-n", "4"]),
-    ("openmpi", ["--map-by", "ppr:1:node"],
-     ["mpirun", "--oversubscribe", "--map-by", "ppr:1:node", "-n", "4"]),
-])
-def test_mpirun_one_per_node_follows_the_detected_flavor(
-        monkeypatch, flavor, flag, expected):
-    monkeypatch.setattr("artsrun.run.command._mpi_probe", lambda: flavor)
-    assert mpirun(4, one_per_node=True) == expected
-    assert mpirun(4, one_per_node=False)[-2:] == ["-n", "4"]
-    assert not any(f in mpirun(4, one_per_node=False) for f in flag)
-
-
-# -- slurm scripts: one launcher, never two, and one rank per node ----------
+# -- slurm scripts: srun for every kind, never mpirun -----------------------
 
 def test_an_arts_slurm_script_has_exactly_one_srun_and_no_mpirun():
     profile = _slurm_profile()
     cell = _cell(RuntimeKind.ARTS, nodes=4)
     script = job_script(cell, profile, Path("/log/cell.rc"))
-    assert script.count("srun") == 1
+    # The echo line quotes the launch, so srun appears twice in the script
+    # text but is executed once.
     assert "mpirun" not in script
-    assert f"srun --ntasks-per-node=1 -N {cell.nodes}" in script
+    assert f"srun --ntasks-per-node=1 -N 4 --cpus-per-task=16 {cell.binary}" \
+        in script
 
 
-@pytest.mark.parametrize("flavor,placement", [
-    ("mpich", "-ppn 1 -n 4"),
-    ("openmpi", "--oversubscribe --map-by ppr:1:node -n 4"),
-])
-def test_an_xsocr_slurm_script_runs_mpirun_once_pinned_one_per_node(
-        monkeypatch, flavor, placement):
-    monkeypatch.setattr("artsrun.run.command._mpi_probe", lambda: flavor)
+@pytest.mark.parametrize("nodes", [1, 4])
+def test_an_xsocr_slurm_script_runs_srun_with_the_envelope(nodes):
     profile = _slurm_profile()
-    cfg = Path("/opt/cfg/4n.cfg")
-    cell = _cell(RuntimeKind.XSOCR, nodes=4, cfg=cfg)
+    cfg = Path(f"/opt/cfg/{nodes}n.cfg")
+    cell = _cell(RuntimeKind.XSOCR, nodes=nodes, cfg=cfg)
     script = job_script(cell, profile, Path("/log/cell.rc"))
-    assert "srun" not in script
-    assert script.count("mpirun") == 1
-    assert f"mpirun {placement} {cell.binary}" in script
-    assert f"-ocr:cfg {cfg}" in script
+    assert "mpirun" not in script
+    assert (f"srun -N {nodes} -n {nodes} --ntasks-per-node=1 "
+            f"--cpus-per-task=16 --cpu-bind=none "
+            f"bash {ENV} 16 {nodes} fixed -- {cell.binary} "
+            f"-ocr:cfg {cfg} 12 4") in script
+    assert "--label" not in script
 
 
-@pytest.mark.parametrize("flavor,placement", [
-    ("mpich", "-ppn 1 -n 4"),
-    ("openmpi", "--oversubscribe --map-by ppr:1:node -n 4"),
-])
-def test_an_ocrvx_multinode_slurm_script_runs_mpirun_once_pinned_one_per_node(
-        monkeypatch, flavor, placement):
-    monkeypatch.setattr("artsrun.run.command._mpi_probe", lambda: flavor)
+@pytest.mark.parametrize("nodes", [1, 4])
+def test_an_ocrvx_slurm_script_runs_srun_with_the_envelope(nodes):
     profile = _slurm_profile()
-    cell = _cell(RuntimeKind.OCRVX, nodes=4)
+    cell = _cell(RuntimeKind.OCRVX, nodes=nodes)
     script = job_script(cell, profile, Path("/log/cell.rc"))
-    assert "srun" not in script
-    assert script.count("mpirun") == 1
-    assert f"mpirun {placement} {cell.binary}" in script
+    assert "mpirun" not in script
+    assert (f"srun -N {nodes} -n {nodes} --ntasks-per-node=1 "
+            f"--cpus-per-task=16 --cpu-bind=none "
+            f"bash {ENV} 16 {nodes} fixed -- {cell.binary} 12 4") in script
     assert "export OCRVX_NUM_THREADS=15" in script
+    assert "export MV2_ENABLE_AFFINITY=0" in script
 
 
-# -- local launcher: byte-identical to before this change -------------------
-# Pinned to the mpich probe result so these lock the expected shape
-# regardless of which MPI happens to be on the host running the suite.
+def test_slurm_mpi_setting_selects_the_pmi_plugin():
+    profile = _slurm_profile(mpi="pmi2")
+    cell = _cell(RuntimeKind.XSOCR, nodes=2, cfg=Path("/opt/cfg/2n.cfg"))
+    script = job_script(cell, profile, Path("/log/cell.rc"))
+    assert "--cpu-bind=none --mpi=pmi2 bash" in script
+    # arts never consults PMI; the flag is a reference-cell concern only.
+    arts = job_script(_cell(RuntimeKind.ARTS, nodes=2), profile,
+                      Path("/log/cell.rc"))
+    assert "--mpi" not in arts
+
+
+def test_post_verify_wraps_outside_srun():
+    # The hook runs once on the batch node; inside srun it would run once
+    # per rank, concurrently, in the same working directory.
+    profile = _slurm_profile()
+    cell = _cell(RuntimeKind.XSOCR, nodes=2, cfg=Path("/opt/cfg/2n.cfg"),
+                 post_verify="cmp out.txt gold.txt")
+    script = job_script(cell, profile, Path("/log/cell.rc"))
+    line = next(l for l in script.splitlines() if l.startswith("timeout"))
+    assert "sh -c" in line
+    assert line.index("srun") > line.index("sh -c")
+    assert "cmp out.txt gold.txt" in line
+
+
+def test_job_script_echoes_its_launch_line():
+    profile = _slurm_profile()
+    cell = _cell(RuntimeKind.ARTS, nodes=2)
+    script = job_script(cell, profile, Path("/log/cell.rc"))
+    assert "printf '%s\\n' '$ srun" in script
+
+
+# -- local launcher: envelope everywhere, mpirun where ranks distribute -----
 
 def test_local_arts_command_is_unchanged(monkeypatch):
     _mpich(monkeypatch)
@@ -138,46 +153,49 @@ def test_local_arts_command_is_unchanged(monkeypatch):
     assert build_command(cell, profile) == ["/opt/bin/app", "12", "4"]
 
 
-def test_local_xsocr_command_is_unchanged(monkeypatch):
+def test_local_xsocr_command_shapes(monkeypatch):
     _mpich(monkeypatch)
     profile = _local_profile()
     cfg = Path("/opt/cfg/1n.cfg")
     single = build_command(_cell(RuntimeKind.XSOCR, nodes=1, cfg=cfg), profile)
     assert single == [
-        "mpirun", "-n", "1", "/opt/bin/app", "-ocr:cfg", str(cfg), "12", "4",
+        "mpirun", "-bind-to", "none", "-n", "1",
+        "bash", ENV, "16", "1", "fixed", "--",
+        "/opt/bin/app", "-ocr:cfg", str(cfg), "12", "4",
     ]
 
     cfg4 = Path("/opt/cfg/4n.cfg")
     multi = build_command(_cell(RuntimeKind.XSOCR, nodes=4, cfg=cfg4), profile)
     assert multi == [
-        "mpirun", "-n", "4", "bash", "-c",
-        'r=${PMI_RANK:-${OMPI_COMM_WORLD_RANK:-0}}; s=$((r*16)); '
-        'e=$((s+16-1)); exec taskset -c $s-$e "$@"',
-        "_", "/opt/bin/app", "-ocr:cfg", str(cfg4), "12", "4",
+        "mpirun", "-bind-to", "none", "-n", "4",
+        "bash", ENV, "16", "4", "rank", "--",
+        "/opt/bin/app", "-ocr:cfg", str(cfg4), "12", "4",
     ]
 
 
-def test_local_ocrvx_command_is_unchanged(monkeypatch):
+def test_local_ocrvx_command_shapes(monkeypatch):
     _mpich(monkeypatch)
     profile = _local_profile()
     single = build_command(_cell(RuntimeKind.OCRVX, nodes=1), profile)
-    assert single == ["taskset", "-c", "0-15", "/opt/bin/app", "12", "4"]
+    # A single rank needs no launcher: the envelope wrapper does the taskset
+    # itself, after verifying the block.
+    assert single == [
+        "bash", ENV, "16", "1", "fixed", "--", "/opt/bin/app", "12", "4",
+    ]
 
     multi = build_command(_cell(RuntimeKind.OCRVX, nodes=4), profile)
     assert multi == [
-        "mpirun", "-n", "4", "bash", "-c",
-        'r=${PMI_RANK:-${OMPI_COMM_WORLD_RANK:-0}}; s=$((r*16)); '
-        'e=$((s+16-1)); exec taskset -c $s-$e "$@"',
-        "_", "/opt/bin/app", "12", "4",
+        "mpirun", "-bind-to", "none", "-n", "4",
+        "bash", ENV, "16", "4", "rank", "--", "/opt/bin/app", "12", "4",
     ]
 
 
-def test_local_command_never_gets_the_one_per_node_flag_even_under_openmpi(
-        monkeypatch):
-    # The flavor probe is orthogonal to the launcher: only the launcher
-    # decides whether ranks are meant to be one-per-node in the first place.
+def test_local_openmpi_gets_oversubscribe_and_bind_to_none(monkeypatch):
     _openmpi(monkeypatch)
     profile = _local_profile()
     multi = build_command(_cell(RuntimeKind.OCRVX, nodes=4), profile)
+    assert multi[:5] == ["mpirun", "--oversubscribe", "--bind-to", "none", "-n"]
+    # The one-per-node flag belongs to remote launchers: locally ranks are
+    # meant to colocate in their taskset blocks.
     assert "--map-by" not in multi
     assert "ppr:1:node" not in multi

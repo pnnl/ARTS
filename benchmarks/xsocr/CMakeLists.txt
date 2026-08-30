@@ -89,6 +89,21 @@ target_compile_definitions(ocr_xsocr_objects PRIVATE
     OCR_ASSERT_CRITICAL=1
 )
 
+# Verification builds only: have each rank print its realized worker-to-CPU
+# bindings at RL_COMPUTE_OK teardown ([PD=<rank>,host=<h>,binding=<ranges>],
+# plain printf — visible without OCR_DEBUG; -1 marks an unbound worker).
+# The runtime's own binding failures are otherwise silent (its diagnostics
+# compile out), so this is the runtime-side witness a binding check reads.
+# Keep it OFF in measurement trees and use a separate build directory when
+# verifying: the define is PRIVATE to this object library, so toggling it
+# rebuilds everything, and a tree left with it on carries the extra teardown
+# output into every cell it runs.
+option(XSOCR_SHOW_BINDING_INFO
+       "xsocr: print realized thread bindings at teardown" OFF)
+if(XSOCR_SHOW_BINDING_INFO)
+    target_compile_definitions(ocr_xsocr_objects PRIVATE SHOW_BINDING_INFO)
+endif()
+
 # NOTE: the collective-event / distributed-labeled extension chain
 # (ENABLE_EXTENSION_COLLECTIVE_EVT, ENABLE_EXTENSION_MULTI_OUTPUT_SLOT,
 # ENABLE_EXTENSION_DISTRIBUTED_LABELED, REG_ASYNC_SGL) is enabled in the

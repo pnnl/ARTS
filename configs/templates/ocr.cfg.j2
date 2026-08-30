@@ -1,6 +1,13 @@
 {# Reference-runtime configuration.  Thread-id ranges follow the per-node
-   width; the pthread binding line is emitted only for a single-node run,
-   where absolute core numbers stay inside the process's own block. #}
+   width.  The pthread binding line pins one thread per CPU, absolute ids
+   0..width-1 — valid wherever a rank owns its host (one rank per node, or a
+   single local rank).  When local ranks share a host, the numa BLOCK policy
+   shifts each rank's block by its own MPI rank (cpu = offset + width *
+   (rank % ranks)) inside the runtime, so one file serves every rank.  The
+   binding value must stay a single lo-hi range (the parser silently unbinds
+   trailing threads on any CSV form), the numa policy must stay BLOCK (RR
+   divides by ranks-1: SIGFPE at one rank), and the numa key must never
+   render without its complete value (the parser SEGVs on a bare key). #}
 # Generated from configs/templates/ocr.cfg.j2 — edit the template, not this file.
 
 [General]
@@ -111,6 +118,9 @@
     stacksize   =   {{ stack_size }}
 {%- if binding %}
     binding	=	0-{{ last_thread }}
+{%- endif %}
+{%- if numa_block %}
+    numa	=	{{ numa_block }}
 {%- endif %}
 
 #======================================================

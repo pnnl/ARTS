@@ -50,6 +50,13 @@ def extract(text: str, marker: str, scalar_re: str) -> tuple[bool, str | None]:
 
 _E2E_RE = re.compile(r"^\[E2E\]\s+(\d+)\s*$", re.M)
 
+# One line per violated check, printed by the CPU-envelope wrapper every
+# reference rank runs under.  The line, not the exit code, is the signal: a
+# partial rank failure can surface to the launcher as a timeout (the
+# surviving ranks block in MPI until the budget fires), so the verdict must
+# not depend on what the process tree happened to exit with.
+_ENVELOPE_RE = re.compile(r"^ARTSRUN-ENVELOPE-FAIL: (.*)$", re.M)
+
 
 def extract_e2e(text: str) -> float | None:
     """Seconds spanned by the runtime's own end-to-end marker, if printed.
@@ -87,6 +94,26 @@ def apply_to(result: CellResult) -> CellResult:
     result.scalar = scalar
     result.e2e_s = extract_e2e(text)
     result.extra.update(extract_extra(text, result.cell.app.extra_scalars))
+    # Both demotions run BEFORE the timeout-leniency promotion below: a cell
+    # whose rank 0 printed marker and stamp before another rank's envelope
+    # died must not be promoted to OK by that branch.
+    envelope = _ENVELOPE_RE.search(text)
+    if envelope:
+        result.status = Status.FAIL
+        result.note = f"envelope: {envelope.group(1)}"
+        return result
+    stamps = len(_E2E_RE.findall(text))
+    if stamps > 1:
+        # Exactly one rank (rank 0) prints the stamp.  N stamps means N
+        # independent worlds: a launch whose process manager never formed
+        # the MPI world degrades every rank to a size-1 singleton that
+        # solves the whole problem alone and "succeeds" — with the correct
+        # scalar, so not even the consensus vote can catch it.
+        result.status = Status.FAIL
+        result.note = (f"world-size mismatch: {stamps} [E2E] stamps against "
+                       f"a rank-0-only contract (PMI missing / singleton "
+                       f"MPI init suspected)")
+        return result
     if result.status is Status.OK and not completed:
         result.status = Status.FAIL
         result.note = "exited cleanly but never printed its completion marker"

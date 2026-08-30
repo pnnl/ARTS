@@ -168,9 +168,27 @@ def test_a_geometry_wider_than_the_machine_is_not_the_tool_s_call():
 
 def test_remote_profile_requires_ports():
     with pytest.raises(ValidationError, match="ports is required"):
-        Profile.model_validate(
-            _local(launcher="ssh", hosts=["a", "b"])
-        )
+        Profile.model_validate(_local(launcher="ssh"))
+
+
+def test_profile_refuses_unknown_keys():
+    # A typoed key must refuse rather than vanish: slurm.mpi is the only
+    # handle against an otherwise-silent PMI failure, so a key that "took"
+    # while doing nothing is the worst outcome.
+    with pytest.raises(ValidationError, match="extra_forbidden|Extra inputs"):
+        Profile.model_validate(_local(typoed_key=1))
+    with pytest.raises(ValidationError, match="extra_forbidden|Extra inputs"):
+        Profile.model_validate(_local(
+            launcher="slurm", ports=[25000], slurm={"budget": 32},
+        ))
+
+
+def test_ssh_hosts_must_be_distinct():
+    with pytest.raises(ValidationError, match="distinct"):
+        Profile.model_validate(_local(
+            launcher="ssh", ports=[25000],
+            ssh={"budget": 2, "hosts": ["n01", "n01"]},
+        ))
 
 
 def test_slurm_needs_no_budget_and_defaults_its_build_slot():

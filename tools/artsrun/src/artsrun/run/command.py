@@ -1,11 +1,22 @@
 """Build the command line a cell runs under, per runtime.
 
-Three runtimes launch three ways: ARTS spawns its own ranks from the
-configuration it is handed, while both references are MPI programs.  On a
-machine where the "nodes" are really rank blocks of one host, the references
-are taskset-confined to the same disjoint core blocks ARTS pins itself to —
-otherwise a reference run floats over the whole machine and is measured on a
-wider configuration than its peers.
+Three runtimes launch three ways: ARTS spawns or remote-launches its own
+ranks from the configuration it is handed, while both references are MPI
+programs.  Every reference rank, on every launcher, runs inside the same
+explicit CPU envelope (tools/artsrun/envelope.sh): the profile-width block of
+per-core first threads, verified on the compute node itself and applied as
+the rank's affinity mask before exec.  Per-core placement INSIDE the envelope
+is each runtime's own mechanism — ARTS pins itself, xsocr binds through its
+own configuration, ocr-vx deliberately does not pin — so the envelope is what
+keeps the measured hardware identical across runtimes, and the launcher's own
+affinity machinery is disabled outright (mpirun -bind-to none here, srun
+--cpu-bind=none in the slurm script) so the wrapper is the only affinity
+actor.
+
+Launch models: local colocates ranks in disjoint rank-indexed blocks; ssh
+distributes one rank per listed host through mpirun's ssh bootstrap; slurm
+cells get their srun step prefix at the job-script level (run/slurm.py), so
+build_command returns the bare wrapped rank command there.
 """
 
 from __future__ import annotations
@@ -16,15 +27,20 @@ import subprocess
 
 from artsrun.model.plane import RuntimeKind
 from artsrun.model.profile import Launcher, Profile
+from artsrun.paths import envelope_script
 from artsrun.run.types import Cell
 
 
-@functools.lru_cache(maxsize=1)
-def _mpi_probe() -> str:
-    """Returns "openmpi" or "mpich": every mpirun-flavored decision (the
-    oversubscribe flag, the one-rank-per-node flag) goes through this one
-    probe so the two never see a different answer.
+class MpiProbeError(RuntimeError):
+    pass
 
+
+@functools.lru_cache(maxsize=1)
+def _mpi_probe() -> str | None:
+    """Returns "openmpi", "mpich", or None when there is no answering mpirun.
+
+    Every mpirun-flavored decision (bootstrap, host list, binding, placement
+    flags) goes through this one probe so they never see different answers.
     It runs on the host building the command, not the compute nodes the job
     will land on; that stands in fine because a cluster keeps one MPI build
     on $PATH for both the submitting host and the allocation it submits
@@ -35,45 +51,69 @@ def _mpi_probe() -> str:
             ["mpirun", "--version"], capture_output=True, text=True, timeout=10
         ).stdout
     except (OSError, subprocess.SubprocessError):
-        return "mpich"
+        return None
     return "openmpi" if ("Open MPI" in out or "OpenRTE" in out) else "mpich"
 
 
-def _oversubscribe_flag() -> str:
-    """OpenMPI needs a flag to place more ranks than slots; MPICH rejects it."""
-    return "--oversubscribe" if _mpi_probe() == "openmpi" else ""
+def mpi_flavor() -> str:
+    """The probed flavor, fatal when mpirun is absent.
 
-
-def _one_rank_per_node_flag() -> list[str]:
-    """Force exactly one rank per node inside an existing allocation.
-
-    Neither implementation defaults to that placement: left alone, Hydra
-    fills the first host to its physical core count before moving to the
-    next, and Open MPI likewise fills each node to its slot count first --
-    both pack ranks onto too few nodes unless told otherwise.
+    A silent default would pick one flavor's flag spellings and fail far
+    from the cause — or not fail at all where the flags happen to overlap.
     """
-    return (["--map-by", "ppr:1:node"] if _mpi_probe() == "openmpi"
-            else ["-ppn", "1"])
+    flavor = _mpi_probe()
+    if flavor is None:
+        raise MpiProbeError(
+            "mpirun --version did not answer: ssh/local reference cells "
+            "launch through mpirun, so a working one must be on PATH"
+        )
+    return flavor
 
 
-def mpirun(np: int, *, one_per_node: bool = False) -> list[str]:
+def mpirun(np: int, *, launcher: Launcher, one_per_node: bool = False,
+           hosts: list[str] | None = None) -> list[str]:
+    """An mpirun prefix for reference ranks (local and ssh launchers only —
+    slurm cells launch through srun in the job script instead)."""
+    flavor = mpi_flavor()
+    mpich = flavor == "mpich"
     parts = ["mpirun"]
-    flag = _oversubscribe_flag()
-    if flag:
-        parts.append(flag)
+    if launcher is Launcher.LOCAL and not mpich:
+        # OpenMPI needs the flag to place more ranks than slots on one host.
+        # Remote launchers never colocate — there it would only license the
+        # packing the envelope's local-rank guard forbids.
+        parts.append("--oversubscribe")
+    if launcher is Launcher.SSH:
+        # Both flavors silently switch to a slurm bootstrap when SLURM_*
+        # variables are visible and then ignore the host list; ssh is forced
+        # so placement follows the profile, not an environment leftover.
+        parts += ["-launcher", "ssh"] if mpich else ["--mca", "plm", "rsh"]
+    if hosts:
+        parts += ["-hosts" if mpich else "--host", ",".join(hosts)]
+    # The envelope wrapper is the only affinity actor; OpenMPI's default
+    # binding is even np-dependent (core at small np, socket above), the
+    # classic shape that passes a 2-rank smoke test and breaks at 8.
+    parts += ["-bind-to" if mpich else "--bind-to", "none"]
     if one_per_node:
-        parts += _one_rank_per_node_flag()
+        # Neither implementation defaults to one rank per node: left alone,
+        # both fill the first host to its slot count before moving on.
+        parts += ["-ppn", "1"] if mpich else ["--map-by", "ppr:1:node"]
     return parts + ["-n", str(np)]
 
 
-def _rank_pin(threads: int) -> list[str]:
-    """Pin each MPI rank to its own contiguous core block, by rank index."""
-    script = (
-        f"r=${{PMI_RANK:-${{OMPI_COMM_WORLD_RANK:-0}}}}; "
-        f"s=$((r*{threads})); e=$((s+{threads}-1)); "
-        f'exec taskset -c $s-$e "$@"'
-    )
-    return ["bash", "-c", script, "_"]
+def envelope_wrap(cell: Cell, profile: Profile) -> list[str]:
+    """The envelope prefix of one reference rank.
+
+    mode=rank shifts the block by the launcher-reported rank index (local
+    colocated ranks); mode=fixed is the one-rank-per-host contract every
+    remote launcher runs under, and a single local rank trivially satisfies.
+    """
+    script = envelope_script()
+    if not script.is_file():
+        raise FileNotFoundError(f"envelope wrapper missing: {script}")
+    colocated = profile.launcher is Launcher.LOCAL
+    mode = "rank" if (colocated and cell.nodes > 1) else "fixed"
+    return ["bash", str(script), str(profile.threads_per_node),
+            str(cell.nodes), mode, "--"]
 
 
 def build_command(cell: Cell, profile: Profile) -> list[str]:
@@ -83,29 +123,29 @@ def build_command(cell: Cell, profile: Profile) -> list[str]:
 
     if kind is RuntimeKind.ARTS:
         # The runtime reads its geometry from the configuration and spawns or
-        # ssh-launches its own ranks.
+        # remote-launches its own ranks (under slurm, the job script's srun
+        # starts its one process per node).
         return [binary, *cell.args]
 
-    colocated = profile.launcher is Launcher.LOCAL
-    pin = _rank_pin(profile.threads_per_node) if colocated and cell.nodes > 1 else []
-    # Under Slurm each rank owns a whole node, so mpirun must be told that
-    # placement explicitly; a local run instead colocates ranks by design
-    # (the taskset pin above), so it never wants this flag.
-    one_per_node = profile.launcher is Launcher.SLURM
+    wrap = envelope_wrap(cell, profile)
+    tail = [binary]
+    if kind is RuntimeKind.XSOCR and cell.cfg:
+        tail += ["-ocr:cfg", str(cell.cfg)]
+    tail += list(cell.args)
 
-    if kind is RuntimeKind.XSOCR:
-        cmd = [*mpirun(cell.nodes, one_per_node=one_per_node), *pin, binary]
-        if cell.cfg:
-            cmd += ["-ocr:cfg", str(cell.cfg)]
-        return cmd + list(cell.args)
+    launcher = profile.launcher
+    if launcher is Launcher.SLURM:
+        # srun launches the ranks; the prefix is part of the job script
+        # (run/slurm.py), which wraps this argv for every kind identically.
+        return [*wrap, *tail]
 
-    # ocr-vx has no internal pinning: a taskset block is its placement.
-    if cell.nodes > 1:
-        return [*mpirun(cell.nodes, one_per_node=one_per_node), *pin, binary, *cell.args]
-    if colocated:
-        width = profile.threads_per_node
-        return ["taskset", "-c", f"0-{width - 1}", binary, *cell.args]
-    return [binary, *cell.args]
+    remote = launcher is Launcher.SSH
+    hosts = profile.hosts[:cell.nodes] if remote else None
+    if kind is RuntimeKind.XSOCR or cell.nodes > 1:
+        return [*mpirun(cell.nodes, launcher=launcher, one_per_node=remote,
+                        hosts=hosts), *wrap, *tail]
+    # A single ocr-vx rank needs no launcher at all (MPI singleton init).
+    return [*wrap, *tail]
 
 
 def with_post_verify(argv: list[str], cell: Cell) -> list[str]:
@@ -134,6 +174,12 @@ def build_env(cell: Cell, profile: Profile) -> dict[str, str]:
         # The TBB compute-thread cap is this runtime's counterpart of a worker
         # count, so it tracks the profile's worker width.
         env["OCRVX_NUM_THREADS"] = str(profile.workers)
+    if cell.entry.kind is not RuntimeKind.ARTS:
+        # MVAPICH2 applies its own per-rank core affinity at MPI_Init by
+        # default, which squeezes a threaded runtime onto one core; the
+        # envelope is the only affinity actor, so it is disabled.  Other MPIs
+        # ignore the variable.
+        env["MV2_ENABLE_AFFINITY"] = "0"
     return env
 
 

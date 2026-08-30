@@ -5,13 +5,19 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Launcher(StrEnum):
     LOCAL = "local"
     SSH = "ssh"
     SLURM = "slurm"
+
+
+# A typoed profile key must refuse, not vanish: some keys (slurm.mpi in
+# particular) are the only handle against failures that are otherwise
+# silent, so a key that "took" while doing nothing is the worst outcome.
+_STRICT = ConfigDict(extra="forbid")
 
 
 class SshSettings(BaseModel):
@@ -21,6 +27,8 @@ class SshSettings(BaseModel):
     that many, in rank order.  Stating the count separately is what catches a
     roster that quietly lost a line.
     """
+
+    model_config = _STRICT
 
     budget: int = Field(ge=1)
     hosts: list[str] = Field(default_factory=list)
@@ -35,6 +43,8 @@ class SlurmSettings(BaseModel):
     its own outcome.
     """
 
+    model_config = _STRICT
+
     partition: str | None = None
     # Build work may queue elsewhere than the cells: a debug partition takes
     # a small compile job sooner than the batch partition takes a node.
@@ -44,11 +54,18 @@ class SlurmSettings(BaseModel):
     build_cpus: int = Field(default=8, ge=1)
     account: str | None = None
     qos: str | None = None
+    # srun's --mpi plugin for the reference cells (pmi2/pmix).  Unset relies
+    # on the site's MpiDefault; set it when the site default cannot form the
+    # MPI world — the failure that produces is otherwise SILENT (each rank
+    # degrades to a size-1 singleton world and "succeeds" alone).
+    mpi: str | None = None
     extra_sbatch: list[str] = Field(default_factory=list)
     poll_interval_s: float = Field(default=10.0, gt=0)
 
 
 class Profile(BaseModel):
+    model_config = _STRICT
+
     name: str
     launcher: Launcher
     nodes: list[int] = Field(min_length=1)
@@ -137,6 +154,12 @@ class Profile(BaseModel):
                     f"ssh.budget={self.ssh.budget} is below the widest node "
                     f"count ({self.max_nodes}); that cell has nowhere to run"
                 )
+            if len(set(self.ssh.hosts)) != len(self.ssh.hosts):
+                # Remote hosts are distinct physical servers by contract —
+                # colocating ranks on one machine is what launcher=local is
+                # for, and two remote ranks on one host would claim the same
+                # CPU envelope.
+                raise ValueError("ssh.hosts must name distinct hosts")
         if self.launcher is Launcher.SLURM and self.slurm is None:
             raise ValueError("launcher=slurm requires a slurm section")
         if self.provider == "verbs":

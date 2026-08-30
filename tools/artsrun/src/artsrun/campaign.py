@@ -71,6 +71,8 @@ class Campaign:
         run_dir: Path | None = None,
     ) -> "Campaign":
         selection.validate_against(plane, catalog, profile)
+        if profile.launcher is Launcher.SSH:
+            _check_ssh_submitter(profile)
         bd = build_dir or (
             Path(selection.build_dir) if selection.build_dir else default_build_dir()
         )
@@ -298,6 +300,33 @@ class Campaign:
             "skipped": skipped,
             "summary": summary,
         }
+
+
+def _check_ssh_submitter(profile: Profile) -> None:
+    """An ssh campaign must be launched from hosts[0].
+
+    arts runs rank 0 in-process and ssh-launches only the REST of its node
+    table, while mpirun places rank 0 on the first listed host — launched
+    from anywhere else, the two land on different node sets, double-booking
+    one host and never using hosts[0].
+    """
+    import os
+    import socket
+
+    def short(h: str) -> str:
+        return h.split(".")[0]
+
+    mine = {short(socket.gethostname()), short(socket.getfqdn()),
+            short(os.uname().nodename)}
+    head = profile.hosts[0] if profile.hosts else ""
+    if short(head) not in mine:
+        raise ValueError(
+            f"an ssh campaign must be launched from hosts[0] ({head!r}): arts "
+            f"runs rank 0 in-process and ssh-launches only the rest, while "
+            f"mpirun places rank 0 on the first listed host — launching from "
+            f"elsewhere gives the runtimes different node sets (this host is "
+            f"known as: {', '.join(sorted(mine))})"
+        )
 
 
 def recorded_results(run_dir: Path, cells: list) -> list[CellResult]:

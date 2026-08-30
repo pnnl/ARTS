@@ -14,10 +14,11 @@ import time
 from pathlib import Path
 
 from artsrun.model.benchset import ResolvedApp
-from artsrun.model.plane import SelectionEntry
+from artsrun.model.plane import RuntimeKind, SelectionEntry
 from artsrun.model.profile import Launcher, Profile
 from artsrun.paths import scratch_dir
-from artsrun.run.command import build_command, build_env, render, with_timeout
+from artsrun.run.command import (build_command, build_env, render,
+                                 with_post_verify, with_timeout)
 from artsrun.run.types import Cell, Skipped
 
 VERSION = 1
@@ -40,8 +41,9 @@ def describe_command(cell: Cell, profile: Profile, log_path: Path) -> dict:
                                  marker_path(log_path.parent, cell)),
         }
     return {
-        "command": render(with_timeout(build_command(cell, profile),
-                                       cell.timeout_s)),
+        "command": render(with_timeout(
+            with_post_verify(build_command(cell, profile), cell),
+            cell.timeout_s)),
         "script": None,
     }
 
@@ -78,10 +80,24 @@ def write_manifest(
             **describe_command(cell, profile, log_path),
         })
 
+    # Which mpirun the reference cells resolved their flag spellings against —
+    # provenance for a run judged later, from another host.  Slurm cells
+    # launch through srun and never consult the probe.
+    flavor = None
+    if profile.launcher is not Launcher.SLURM and any(
+            c.entry.kind is not RuntimeKind.ARTS for c in cells):
+        from artsrun.run.command import MpiProbeError, mpi_flavor
+
+        try:
+            flavor = mpi_flavor()
+        except MpiProbeError:
+            flavor = "unavailable"
+
     payload = {
         "version": VERSION,
         "written": time.time(),
         "launcher": profile.launcher.value,
+        "mpi_flavor": flavor,
         "profile": profile.name,
         "build_dir": str(build_dir),
         "cwd": str(scratch_dir()),

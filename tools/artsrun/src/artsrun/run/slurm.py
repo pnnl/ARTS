@@ -13,6 +13,7 @@ from the markers alone.
 from __future__ import annotations
 
 import re
+import shlex
 import subprocess
 import time
 from pathlib import Path
@@ -95,16 +96,32 @@ def read_marker(path: Path) -> tuple[int, float] | None:
 def _launch(cell: Cell, profile: Profile) -> str:
     """The line that actually starts the cell's ranks, once, on the job's own nodes.
 
-    ARTS has no rank launcher of its own, so srun is what spawns the one
-    process per node the job needs.  The MPI-kind runtimes already carry
-    their own launcher in build_command's output (mpirun, which reads the
-    Slurm allocation from its environment natively), so wrapping that in
-    srun a second time would start a copy of mpirun on every node, each one
-    spawning its own full set of ranks.
+    srun is the step launcher for every kind.  It spawns arts's one process
+    per node, and it is how a site-PMI-integrated MPI launches the reference
+    ranks — mpirun inside the allocation would bury them in launcher-managed
+    step cgroups of its own, and the site's default MPI documents srun as its
+    launch command.  --cpus-per-task is explicit on the step because srun no
+    longer inherits it from the allocation (Slurm >= 22.05) — and arts reads
+    its width from exactly that value in the task environment, so an
+    un-flagged step could rewrite it under the run.  --cpu-bind=none keeps
+    the envelope wrapper the only affinity actor for the references.  Never
+    add --label here: it prefixes every output line with the rank id, which
+    silently breaks the line-anchored [E2E] stamp parse.
+
+    A declared post-verify hook wraps OUTSIDE the srun line, so it runs once
+    on the batch node rather than once per rank in a shared directory.
     """
-    argv = with_post_verify(build_command(cell, profile), cell)
+    width = profile.threads_per_node
     if cell.entry.kind is RuntimeKind.ARTS:
-        return f"srun --ntasks-per-node=1 -N {cell.nodes} {render(argv)}"
+        prefix = ["srun", "--ntasks-per-node=1", "-N", str(cell.nodes),
+                  f"--cpus-per-task={width}"]
+    else:
+        prefix = ["srun", "-N", str(cell.nodes), "-n", str(cell.nodes),
+                  "--ntasks-per-node=1", f"--cpus-per-task={width}",
+                  "--cpu-bind=none"]
+        if profile.slurm and profile.slurm.mpi:
+            prefix.append(f"--mpi={profile.slurm.mpi}")
+    argv = with_post_verify([*prefix, *build_command(cell, profile)], cell)
     return render(argv)
 
 
@@ -119,11 +136,15 @@ def job_script(cell: Cell, profile: Profile, marker: Path) -> str:
     """
     launch = _launch(cell, profile)
     env = build_env(cell, profile)
-    exports = "\n".join(f"export {k}={v}" for k, v in sorted(env.items()))
+    exports = "\n".join(f"export {k}={shlex.quote(str(v))}"
+                        for k, v in sorted(env.items()))
     return (
         "#!/bin/bash\n"
         f"cd {scratch_dir()}\n"
         f"{exports}\n"
+        # The local backend writes the command as its log's first line; the
+        # batch script does the same so a cell log is self-describing.
+        f"printf '%s\\n' {shlex.quote('$ ' + launch)}\n"
         's=$(date +%s.%N)\n'
         # The timeout is kept inside the job so a wedged run dies on its own
         # budget instead of the queue's.

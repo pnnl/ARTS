@@ -25,10 +25,10 @@ def _keys(text: str) -> dict[str, str]:
 @pytest.mark.parametrize("nodes,name", [(1, "1n_sc"), (2, "2n_sc"), (4, "4n_sc"),
                                         (8, "8n_sc")])
 def test_arts_config_matches_the_committed_one(nodes, name):
-    reference = repo_root() / "configs" / "local" / "bentley" / f"{name}.cfg"
+    reference = repo_root() / "configs" / "local" / "ferrari" / f"{name}.cfg"
     if not reference.is_file():
         pytest.skip(f"{reference} not present")
-    profile = load_profile("bentley")
+    profile = load_profile("ferrari")
     rendered = _keys(render_arts(profile, nodes))
     expected = _keys(reference.read_text())
     for key, value in expected.items():
@@ -36,7 +36,7 @@ def test_arts_config_matches_the_committed_one(nodes, name):
 
 
 def test_arts_config_omits_ports_for_a_local_run():
-    profile = load_profile("bentley")
+    profile = load_profile("ferrari")
     assert "ports" not in render_arts(profile, 4)
 
 
@@ -51,10 +51,10 @@ def test_arts_config_names_ports_for_a_cluster_run():
 @pytest.mark.parametrize("nodes,name", [(1, "1n_sc"), (2, "2n_sc"), (4, "4n_sc"),
                                         (8, "8n_sc")])
 def test_reference_config_matches_the_committed_one(nodes, name):
-    reference = repo_root() / "configs" / "mpi" / "bentley" / f"{name}.cfg"
+    reference = repo_root() / "configs" / "mpi" / "ferrari" / f"{name}.cfg"
     if not reference.is_file():
         pytest.skip(f"{reference} not present")
-    profile = load_profile("bentley")
+    profile = load_profile("ferrari")
     rendered = render_ocr(profile, nodes)
 
     def normalize(text: str) -> list[str]:
@@ -69,10 +69,29 @@ def test_reference_config_matches_the_committed_one(nodes, name):
     assert normalize(rendered) == normalize(reference.read_text())
 
 
-def test_reference_config_binds_cores_single_node_only():
-    profile = load_profile("bentley")
-    assert "binding" in render_ocr(profile, 1)
-    assert "binding" not in render_ocr(profile, 4)
+def test_reference_config_binds_on_every_launcher_when_pinning():
+    # Local colocated ranks additionally get the BLOCK policy, which shifts
+    # each rank's absolute block by its own MPI rank inside the runtime —
+    # one file serves every rank.  A remote rank owns its host, so the plain
+    # 0..W-1 range stands alone there.
+    ferrari = load_profile("ferrari")          # local, 15+1
+    assert "binding\t=\t0-15" in render_ocr(ferrari, 1)
+    assert "numa" not in render_ocr(ferrari, 1)
+    four = render_ocr(ferrari, 4)
+    assert "binding\t=\t0-15" in four
+    assert "numa\t=\tBLOCK:4:16" in four
+
+    junction = load_profile("junction")        # slurm, 63+1
+    two = render_ocr(junction, 2)
+    assert "binding\t=\t0-63" in two
+    assert "numa" not in two
+
+
+def test_reference_config_binding_follows_the_pin_flag():
+    profile = load_profile("ferrari").model_copy(update={"pin": False})
+    text = render_ocr(profile, 4)
+    assert "binding" not in text
+    assert "numa" not in text
 
 
 def test_reference_config_width_follows_the_profile():

@@ -384,6 +384,30 @@ def _dry_run(campaign, selection: Selection) -> None:
         console.print(f"[yellow]build check:[/yellow] {exc}")
 
     cells, skipped = campaign.cells()
+
+    # One rendered command per (runtime kind, node count): the cheapest place
+    # to review a launcher change before a campaign burns queue time on it.
+    shapes: dict[tuple, object] = {}
+    for cell in cells:
+        shapes.setdefault((cell.entry.kind.value, cell.nodes), cell)
+    if shapes:
+        from artsrun.model.profile import Launcher
+
+        console.print("[bold]Launch shapes[/bold] (first cell of each kind x nodes):")
+        for (kind, nodes), cell in sorted(shapes.items()):
+            if campaign.profile.launcher is Launcher.SLURM:
+                from artsrun.run.slurm import _launch
+
+                line = _launch(cell, campaign.profile)
+            else:
+                from artsrun.run.command import (build_command, render,
+                                                 with_post_verify, with_timeout)
+
+                line = render(with_timeout(
+                    with_post_verify(build_command(cell, campaign.profile), cell),
+                    cell.timeout_s))
+            console.print(f"  [dim]{kind} @{nodes}n[/dim] $ {line}")
+
     from artsrun.run.scheduler import WallCache, order
     from artsrun.paths import wall_cache_path
 

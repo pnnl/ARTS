@@ -6,12 +6,42 @@ run's results.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 from pydantic import BaseModel, Field
 
 from artsrun.model.benchset import Benchset
 from artsrun.model.catalog import Catalog, Version
 from artsrun.model.plane import Plane
-from artsrun.model.profile import Profile
+from artsrun.model.profile import Launcher, Profile
+
+
+def _first_sibling_cpu_count() -> int | None:
+    """How many per-core first SMT threads this host exposes.
+
+    The envelope confines ranks to per-core first threads, so this — not the
+    logical CPU count — is the budget colocated local blocks must fit in.
+    None when the topology is unreadable; the envelope wrapper re-checks the
+    same property per cell either way.
+    """
+    root = Path("/sys/devices/system/cpu")
+    try:
+        cpus = [p for p in root.iterdir() if re.fullmatch(r"cpu\d+", p.name)]
+    except OSError:
+        return None
+    count = 0
+    for p in cpus:
+        f = p / "topology" / "thread_siblings_list"
+        if not f.is_file():
+            f = p / "topology" / "core_cpus_list"
+        try:
+            first = re.split(r"[,-]", f.read_text().strip(), maxsplit=1)[0]
+        except OSError:
+            continue
+        if first == p.name[3:]:
+            count += 1
+    return count or None
 
 
 class Selection(BaseModel):
@@ -44,6 +74,59 @@ class Selection(BaseModel):
                 f"node counts {off_sweep} are not in profile "
                 f"'{profile.name}' sweep {profile.nodes}"
             )
+        if any(plane.entry(k).is_reference for k in self.entries):
+            self._check_reference_geometry(profile)
+
+    def _check_reference_geometry(self, profile: Profile) -> None:
+        """What a reference cell needs from the profile.
+
+        These are selection-time errors rather than render-time ones on
+        purpose: the ocr configuration is rendered for every campaign, even
+        one that selects no reference, and an arts-only campaign must not be
+        refused over a geometry only the references cannot express.
+        """
+        width = profile.threads_per_node
+        if not profile.pin:
+            raise ValueError(
+                "reference entries require pin: true — an unpinned arts run "
+                "floats over the whole machine while the references stay "
+                "confined to their envelope, so the two would be measured on "
+                "different hardware"
+            )
+        if width < 2:
+            raise ValueError(
+                f"reference entries require workers+progress >= 2: at width "
+                f"{width} the xsocr configuration degenerates to a "
+                f"communication worker with no compute workers"
+            )
+        if width > 255:
+            raise ValueError(
+                f"reference entries require workers+progress <= 255: the "
+                f"runtime parses its per-core binding policy fields through "
+                f"a u8 (width {width} would wrap)"
+            )
+        if profile.launcher is Launcher.LOCAL:
+            nodes = max(self.node_counts)
+            if nodes <= 1:
+                return
+            if nodes > 255:
+                raise ValueError(
+                    f"colocated reference ranks are capped at 255 ({nodes} "
+                    f"requested): the runtime's block policy parses the rank "
+                    f"count through a u8"
+                )
+            if nodes * width > 1024:
+                raise ValueError(
+                    f"colocated reference blocks reach cpu {nodes * width - 1}, "
+                    f"past CPU_SETSIZE (1024): binding there is a silent no-op "
+                    f"in glibc"
+                )
+            cores = _first_sibling_cpu_count()
+            if cores is not None and nodes * width > cores:
+                raise ValueError(
+                    f"colocated reference blocks need {nodes * width} per-core "
+                    f"first threads but this host has {cores}"
+                )
 
     @classmethod
     def everything(

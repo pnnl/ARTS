@@ -183,9 +183,9 @@ directory (or the file named by the `ARTS_CONFIG` environment variable).
 Templates live under `configs/`:
 
 - `configs/local/test/{1n,2n,2n_io,3n,4n}.cfg` — localhost, the ctest shapes
-- `configs/local/bentley/{1n,1n_sc,2n_sc,4n_sc,8n_sc}.cfg` — localhost, the perf shapes for the current host
+- `configs/local/ferrari/{1n,1n_sc,2n_sc,4n_sc,8n_sc}.cfg` — localhost, the perf shapes for the current host
 - `configs/local/gpu/1n.cfg` — GPU-enabled
-- `configs/mpi/bentley/{1n,1n_sc,2n_sc,4n_sc,8n_sc}.cfg` — MPI launcher (xsocr), the perf shapes for the current host
+- `configs/mpi/ferrari/{1n,1n_sc,2n_sc,4n_sc,8n_sc}.cfg` — MPI launcher (xsocr), the perf shapes for the current host (regenerated from `configs/templates/ocr.cfg.j2`; golden fixtures for `tools/artsrun`'s render tests)
 
 The values most often changed are the launcher, the `worker_threads`/
 `progress_threads` counts, and the GPU count.

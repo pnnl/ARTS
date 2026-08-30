@@ -61,13 +61,24 @@ def render_ocr(profile: Profile, nodes: int) -> str:
     and so is the worker stack. This key is in BYTES, the same as the ARTS one:
     it reaches pthread_attr_setstacksize unconverted, so a value below
     PTHREAD_STACK_MIN makes thread creation fail outright rather than clamp.
-    The binding line is emitted single-node only, where absolute core numbers
-    stay inside the process's own block.
+
+    The binding line is emitted whenever the profile pins: on every launcher a
+    rank's block starts at absolute CPU 0 — remote ranks own their host, and
+    colocated local ranks are shifted per rank by the `numa` BLOCK policy
+    (cpu = offset + width * (mpi_rank % ranks)), which the runtime computes
+    itself from its own rank at bring-up.  The key renders atomically with its
+    complete BLOCK:<ranks>:<width> value or not at all: the runtime SEGVs on a
+    malformed or empty value, and its binding never accepts anything but a
+    single lo-hi range plus this policy.
     """
+    numa_block = None
+    if profile.pin and profile.launcher is Launcher.LOCAL and nodes > 1:
+        numa_block = f"BLOCK:{nodes}:{profile.threads_per_node}"
     return _env().get_template("ocr.cfg.j2").render(
         last_thread=profile.threads_per_node - 1,
         stack_size=profile.stack_size_mb * 1024 * 1024,
-        binding=(nodes == 1),
+        binding=profile.pin,
+        numa_block=numa_block,
     )
 
 
@@ -83,11 +94,30 @@ def render_counters(counterset) -> str:
     )
 
 
+def _write_once(path: Path, text: str) -> Path:
+    """Write a rendered configuration, refusing to change one already written.
+
+    Only a resumed campaign revisits an existing run directory, and there an
+    already-queued job reads the configuration PATH when it starts — silently
+    overwriting the file would swap rules under a job submitted before the
+    rules changed.  Fresh runs and replays always render into a new stamp
+    directory, so they can never trip this.
+    """
+    if path.exists():
+        if path.read_text() != text:
+            raise RuntimeError(
+                f"rendered configuration changed since this campaign started: "
+                f"{path}; start a new campaign instead of resuming this one"
+            )
+        return path
+    path.write_text(text)
+    return path
+
+
 def write_counter_config(counterset, out_dir: Path) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"counters_{counterset.name}.cfg"
-    path.write_text(render_counters(counterset))
-    return path
+    return _write_once(path, render_counters(counterset))
 
 
 def write_configs(profile: Profile, nodes: int, out_dir: Path, *,
@@ -96,10 +126,10 @@ def write_configs(profile: Profile, nodes: int, out_dir: Path, *,
     """Write every configuration this node count needs; return the paths."""
     out_dir.mkdir(parents=True, exist_ok=True)
     arts = out_dir / f"arts_{nodes}n.cfg"
-    arts.write_text(render_arts(profile, nodes, counter_folder=counter_folder,
-                                capture_interval=capture_interval))
+    _write_once(arts, render_arts(profile, nodes, counter_folder=counter_folder,
+                                  capture_interval=capture_interval))
     ocr = out_dir / f"ocr_{nodes}n.cfg"
-    ocr.write_text(render_ocr(profile, nodes))
+    _write_once(ocr, render_ocr(profile, nodes))
     return {"arts": arts, "ocr": ocr}
 
 
@@ -108,9 +138,9 @@ def write_arts_cfg(profile: Profile, nodes: int, path: Path, *,
                    capture_interval: int | None = None) -> Path:
     """Write one ARTS configuration to an exact path."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_arts(profile, nodes, counter_folder=counter_folder,
-                                capture_interval=capture_interval))
-    return path
+    return _write_once(path, render_arts(profile, nodes,
+                                         counter_folder=counter_folder,
+                                         capture_interval=capture_interval))
 
 
 def config_for(kind: RuntimeKind, configs: dict[str, Path]) -> Path | None:

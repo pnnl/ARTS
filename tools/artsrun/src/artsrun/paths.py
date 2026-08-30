@@ -56,6 +56,15 @@ def templates_dir() -> Path:
     return repo_root() / "configs" / "templates"
 
 
+def envelope_script() -> Path:
+    """The CPU-envelope wrapper every reference rank runs under.
+
+    A repo file rather than package data: remote launchers reach it through
+    the shared filesystem exactly like the rendered configurations, whereas a
+    site-packages path is a property of one host's venv."""
+    return repo_root() / "tools" / "artsrun" / "envelope.sh"
+
+
 def scratch_dir() -> Path:
     """Where application byproducts land; runs chdir here."""
     return repo_root() / "scratch"
