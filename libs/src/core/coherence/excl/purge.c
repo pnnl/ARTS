@@ -100,7 +100,7 @@ static void lock_home_grant(struct arts_db_s *db, struct arts_db_cache_s *cache,
   if (grant == LOCK_GRANT_ONE_RW) {
     unsigned int rank;
     struct arts_rdzv_landing_s rdzv;
-    if (arts_home_grantreq_queue_pop(&db->rw_waiters, &rank, &rdzv)) {
+    if (arts_home_grantreq_queue_pop(&db->rw_waiters, &rank, &rdzv, NULL)) {
       /* RW grant: advertise home's stable buffer as THIS grant's publish
        * landing (grants and RW releases pair 1:1); the releaser PUTs its
        * dirty bytes straight into it.  In-place is safe at home for the same
@@ -226,7 +226,8 @@ void arts_handler_db_excl_request(void *item_v, void *args_v) {
    * BEFORE reading lock_state, so the CAS transition already sees this
    * participant counted. */
   if (mode == DB_MODE_RW) {
-    arts_home_grantreq_queue_push(&db->rw_waiters, requester, &a->rdzv);
+    arts_home_grantreq_queue_push(&db->rw_waiters, requester, &a->rdzv,
+                                  ARTS_GRANT_VERSION_NONE);
   } else {
     struct arts_lock_ro_node_s *n =
         (struct arts_lock_ro_node_s *)arts_malloc(sizeof(*n));

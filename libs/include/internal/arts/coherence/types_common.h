@@ -80,6 +80,83 @@ extern "C" {
  * Arms with no migrating grant (EXCL, WRF_VAL) never set it. */
 #define ARTS_GRANT_UNCONFIRMED 0x80000000u
 
+#ifndef ARTS_PROTOCOL_EXCL
+/*--- The grant word ------------------------------------------------------
+ * writer_count answers two questions — does this rank possess the write
+ * right, and how many local writers are inside it — and the release policy
+ * decides how the two share the word.
+ *
+ * RETAIN keeps the sentinel encoding: possession IS a +1 that outlives every
+ * writer, so the word is (possession ? 1 : 0) + live writers and only an
+ * INVALIDATE ever takes the sentinel back.
+ *
+ * PURGE gives possession its own bit beside a PURE activity count, because
+ * the two are surrendered independently: a holder that reaches its own idle
+ * edge hands the right back while its count is already zero, and a home that
+ * is idle must still be distinguishable from a home that owns nothing.  Bit
+ * 30 carries it — bit 31 is the unconfirmed marker's, and an owned word must
+ * stay positive as a signed int so the acquire fast path, the ownership
+ * predicate and the covering-read test all keep reading it unchanged.
+ *
+ * The load-bearing encoding invariant is `own == 0 ⟹ count == 0`: possession
+ * is only ever cleared by a transition whose resulting count is zero.  It is
+ * what makes `(int)word > 0` mean exactly `own == 1` under both policies, so
+ * the fast path and the per-waiter drain are one shared body.
+ *
+ * An arm with no migrating write right carries the same word as a pure
+ * reference count and reaches only the seeds below, whose values are the
+ * counts it always used. */
+#ifdef ARTS_RELEASE_PURGE
+#define ARTS_GRANT_OWN 0x40000000u
+#define ARTS_GRANT_COUNT_MASK 0x3fffffffu
+#define ARTS_GRANT_OWN_OF(w) (((w) & ARTS_GRANT_OWN) != 0u)
+#define ARTS_GRANT_COUNT_OF(w) ((w) & ARTS_GRANT_COUNT_MASK)
+/* Seeds — every create/adopt path names possession and the creator's own
+ * hold separately; there is no path that seeds a count without possession. */
+#define ARTS_GRANT_SEED_HOLDING (ARTS_GRANT_OWN | 1u)
+#define ARTS_GRANT_SEED_IDLE (ARTS_GRANT_OWN)
+/* A create that lost its install race adopts the cache already there: take
+ * possession (it may already be held) and add this creator's own hold.  Run
+ * in a CAS loop — possession added in would depend on what the word held. */
+#define ARTS_GRANT_ADOPT_NEXT(w) (((w) | ARTS_GRANT_OWN) + 1u)
+#else
+/* The accessors are diagnostics (tests, oracles); the release-entry guard
+ * has its own per-policy predicate and must not be expressed through them —
+ * this mapping would fire it on the sentinel-only word, which is exactly the
+ * state whose release still owes a transfer. */
+#define ARTS_GRANT_OWN_OF(w) ((int)(w) >= 1)
+#define ARTS_GRANT_COUNT_OF(w) ((int)(w) >= 1 ? ((w) - 1u) : 0u)
+#define ARTS_GRANT_SEED_HOLDING 2u
+#define ARTS_GRANT_SEED_IDLE 1u
+#define ARTS_GRANT_ADOPT_NEXT(w) ((w) + 2u)
+#endif /* ARTS_RELEASE_PURGE */
+
+#ifdef ARTS_RELEASE_PURGE
+/* The count-dropping edge, as a pure function of the word committed by one
+ * CAS.  `purgeable` is the caller's own position — a rank that can hand the
+ * right back at all (not the home, in a run with peers).  Rows:
+ *
+ *   own==0                     no-op       a double or spurious release
+ *   own==1, c>1                [1, c-1]    other writers remain
+ *   own==1, c==1, purgeable    [0, 0]      the idle edge: hand it back
+ *   own==1, c==1, !purgeable   [1, 0]      the home goes idle: serve demand
+ *   own==1, c==0               ILLEGAL     nothing to drop; a raw decrement
+ *                                          here borrows the possession bit
+ *                                          and manufactures a count of 2^30-1
+ *
+ * A next equal to cur means "commit nothing". */
+#define ARTS_GRANT_ACT_NONE 0
+#define ARTS_GRANT_ACT_RETURN 1
+#define ARTS_GRANT_ACT_TAIL 2
+#define ARTS_GRANT_ACT_ILLEGAL 3
+unsigned int arts_grant_purge_release_next(unsigned int cur, bool purgeable,
+                                           unsigned int *out_act);
+#endif /* ARTS_RELEASE_PURGE */
+
+/* Home-side single-slot return latch: no returner parked. */
+#define ARTS_GRANT_NO_RETURNER ((unsigned int)-1)
+#endif /* grant plane */
+
 /* In-memory rendezvous landing descriptor — the coherence-side mirror of the
  * packed wire struct arts_msg_rdzv_landing_s (protocol.h): where a payload
  * sender may fi_writedata, keyed for pairing.  txid == 0 means "no landing"

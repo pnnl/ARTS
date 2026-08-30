@@ -60,6 +60,7 @@ extern "C" {
 struct arts_home_grantreq_node_s {
   struct arts_home_grantreq_node_s *next;
   unsigned int rank;
+  uint64_t have_version; /* version the requester already holds */
   struct arts_rdzv_landing_s rdzv; /* requester's transfer landing */
 };
 
@@ -73,6 +74,7 @@ struct arts_home_grantreq_queue_s {
 struct arts_home_grantreq_node_s {
   _Atomic(struct arts_home_grantreq_node_s *) next;
   unsigned int rank;
+  uint64_t have_version; /* version the requester already holds */
   struct arts_rdzv_landing_s rdzv; /* requester's transfer landing */
 };
 
@@ -185,6 +187,12 @@ struct arts_db_cache_s {
   uint64_t home_pub_rkey;
   volatile uint64_t home_pub_txid;
 #endif
+#ifdef ARTS_RELEASE_PURGE
+  /* Armed by a release that gave the write right up while its payload was
+   * still in flight; discharged by whichever of the publish sender and the
+   * release itself CASes it back to zero, so exactly one return goes out. */
+  volatile unsigned int pending_grant_return;
+#endif
   /* Kept at the tail so compiling the option in cannot shift the offsets
    * of the fields (and the inlined home directory beyond them) that every
    * acquire path touches. */
@@ -247,6 +255,14 @@ struct arts_db_s {
   /* Baton-holder-written transfer target (CONFIRM-driven advance, same as
    * WB). */
   unsigned int pending_install_owner;
+#endif
+#ifdef ARTS_RELEASE_PURGE
+  /* Single-slot return latch.  A voluntary return is never rejected: it is
+   * either accepted at once or parked here for the round close that is
+   * already inbound.  Both sides publish then check and consume by CAS, so
+   * exactly one of them accepts any given return.  Grants are serialized, so
+   * at most one return can be outstanding and one slot suffices. */
+  arts_db_atomic_uint_t pending_return_from;
 #endif
   /* GPU staging locks / version stamps (GPU DB path; full arts_db_s alloc). */
   volatile unsigned int reader;  /**< GPU staging reader lock. */

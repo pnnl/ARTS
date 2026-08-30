@@ -739,6 +739,22 @@ void arts_runtime_stop() {
  * The loop exits when arts_runtime_stop() sets alive=false for this thread.
  */
 int arts_runtime_loop() {
+  /* Release whatever the startup hooks created on THIS thread, before it does
+   * anything else.  The created-DB list is thread-local, so only this thread
+   * can drain it, and a hold left on it is a data block nobody can ever
+   * acquire.  Draining at hook return instead would deadlock: during the
+   * hooks no thread anywhere is here yet, so a cross-rank create's blocking
+   * publish waits on an acknowledgement no peer can produce.  Here the whole
+   * cluster's progress plane is live.
+   *
+   * Placement is exact: BEFORE the role switch, so it is a no-op on a
+   * progress thread (which runs no hooks, hence the assert), and BEFORE the
+   * liveness test, so a fast first task finishing on another thread cannot
+   * end this thread's loop before it has drained. */
+  assert((arts_thread_info.role != ARTS_ROLE_PROGRESS ||
+          arts_vector_count(arts_get_created_db_list()) == 0) &&
+         "only threads that run the startup hooks create data blocks there");
+  arts_release_created_dbs();
   ARTS_DEBUG("Thread %u entering runtime_loop (role=%d)",
              arts_thread_info.thread_id, arts_thread_info.role);
   switch (arts_thread_info.role) {

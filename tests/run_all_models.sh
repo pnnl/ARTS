@@ -1,18 +1,20 @@
 #!/bin/bash
-# Run the ARTS ctest suites across ALL SEVEN build configurations
+# Run the ARTS ctest suites across ALL NINE build configurations
 # (<memory model>_<family>_<live second axis>), each in its own build_<config>
 # tree, then run the application matrix once over the single benchmark build
 # (which holds every coherence configuration at once):
 #
-#   config           cmake flags
-#   ---------------  ---------------------------------------------------------
-#   ocr_val_wt       -DARTS_MEMORY_MODEL=OCR    -DARTS_COHERENCE_PROTOCOL=VAL  -DARTS_WRITE_POLICY=WT
-#   ocr_val_wb       -DARTS_MEMORY_MODEL=OCR    -DARTS_COHERENCE_PROTOCOL=VAL  -DARTS_WRITE_POLICY=WB
-#   ocr_excl_purge   -DARTS_MEMORY_MODEL=OCR    -DARTS_COHERENCE_PROTOCOL=EXCL -DARTS_RELEASE_POLICY=PURGE
-#   ocr_excl_retain  -DARTS_MEMORY_MODEL=OCR    -DARTS_COHERENCE_PROTOCOL=EXCL -DARTS_RELEASE_POLICY=RETAIN
-#   ocr_inv_wt       -DARTS_MEMORY_MODEL=OCR    -DARTS_COHERENCE_PROTOCOL=INV  -DARTS_WRITE_POLICY=WT
-#   ocr_inv_wb       -DARTS_MEMORY_MODEL=OCR    -DARTS_COHERENCE_PROTOCOL=INV  -DARTS_WRITE_POLICY=WB
-#   wrf_val_wt       -DARTS_MEMORY_MODEL=DB_WRF -DARTS_COHERENCE_PROTOCOL=VAL  -DARTS_WRITE_POLICY=WT
+#   config             cmake flags
+#   -----------------  ---------------------------------------------------------
+#   ocr_val_wt         -DARTS_MEMORY_MODEL=OCR    -DARTS_COHERENCE_PROTOCOL=VAL  -DARTS_WRITE_POLICY=WT
+#   ocr_val_wb         -DARTS_MEMORY_MODEL=OCR    -DARTS_COHERENCE_PROTOCOL=VAL  -DARTS_WRITE_POLICY=WB
+#   ocr_val_wt_purge   -DARTS_MEMORY_MODEL=OCR    -DARTS_COHERENCE_PROTOCOL=VAL  -DARTS_WRITE_POLICY=WT -DARTS_RELEASE_POLICY=PURGE
+#   ocr_excl_purge     -DARTS_MEMORY_MODEL=OCR    -DARTS_COHERENCE_PROTOCOL=EXCL -DARTS_RELEASE_POLICY=PURGE
+#   ocr_excl_retain    -DARTS_MEMORY_MODEL=OCR    -DARTS_COHERENCE_PROTOCOL=EXCL -DARTS_RELEASE_POLICY=RETAIN
+#   ocr_inv_wt         -DARTS_MEMORY_MODEL=OCR    -DARTS_COHERENCE_PROTOCOL=INV  -DARTS_WRITE_POLICY=WT
+#   ocr_inv_wb         -DARTS_MEMORY_MODEL=OCR    -DARTS_COHERENCE_PROTOCOL=INV  -DARTS_WRITE_POLICY=WB
+#   ocr_inv_wt_purge   -DARTS_MEMORY_MODEL=OCR    -DARTS_COHERENCE_PROTOCOL=INV  -DARTS_WRITE_POLICY=WT -DARTS_RELEASE_POLICY=PURGE
+#   wrf_val_wt         -DARTS_MEMORY_MODEL=DB_WRF -DARTS_COHERENCE_PROTOCOL=VAL  -DARTS_WRITE_POLICY=WT
 #
 # DB_WRF (wrf_val_wt) requires program-ordered write-write conflicts, so some
 # correctness deviations are EXPECTED there — they are reported, not silently
@@ -29,7 +31,7 @@ set -u
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO" || exit 1
 
-MODELS="ocr_val_wt ocr_val_wb ocr_excl_purge ocr_excl_retain ocr_inv_wt ocr_inv_wb wrf_val_wt"
+MODELS="ocr_val_wt ocr_val_wb ocr_val_wt_purge ocr_excl_purge ocr_excl_retain ocr_inv_wt ocr_inv_wb ocr_inv_wt_purge wrf_val_wt"
 DO_CTEST=1
 DO_HARNESS=1
 DO_BUILD=1
@@ -48,24 +50,30 @@ ctest_dir()   { echo "build_$1"; }
 model_label() { echo "$1" | tr '[:lower:]' '[:upper:]'; }
 model_cmake_flags() {
   case "$1" in
-    ocr_val_wt)      echo "-DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=VAL -DARTS_WRITE_POLICY=WT" ;;
-    ocr_val_wb)      echo "-DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=VAL -DARTS_WRITE_POLICY=WB" ;;
-    ocr_excl_purge)  echo "-DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=EXCL -DARTS_RELEASE_POLICY=PURGE" ;;
-    ocr_excl_retain) echo "-DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=EXCL -DARTS_RELEASE_POLICY=RETAIN" ;;
-    ocr_inv_wt)      echo "-DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=INV -DARTS_WRITE_POLICY=WT" ;;
-    ocr_inv_wb)      echo "-DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=INV -DARTS_WRITE_POLICY=WB" ;;
-    wrf_val_wt)      echo "-DARTS_MEMORY_MODEL=DB_WRF -DARTS_COHERENCE_PROTOCOL=VAL -DARTS_WRITE_POLICY=WT" ;;
+    ocr_val_wt)       echo "-DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=VAL -DARTS_WRITE_POLICY=WT" ;;
+    ocr_val_wb)       echo "-DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=VAL -DARTS_WRITE_POLICY=WB" ;;
+    ocr_val_wt_purge) echo "-DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=VAL -DARTS_WRITE_POLICY=WT -DARTS_RELEASE_POLICY=PURGE" ;;
+    ocr_excl_purge)   echo "-DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=EXCL -DARTS_RELEASE_POLICY=PURGE" ;;
+    ocr_excl_retain)  echo "-DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=EXCL -DARTS_RELEASE_POLICY=RETAIN" ;;
+    ocr_inv_wt)       echo "-DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=INV -DARTS_WRITE_POLICY=WT" ;;
+    ocr_inv_wb)       echo "-DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=INV -DARTS_WRITE_POLICY=WB" ;;
+    ocr_inv_wt_purge) echo "-DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=INV -DARTS_WRITE_POLICY=WT -DARTS_RELEASE_POLICY=PURGE" ;;
+    wrf_val_wt)       echo "-DARTS_MEMORY_MODEL=DB_WRF -DARTS_COHERENCE_PROTOCOL=VAL -DARTS_WRITE_POLICY=WT" ;;
   esac
 }
 # expected CMakeCache values per config
 model_model()  { case "$1" in wrf_val_wt) echo DB_WRF;; *) echo OCR;; esac; }
 model_proto()  { case "$1" in ocr_excl_*) echo EXCL;; ocr_inv_*) echo INV;; *) echo VAL;; esac; }
-model_timing() { case "$1" in *_wt) echo WT;; *_wb) echo WB;; *_purge) echo PURGE;; *_retain) echo RETAIN;; esac; }
+# The live second axis, read off the suffix.  ocr_{val,inv}_wt_purge pin BOTH
+# ARTS_WRITE_POLICY and ARTS_RELEASE_POLICY away from their defaults, so their
+# "timing" is the pair, not a single value.
+model_timing() { case "$1" in *_wt_purge) echo "WT+PURGE" ;; *_wt) echo WT;; *_wb) echo WB;; ocr_excl_purge) echo PURGE;; ocr_excl_retain) echo RETAIN;; esac; }
 
 # Configure a build dir to the requested configuration if its cache does not
 # match, then build.  Reconfigure forces a full rebuild (compile-flag change).
 # The cache check compares ARTS_MEMORY_MODEL, ARTS_COHERENCE_PROTOCOL, and
-# the live second axis (ARTS_WRITE_POLICY / ARTS_RELEASE_POLICY).
+# the live second axis (ARTS_WRITE_POLICY / ARTS_RELEASE_POLICY, or both for
+# the ocr_{val,inv}_wt_purge configs, which pin both away from default).
 ensure_build() {
   local dir="$1" model="$2" wantgpu="$3" extra="${4:-}"
   local want_model; want_model="$(model_model "$model")"
@@ -76,6 +84,12 @@ ensure_build() {
   local have_timing
   case "$model" in
     ocr_excl_*) have_timing="$(grep -E '^ARTS_RELEASE_POLICY:STRING=' "$dir/CMakeCache.txt" 2>/dev/null | cut -d= -f2)" ;;
+    *_wt_purge)
+      local have_write have_release
+      have_write="$(grep -E '^ARTS_WRITE_POLICY:STRING=' "$dir/CMakeCache.txt" 2>/dev/null | cut -d= -f2)"
+      have_release="$(grep -E '^ARTS_RELEASE_POLICY:STRING=' "$dir/CMakeCache.txt" 2>/dev/null | cut -d= -f2)"
+      have_timing="${have_write}+${have_release}"
+      ;;
     *)          have_timing="$(grep -E '^ARTS_WRITE_POLICY:STRING=' "$dir/CMakeCache.txt" 2>/dev/null | cut -d= -f2)" ;;
   esac
   local mismatch=0

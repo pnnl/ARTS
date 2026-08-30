@@ -44,6 +44,9 @@ set(TEST_PROGRAMS
     route_table_remote_guid
     coherence_basic
     coherence_rw_chain
+    grant_purge_no_acquire_creator
+    grant_purge_churn
+    grant_purge_return
     coherence_rwro_phase
     coherence_rw_ordering
     coherence_rw_ro_rw
@@ -132,6 +135,7 @@ set(TEST_PROGRAMS
     multinode_stdout_forward
     # --- Pure unit tests (no ARTS runtime) ---
     coherence_buffer_test
+    grant_purge_word_model
     config_ports_contract
     port_block_relocation
     stdio_forward_scale_test
@@ -499,6 +503,11 @@ set_tests_properties(term_sigsegv PROPERTIES
 
 # --- Pure unit tests (no ARTS runtime) ---
 register_pure_unit_test(coherence_buffer_test TIMEOUT 60)
+# Exhaustive model check of the PURGE release policy's grant word decider
+# (coherence/grant_purge.c); self-skips (PASS) outside a VAL/INV x PURGE build.
+register_pure_unit_test(grant_purge_word_model TIMEOUT 30)
+set_tests_properties(grant_purge_word_model PROPERTIES
+    PASS_REGULAR_EXPRESSION "PASS grant_purge_word_model")
 # Forks to probe the ARTS_ERROR death paths of the port contract; loads cfgs
 # only, so it binds nothing and needs no runtime.
 register_pure_unit_test(config_ports_contract TIMEOUT 30)
@@ -807,6 +816,23 @@ register_multinode_test(coherence_zero_size_xfer TIMEOUT 30)
 register_multinode_test(coherence_rw_multihop TIMEOUT 30)
 register_multinode_test(coherence_rw_pipeline TIMEOUT 40)
 register_multinode_test(coherence_rw_chain TIMEOUT 30)
+# A NO_ACQUIRE create whose creator, home and writer are three different ranks:
+# the home-side create handler must end naming ITSELF as the holder on every
+# arm, or the writer's request reaches a rank that holds nothing and the run
+# times out.  Multinode only — one rank cannot separate the three roles, and
+# the 2n variants self-skip for the same reason.
+register_multinode_test(grant_purge_no_acquire_creator TIMEOUT 60)
+# Write-right churn with home-local turns overlapping remote ones.  It asserts
+# an exact sum, which every release policy must compute, so it runs at every
+# release policy; it is also where interleaving injection is aimed.  NOT under
+# the DB-WRF memory model: its turns race write-write on one block without
+# event-ordering them, which that model leaves undefined by contract (it is
+# the program's job to order them there, and this program deliberately does
+# not).
+if(NOT ARTS_COHERENCE_ARM STREQUAL "WRF_VAL")
+    register_single_node_test(grant_purge_churn TIMEOUT 60)
+    register_multinode_test(grant_purge_churn TIMEOUT 90)
+endif()
 register_multinode_test(coherence_rwro_phase TIMEOUT 30)
 # RO-side coherence is a MULTINODE-only code path: on one rank home, owner and
 # self coincide, so a read acquire never emits a REQUEST/FORWARD/DELIVER at all.
@@ -1146,6 +1172,30 @@ set_tests_properties(coherence_install_version_monotone_3n PROPERTIES FAIL_REGUL
 set_tests_properties(coherence_install_version_monotone_4n PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL")
 set_tests_properties(coherence_owner_ownership_reorder PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL")
 set_tests_properties(coherence_rw_chain PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL")
+foreach(_t grant_purge_no_acquire_creator_2n grant_purge_no_acquire_creator_3n
+          grant_purge_no_acquire_creator_4n
+          grant_purge_no_acquire_creator_2n_io)
+    set_tests_properties(${_t} PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL")
+endforeach()
+if(NOT ARTS_COHERENCE_ARM STREQUAL "WRF_VAL")
+    foreach(_t grant_purge_churn grant_purge_churn_2n grant_purge_churn_3n
+              grant_purge_churn_4n grant_purge_churn_2n_io)
+        set_tests_properties(${_t} PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL")
+    endforeach()
+endif()
+
+# grant_purge_return asserts that the write right is GIVEN BACK at every idle
+# edge — true only where the release policy hands it back unasked, and
+# deliberately false elsewhere (a retained grant serves the later turns with no
+# hand-back at all).  The binary builds in every tree; only the entry is gated.
+if((ARTS_COHERENCE_ARM STREQUAL "VAL" OR ARTS_COHERENCE_ARM STREQUAL "INV")
+   AND ARTS_RELEASE_POLICY STREQUAL "PURGE")
+    register_multinode_test(grant_purge_return TIMEOUT 60 VARIANTS 2n 3n 4n)
+    foreach(_t grant_purge_return_2n grant_purge_return_3n
+              grant_purge_return_4n)
+        set_tests_properties(${_t} PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL")
+    endforeach()
+endif()
 set_tests_properties(coherence_rw_chain_2n PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL")
 set_tests_properties(coherence_rw_chain_2n_io PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL")
 set_tests_properties(coherence_rw_chain_3n PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL")

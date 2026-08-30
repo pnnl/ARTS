@@ -125,7 +125,7 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
      * non-home owners.  Otherwise no transfer is pending: home retains
      * ownership until a future GRANT_REQUEST; a non-home owner quiesces. */
     if (cache->incoming_new_owner != ARTS_NO_PENDING_OWNER) {
-      arts_db_send_grant_response(cache);
+      arts_db_grant_ship_pending(cache);
     }
   }
 }
@@ -262,7 +262,7 @@ void arts_handler_db_destroy(void *item_v, void *args_v) {
                             (void *)(uintptr_t)a->db_guid);
   {
     unsigned int q_rank;
-    while (arts_home_grantreq_queue_pop(&db->pending_rw, &q_rank, NULL)) {
+    while (arts_home_grantreq_queue_pop(&db->pending_rw, &q_rank, NULL, NULL)) {
       if (q_rank != self) {
         arts_send_db_cache_destroy(q_rank, a->db_guid);
       }

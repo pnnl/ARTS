@@ -49,7 +49,7 @@
 void arts_send_db_publish(unsigned int home_rank, arts_guid_t db_guid,
                             uint64_t version, uint64_t cv, const void *data,
                             uint64_t data_size, uint64_t rdzv_txid,
-                            uint64_t rdzv_cookie) {
+                            uint64_t rdzv_cookie, bool return_grant) {
   struct arts_msg_publish_packet_s p;
   arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_PUBLISH);
   p.header.rank = arts_global_rank_id;
@@ -59,6 +59,7 @@ void arts_send_db_publish(unsigned int home_rank, arts_guid_t db_guid,
   p.data_size = data_size;
   p.rdzv_txid = rdzv_txid;
   p.rdzv_cookie = rdzv_cookie;
+  p.flags = return_grant ? ARTS_PUBLISH_FLAG_GRANT_RETURN : 0ULL;
 /* The OoO kind exists only in arms that publish at a release; VAL under WB
  * publishes nothing, so its local-hit branch is compiled out with it. */
 #if !defined(ARTS_WRITE_POLICY_WB) || defined(ARTS_PROTOCOL_INV)
@@ -88,6 +89,7 @@ void arts_send_db_publish(unsigned int home_rank, arts_guid_t db_guid,
     args->rdzv_txid = 0;
     args->rdzv_cookie = 0;
     args->data_inline = (inline_size > 0) ? 1u : 0u;
+    args->returns_grant = return_grant ? 1u : 0u;
     if (inline_size > 0) {
       memcpy(abuf + sizeof(*args), data, inline_size);
     }

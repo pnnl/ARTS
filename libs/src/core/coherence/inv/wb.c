@@ -188,7 +188,7 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
     /* An INVALIDATE named a transfer target while writers were live; this
      * (last) releaser is the unique actor that ships the owner->owner
      * transfer. */
-    arts_db_send_grant_response(cache);
+    arts_db_grant_ship_pending(cache);
   }
 }
 

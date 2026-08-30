@@ -381,6 +381,7 @@ struct arts_db_excl_waiter_s {
 struct arts_home_grantreq_node_s {
   struct arts_home_grantreq_node_s *next;
   unsigned int rank;
+  uint64_t have_version; /* version the requester already holds */
   struct arts_rdzv_landing_s rdzv; /* requester's grant/deliver landing */
 };
 
@@ -393,6 +394,7 @@ struct arts_home_grantreq_queue_s {
 struct arts_home_grantreq_node_s {
   _Atomic(struct arts_home_grantreq_node_s *) next;
   unsigned int rank;
+  uint64_t have_version; /* version the requester already holds */
   struct arts_rdzv_landing_s rdzv; /* requester's grant/deliver landing */
 };
 

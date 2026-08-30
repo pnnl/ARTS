@@ -41,6 +41,7 @@ int main(void) {
 #else
 
 #include "arts/coherence/directory.h"
+#include "arts/transport/protocol.h" /* ARTS_GRANT_VERSION_NONE */
 
 #include <pthread.h>
 #include <stdatomic.h>
@@ -73,18 +74,18 @@ static int part1_functional(void) {
     (void)fprintf(stderr, "FAIL: fresh queue not empty\n");
     rc = 1;
   }
-  if (arts_home_grantreq_queue_peek(&q, &r, NULL)) {
+  if (arts_home_grantreq_queue_peek(&q, &r, NULL, NULL)) {
     (void)fprintf(stderr, "FAIL: peek on empty returned true\n");
     rc = 1;
   }
-  if (arts_home_grantreq_queue_pop(&q, &r, NULL)) {
+  if (arts_home_grantreq_queue_pop(&q, &r, NULL, NULL)) {
     (void)fprintf(stderr, "FAIL: pop on empty returned true\n");
     rc = 1;
   }
 
   /* Push 0..9 — FIFO: pop must yield 0,1,...,9. */
   for (unsigned int i = 0; i < 10; i++) {
-    arts_home_grantreq_queue_push(&q, i, NULL);
+    arts_home_grantreq_queue_push(&q, i, NULL, ARTS_GRANT_VERSION_NONE);
   }
   if (arts_home_grantreq_queue_empty(&q)) {
     (void)fprintf(stderr, "FAIL: queue empty after 10 pushes\n");
@@ -92,8 +93,8 @@ static int part1_functional(void) {
   }
   /* peek is non-destructive: two peeks return the same front (oldest). */
   unsigned int p1 = 0, p2 = 0;
-  if (!arts_home_grantreq_queue_peek(&q, &p1, NULL) ||
-      !arts_home_grantreq_queue_peek(&q, &p2, NULL) || p1 != 0 || p2 != 0) {
+  if (!arts_home_grantreq_queue_peek(&q, &p1, NULL, NULL) ||
+      !arts_home_grantreq_queue_peek(&q, &p2, NULL, NULL) || p1 != 0 || p2 != 0) {
     (void)fprintf(stderr,
                   "FAIL: peek not non-destructive / not FIFO front "
                   "(p1=%u p2=%u)\n",
@@ -102,7 +103,7 @@ static int part1_functional(void) {
   }
   for (unsigned int i = 0; i < 10; i++) {
     unsigned int got = 0xffffffff;
-    if (!arts_home_grantreq_queue_pop(&q, &got, NULL)) {
+    if (!arts_home_grantreq_queue_pop(&q, &got, NULL, NULL)) {
       (void)fprintf(stderr, "FAIL: pop %u returned false\n", i);
       rc = 1;
       break;
@@ -117,7 +118,7 @@ static int part1_functional(void) {
     (void)fprintf(stderr, "FAIL: queue not empty after draining all\n");
     rc = 1;
   }
-  if (arts_home_grantreq_queue_pop(&q, &r, NULL)) {
+  if (arts_home_grantreq_queue_pop(&q, &r, NULL, NULL)) {
     (void)fprintf(stderr, "FAIL: pop after drain returned true\n");
     rc = 1;
   }
@@ -132,11 +133,11 @@ static int part2_stub_reuse(void) {
   int rc = 0;
   for (int round = 0; round < 3; round++) {
     for (unsigned int i = 0; i < 5; i++) {
-      arts_home_grantreq_queue_push(&q, round * 100 + i, NULL);
+      arts_home_grantreq_queue_push(&q, round * 100 + i, NULL, ARTS_GRANT_VERSION_NONE);
     }
     for (unsigned int i = 0; i < 5; i++) {
       unsigned int got = 0;
-      if (!arts_home_grantreq_queue_pop(&q, &got, NULL) ||
+      if (!arts_home_grantreq_queue_pop(&q, &got, NULL, NULL) ||
           got != (unsigned int)(round * 100 + i)) {
         (void)fprintf(stderr, "FAIL: stub-reuse round %d idx %u got %u\n",
                       round, i, got);
@@ -169,7 +170,7 @@ static void *producer(void *arg) {
   while (!atomic_load_explicit(&g_start, memory_order_acquire)) {
   }
   for (unsigned int s = 0; s < PER_PROD; s++) {
-    arts_home_grantreq_queue_push(&g_q, prod * PER_PROD + s, NULL);
+    arts_home_grantreq_queue_push(&g_q, prod * PER_PROD + s, NULL, ARTS_GRANT_VERSION_NONE);
     atomic_fetch_add_explicit(&g_produced, 1, memory_order_relaxed);
   }
   return NULL;
@@ -200,7 +201,7 @@ static int part3_mpsc(void) {
    * transient-NULL mid-link spin while producers are still mid-push. */
   while (consumed < total) {
     unsigned int v;
-    if (!arts_home_grantreq_queue_pop(&g_q, &v, NULL)) {
+    if (!arts_home_grantreq_queue_pop(&g_q, &v, NULL, NULL)) {
       /* Truly empty (producers between pushes) — retry. */
       continue;
     }

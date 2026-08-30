@@ -60,6 +60,38 @@ void arts_pending_rw_queue_drain(arts_lf_stack_t *q,
   }
 }
 
+arts_lf_link_t *arts_pending_rw_queue_take(arts_lf_stack_t *q) {
+  /* Detach the whole chain without consuming it, so a caller that must know
+   * how many waiters it has BEFORE waking any of them can walk it twice.  Same
+   * exchange, and the same guarantee: a producer prepending concurrently forms
+   * a fresh stack for the next take, so no waiter is lost. */
+  return arts_lf_stack_drain(q);
+}
+
+unsigned int arts_pending_rw_chain_count(arts_lf_link_t *chain) {
+  unsigned int n = 0u;
+  for (arts_lf_link_t *c = chain; c != NULL;
+       c = atomic_load_explicit(&c->next, memory_order_relaxed)) {
+    n++;
+  }
+  return n;
+}
+
+void arts_pending_rw_chain_wake(arts_lf_link_t *chain,
+                                void (*cb)(arts_guid_t edt_guid,
+                                           unsigned int slot, void *ctx),
+                                void *ctx) {
+  while (chain != NULL) {
+    arts_lf_link_t *next =
+        atomic_load_explicit(&chain->next, memory_order_relaxed);
+    struct arts_db_rw_waiter_s *w =
+        ARTS_CONTAINER_OF(chain, struct arts_db_rw_waiter_s, link);
+    cb(w->edt_guid, w->slot, ctx);
+    arts_free(w);
+    chain = next;
+  }
+}
+
 void arts_pending_rw_queue_for_each(arts_lf_stack_t *q,
                                     void (*cb)(arts_guid_t edt_guid,
                                                unsigned int slot, void *ctx),

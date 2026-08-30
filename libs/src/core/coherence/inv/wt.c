@@ -193,10 +193,12 @@ void arts_handler_db_acquire(void *item, void *args) {
  * holds its own count, so the ship happens here, at its decrement.
  */
 void arts_db_release_rw(struct arts_db_cache_s *cache) {
-  /* Defensive: writer_count==0 means our acquire never bumped the grant (e.g.
-   * a cache already torn down by a destroy fan-out); decrementing would
-   * underflow. */
-  if (arts_atomic_read(&cache->writer_count) == 0) {
+  /* Defensive: no local hold to drop means our acquire never bumped the grant
+   * (e.g. a cache already torn down by a destroy fan-out); decrementing would
+   * underflow.  Which word states carry no hold is the release policy's —
+   * possession alone is one of them under a voluntary-return policy and not
+   * under a revoked one. */
+  if (arts_db_grant_release_skip(cache)) {
     return;
   }
   arts_shared_ptr_t buf_h = arts_db_buf_acquire(cache);
@@ -207,10 +209,17 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
     arts_atomic_add_u64(&buf->version, 1);
     new_version = arts_atomic_read_u64(&buf->version);
   }
-  bool is_home = (arts_guid_get_rank(cache->db_guid) == arts_global_rank_id);
   /* A home owner's buffer IS the home buffer, so no bytes move — but the round
-   * still runs: it is what retires the remote copies. */
-  if (buf != NULL) {
+   * still runs: it is what retires the remote copies.  Derived ONCE: the
+   * hand-back rides this decision, and deriving it twice is how the two drift
+   * apart. */
+  bool will_publish = (buf != NULL);
+  /* Where the write right goes back unasked it can travel with this round
+   * instead of behind it — and the round is also what orders it, since the
+   * home may not hand the block on until every stale copy is retired.  A won
+   * claim replaces the count-dropping edge. */
+  bool handed_back = arts_db_grant_release_claim(cache, will_publish);
+  if (will_publish) {
     TIME_INVALIDATE_ROUND_START();
     arts_db_publish_sync(cache, new_version);
     TIME_INVALIDATE_ROUND_STOP();
@@ -219,13 +228,25 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
     arts_db_buf_release(&buf_h);
   }
 
-  int rest = (int)arts_atomic_sub(&cache->writer_count, 1); /* post value */
-  if (rest == 0 && cache->incoming_new_owner != ARTS_NO_PENDING_OWNER) {
-    /* An INVALIDATE named a transfer target while writers were live; this
-     * (last) releaser is the unique actor that ships the owner->owner
-     * transfer. */
-    arts_db_send_grant_response(cache);
+  /* The count-dropping edge, and what this rank owes at it, belong to the
+   * release policy — a revoked grant ships onward to the target the round
+   * named, a voluntarily returned one goes back to the home.  Sequenced after
+   * the round above either way, so no stale copy outlives the hand-over.  A
+   * claim taken above already dropped the count, and only has to settle which
+   * vehicle carried it. */
+  if (handed_back) {
+    arts_db_grant_release_settle(cache);
+  } else {
+    arts_db_grant_release_commit(cache);
   }
+}
+
+/* The home's publication axis, advanced by each round close.  Deliberately
+ * NOT the installed buffer's version: a home-resident owner writes through
+ * that buffer in place, so its lane stands still while round after round
+ * moves the data on. */
+uint64_t arts_db_grant_serve_version(struct arts_db_s *db) {
+  return atomic_load_explicit(&db->hver, memory_order_acquire);
 }
 
 /* arts_db_release_ro: the shared no-op body in coherence.c applies — an INV

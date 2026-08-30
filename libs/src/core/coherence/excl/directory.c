@@ -60,12 +60,14 @@ void arts_home_grantreq_queue_init(struct arts_home_grantreq_queue_s *q) {
 
 void arts_home_grantreq_queue_push(struct arts_home_grantreq_queue_s *q,
                                   unsigned int rank,
-                                  const struct arts_rdzv_landing_s *rdzv) {
+                                  const struct arts_rdzv_landing_s *rdzv,
+                                  uint64_t have_version) {
   /* Reached only when the turn could not be granted on arrival. */
   INCREMENT_NUM_EXCL_QUEUE_WAIT_BY(1);
   struct arts_home_grantreq_node_s *n =
       (struct arts_home_grantreq_node_s *)malloc(sizeof(*n));
   n->rank = rank;
+  n->have_version = have_version;
   if (rdzv != NULL) {
     n->rdzv = *rdzv;
   } else {
@@ -80,7 +82,8 @@ void arts_home_grantreq_queue_push(struct arts_home_grantreq_queue_s *q,
 
 bool arts_home_grantreq_queue_pop(struct arts_home_grantreq_queue_s *q,
                                  unsigned int *out_rank,
-                                 struct arts_rdzv_landing_s *out_rdzv) {
+                                 struct arts_rdzv_landing_s *out_rdzv,
+                                 uint64_t *out_have) {
   for (;;) {
     struct arts_home_grantreq_node_s *head =
         atomic_load_explicit(&q->head, memory_order_acquire);
@@ -98,6 +101,9 @@ bool arts_home_grantreq_queue_pop(struct arts_home_grantreq_queue_s *q,
     if (out_rdzv != NULL) {
       *out_rdzv = next->rdzv;
     }
+    if (out_have != NULL) {
+      *out_have = next->have_version;
+    }
     atomic_store_explicit(&q->head, next, memory_order_release);
     if (head != &q->stub) {
       free(head);
@@ -108,20 +114,39 @@ bool arts_home_grantreq_queue_pop(struct arts_home_grantreq_queue_s *q,
 
 bool arts_home_grantreq_queue_peek(const struct arts_home_grantreq_queue_s *q,
                                   unsigned int *out_rank,
-                                  struct arts_rdzv_landing_s *out_rdzv) {
-  struct arts_home_grantreq_node_s *head = atomic_load_explicit(
-      (_Atomic(struct arts_home_grantreq_node_s *) *)&q->head,
-      memory_order_acquire);
-  struct arts_home_grantreq_node_s *next =
-      atomic_load_explicit(&head->next, memory_order_acquire);
-  if (next == NULL) {
-    return false;
+                                  struct arts_rdzv_landing_s *out_rdzv,
+                                  uint64_t *out_have) {
+  /* Same mid-link disambiguation as pop: a null forward link means empty only
+   * when head == tail; otherwise a producer is between its tail exchange and
+   * its link store and the front exists but is not yet reachable.  Returning
+   * "no front" there would contradict the deref-free pending probe, which
+   * counts that producer, and leave a caller alternating between the two.
+   * Cast away const for the atomic loads — the queue is not mutated (no head
+   * advance, no node free); single consumer (the baton holder). */
+  for (;;) {
+    struct arts_home_grantreq_node_s *head = atomic_load_explicit(
+        (_Atomic(struct arts_home_grantreq_node_s *) *)&q->head,
+        memory_order_acquire);
+    struct arts_home_grantreq_node_s *next =
+        atomic_load_explicit(&head->next, memory_order_acquire);
+    if (next == NULL) {
+      struct arts_home_grantreq_node_s *tail = atomic_load_explicit(
+          (_Atomic(struct arts_home_grantreq_node_s *) *)&q->tail,
+          memory_order_acquire);
+      if (head == tail) {
+        return false; /* truly empty */
+      }
+      continue; /* producer mid-link: tight retry (single consumer, ns) */
+    }
+    *out_rank = next->rank;
+    if (out_rdzv != NULL) {
+      *out_rdzv = next->rdzv;
+    }
+    if (out_have != NULL) {
+      *out_have = next->have_version;
+    }
+    return true;
   }
-  *out_rank = next->rank;
-  if (out_rdzv != NULL) {
-    *out_rdzv = next->rdzv;
-  }
-  return true;
 }
 
 bool arts_home_grantreq_queue_empty(const struct arts_home_grantreq_queue_s *q) {
@@ -137,6 +162,25 @@ bool arts_home_grantreq_queue_empty(const struct arts_home_grantreq_queue_s *q) 
       (_Atomic(struct arts_home_grantreq_node_s *) *)&q->tail,
       memory_order_acquire);
   return head == tail;
+}
+
+bool arts_home_grantreq_queue_pending(
+    const struct arts_home_grantreq_queue_s *q) {
+  /* Deref-free: a push linearizes on the tail exchange, so head != tail
+   * already names a queued requester even while its forward link is still in
+   * flight.  Reading head->next instead would follow a pointer a concurrent
+   * pop is free to have released, which is why the baton-release re-checks
+   * use this and not the dereferencing test above.  Both loads may name freed
+   * nodes; that is harmless because baton RELEASES order them — the last
+   * release's probe can have no pop between its two loads, since any such pop
+   * belongs to a later holder who must release again. */
+  struct arts_home_grantreq_node_s *head = atomic_load_explicit(
+      (_Atomic(struct arts_home_grantreq_node_s *) *)&q->head,
+      memory_order_acquire);
+  struct arts_home_grantreq_node_s *tail = atomic_load_explicit(
+      (_Atomic(struct arts_home_grantreq_node_s *) *)&q->tail,
+      memory_order_acquire);
+  return head != tail;
 }
 
 void arts_home_grantreq_queue_destroy(struct arts_home_grantreq_queue_s *q) {

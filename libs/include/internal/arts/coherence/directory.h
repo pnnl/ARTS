@@ -42,22 +42,36 @@ struct arts_home_grantreq_queue_s;
 void arts_home_grantreq_queue_init(struct arts_home_grantreq_queue_s *q);
 void arts_home_grantreq_queue_destroy(struct arts_home_grantreq_queue_s *q);
 /* Push a requester with its transfer landing (NULL rdzv = zero landing —
- * a data-less / sentinel round). */
+ * a data-less / sentinel round) and the version of the copy it already holds
+ * (ARTS_GRANT_VERSION_NONE when it holds none), which travels with it so a
+ * server can decide at serve time whether any bytes need to move. */
 void arts_home_grantreq_queue_push(struct arts_home_grantreq_queue_s *q,
                                   unsigned int rank,
-                                  const struct arts_rdzv_landing_s *rdzv);
+                                  const struct arts_rdzv_landing_s *rdzv,
+                                  uint64_t have_version);
 /* Pop the front requester (single consumer).  Returns true and sets *out_rank
- * (+ *out_rdzv when non-NULL) on success; false when the queue is empty. */
+ * (+ *out_rdzv / *out_have when non-NULL) on success; false when empty. */
 bool arts_home_grantreq_queue_pop(struct arts_home_grantreq_queue_s *q,
                                  unsigned int *out_rank,
-                                 struct arts_rdzv_landing_s *out_rdzv);
+                                 struct arts_rdzv_landing_s *out_rdzv,
+                                 uint64_t *out_have);
 /* Peek the front (oldest) requester without popping. Single consumer (the
- * baton holder). Returns true + sets *out_rank (+ *out_rdzv when non-NULL)
- * when non-empty. */
+ * baton holder). Returns true + sets *out_rank (+ *out_rdzv / *out_have when
+ * non-NULL) when non-empty. */
 bool arts_home_grantreq_queue_peek(const struct arts_home_grantreq_queue_s *q,
                                   unsigned int *out_rank,
-                                  struct arts_rdzv_landing_s *out_rdzv);
+                                  struct arts_rdzv_landing_s *out_rdzv,
+                                  uint64_t *out_have);
 bool arts_home_grantreq_queue_empty(const struct arts_home_grantreq_queue_s *q);
+/* Conservative "is anything queued" probe, safe to call WITHOUT the consumer
+ * baton — two field loads, no node dereference.  A push linearizes on the tail
+ * exchange, so head != tail already implies a queued requester even while its
+ * forward link is still in flight; head == tail is exact emptiness.  The
+ * dereferencing tests above read head->next, which a concurrent pop may have
+ * freed, so they belong to the baton holder alone; this one is what a baton
+ * RELEASE re-checks with. */
+bool arts_home_grantreq_queue_pending(
+    const struct arts_home_grantreq_queue_s *q);
 
 /*--- cached_version dense map ----------------------------------------*/
 

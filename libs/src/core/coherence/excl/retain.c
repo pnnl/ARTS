@@ -1307,6 +1307,57 @@ static void lock_deliver_commit(arts_shared_ptr_t db_h, arts_guid_t db_guid,
         arts_db_buf_landing_recycle(cache, landing);
       }
       lock_drain_pending(&cache->ro_pending);
+      /* A grant marked to return while no reader holds it is returned by
+       * whichever side observes the complete state second.
+       *
+       * The mark is a promise to give the grant back at the read count's zero
+       * edge, and the release path keeps that promise.  A mark that becomes
+       * visible when the count is ALREADY zero promises an edge that is in the
+       * past: it cannot recur on its own, because a grant is relinquished only
+       * on that edge or on a recall, and a recall declines a grant that is
+       * already marked.  The promise would then be owed forever, and the
+       * directory's outstanding-reader count never falls to zero — so every
+       * writer queued behind this block waits on an event nobody will produce.
+       *
+       * Settling it here is safe precisely because the count covers waiters as
+       * well as holders (it is raised before a waiter is made drainable), so a
+       * zero count means no reader holds this grant and none is queued for it.
+       *
+       * The guard is re-evaluated on every attempt rather than tested once.
+       * The mark shares its word with unrelated state — a local write request
+       * moves the same word without touching either the mark or the read count
+       * — so a failed exchange proves only that the word moved, NEVER that the
+       * obligation found another payer.  Treating those two as the same fact is
+       * what strands the grant: the unrelated writer's change is read as "the
+       * other side has it" and neither side sends.  Re-reading the guard tells
+       * them apart, and it is the only thing that has to be re-read.
+       *
+       * The loop cannot spin against a peer that is not progressing: every
+       * retry follows another thread's committed change to the word, and the
+       * exit is either this side's own success or a guard that a payer now
+       * exists (a reader has joined, or the release edge settled it). */
+      if (CACHE_RO_ST(next) == CACHE_ST_GRANT_PURGE) {
+        uint64_t seen =
+            atomic_load_explicit(&cache->cache_state, memory_order_acquire);
+        for (;;) {
+          if (CACHE_RO_ST(seen) != CACHE_ST_GRANT_PURGE ||
+              CACHE_RO_CNT(seen) != 0u || !CACHE_GRANTED(seen)) {
+            break; /* the mark has a payer, or has already been paid */
+          }
+          /* CACHE_MAKE_FULL yields bit63 == 0, so the debt is discharged in the
+           * same word that retires the grant — the release path's rule. */
+          uint64_t settled = CACHE_MAKE_FULL(
+              CACHE_OWNER(seen), CACHE_RW_ST(seen), CACHE_ST_IDLE,
+              CACHE_MIGRATE_TARGET(seen), CACHE_RW_CNT(seen),
+              CACHE_RO_CNT(seen));
+          if (atomic_compare_exchange_weak_explicit(
+                  &cache->cache_state, &seen, settled, memory_order_acq_rel,
+                  memory_order_acquire)) {
+            arts_send_db_excl_roret(arts_guid_get_rank(db_guid), db_guid);
+            break;
+          }
+        }
+      }
     }
   }
 
@@ -1530,7 +1581,7 @@ static void lock_owner_home_forward(struct arts_db_s *db, uint32_t action,
      * which is what makes "queue front == the rank that will CONFIRM" hold. */
     unsigned int target;
     struct arts_rdzv_landing_s target_rdzv;
-    if (arts_home_grantreq_queue_peek(&db->rw_waiters, &target, &target_rdzv)) {
+    if (arts_home_grantreq_queue_peek(&db->rw_waiters, &target, &target_rdzv, NULL)) {
       arts_send_db_excl_forward(owner, db->cache.db_guid, (uint32_t)DB_MODE_RW,
                                 target, /*tag=*/0u, &target_rdzv);
     }
@@ -1608,7 +1659,8 @@ void arts_handler_db_excl_request(void *item_v, void *args_v) {
   if (mode == DB_MODE_RW) {
     /* push-before-CAS: the requester is queued (and thus counted by w) before
      * the transition reads w, so a concurrent CONFIRM/peek sees it. */
-    arts_home_grantreq_queue_push(&db->rw_waiters, requester, &a->rdzv);
+    arts_home_grantreq_queue_push(&db->rw_waiters, requester, &a->rdzv,
+                                  ARTS_GRANT_VERSION_NONE);
     do {
       cur = atomic_load_explicit(&db->lock_state, memory_order_acquire);
       next = lock_owner_compute_next(cur, EXCL_OP_RW_ACQ, /*new_owner=*/0u,
@@ -1714,7 +1766,7 @@ void arts_handler_db_excl_confirm(void *item_v) {
    * transition, else it underflows w (0 → 0xFFFFFF) and dispatches a spurious
    * MIGRATE. */
   unsigned int front;
-  if (!arts_home_grantreq_queue_pop(&db->rw_waiters, &front, NULL)) {
+  if (!arts_home_grantreq_queue_pop(&db->rw_waiters, &front, NULL, NULL)) {
     arts_shared_release(&db_h);
     return; /* stale / duplicate CONFIRM (empty RW queue) — drop */
   }

@@ -122,6 +122,12 @@ enum arts_ooo_kind {
    * it); under WB it is pure control.  That is the ONLY difference between
    * the two write policies' releases. */
   OOO_DB_PUBLISH, /* → arts_handler_db_publish @ home */
+#ifdef ARTS_RELEASE_PURGE
+  /* The voluntary return.  It can overtake the block's home CREATE, and the
+   * home fields it touches do not exist on a cache-only stub, so it defers
+   * and replays on the install's drain like any other home-side body. */
+  OOO_DB_GRANT_RETURN, /* → arts_handler_db_grant_return @ home */
+#endif
 #ifdef ARTS_WRITE_POLICY_WB
   OOO_DB_INV_REDIRECT, /* → arts_handler_db_inv_redirect @ the grant holder */
 #endif
@@ -142,6 +148,12 @@ enum arts_ooo_kind {
    * WB), so the target is provably installed when INVALIDATE arrives and the
    * dispatcher/self-send call the body directly. */
   OOO_DB_PUBLISH, /* → arts_handler_db_publish @ home */
+#ifdef ARTS_RELEASE_PURGE
+  /* The voluntary return.  It can overtake the block's home CREATE, and the
+   * home fields it touches do not exist on a cache-only stub, so it defers
+   * and replays on the install's drain like any other home-side body. */
+  OOO_DB_GRANT_RETURN, /* → arts_handler_db_grant_return @ home */
+#endif
 #elif defined(ARTS_WRITE_POLICY_WB)
   OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
                      local dep; pushed by arts_db_acquire_all's per-dep 3-way)
@@ -238,6 +250,13 @@ struct arts_ooo_args_db_grant_request_s {
   unsigned int requester;
   arts_guid_t db_guid;
   struct arts_rdzv_landing_s rdzv; /* requester's transfer landing */
+  uint64_t have_version;           /* version the requester already holds */
+};
+
+/* The voluntary return carries nothing but who is giving the right back. */
+struct arts_ooo_args_db_grant_return_s {
+  unsigned int returner;
+  arts_guid_t db_guid;
 };
 
 struct arts_ooo_args_db_snapshot_request_s {
@@ -271,6 +290,9 @@ struct arts_ooo_args_db_publish_s {
   uint64_t rdzv_txid;
   uint64_t rdzv_cookie;
   uint32_t data_inline;
+  /* The releaser gave the write right back with this publish; the home
+   * owes it the same acceptance a standalone hand-back would ask for. */
+  uint32_t returns_grant;
 };
 
 /* DB ownership invalidate: carries the fields the wire

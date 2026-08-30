@@ -124,8 +124,10 @@ _Static_assert(MSG_DB_CREATE_RETURN == 39,
                "MSG_DB_CREATE_RETURN ordinal moved");
 _Static_assert(MSG_DB_EXCL_RECALL == 40,
                "ordinal MSG_DB_EXCL_RECALL drifted");
-_Static_assert(MSG_COUNT == 41,
-               "MSG_COUNT drifted (wire-compat: must be 41 in all configs)");
+_Static_assert(MSG_DB_GRANT_RETURN == 41,
+               "ordinal MSG_DB_GRANT_RETURN drifted");
+_Static_assert(MSG_COUNT == 42,
+               "MSG_COUNT drifted (wire-compat: must be 42 in all configs)");
 
 /* ===== (2) header layout — read before the message type is known. ===== */
 _Static_assert(offsetof(struct arts_msg_header_s, message_type) == 0,
@@ -171,11 +173,11 @@ _Static_assert(sizeof(struct arts_msg_time_sync_req_packet_s) == 24,
                "time_sync_req sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_time_sync_resp_packet_s) == 32,
                "time_sync_resp sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_grant_request_packet_s) == 56,
+_Static_assert(sizeof(struct arts_msg_grant_request_packet_s) == 64,
                "ownership_request sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_grant_response_packet_s) == 64,
                "ownership_response sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_publish_packet_s) == 64,
+_Static_assert(sizeof(struct arts_msg_publish_packet_s) == 72,
                "publish sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_publish_ack_packet_s) == 64,
                "publish_ack sizeof drifted");
@@ -201,6 +203,8 @@ _Static_assert(sizeof(struct arts_msg_rank_version_pair_s) == 16,
                "rank_version_pair sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_rdzv_landing_s) == 32,
                "rdzv_landing sizeof drifted");
+_Static_assert(sizeof(struct arts_msg_grant_return_packet_s) == 24,
+               "grant_return sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_grant_cts_packet_s) == 32,
                "ownership_cts sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_publish_cts_packet_s) == 64,

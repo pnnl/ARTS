@@ -117,9 +117,55 @@ static inline void db_create_no_acquire_idle(struct arts_db_s *db,
   atomic_store_explicit(&db->lock_state, 0ULL, memory_order_relaxed);
 #endif /* ARTS_RELEASE_* */
 #else
-  /* Grant-bearing arms: with no creator hold this rank is the idle owner and
-   * keeps the sentinel; the first foreign request revokes an idle grant. */
-  db->cache.writer_count = 1;
+  /* Grant-bearing arms: with no creator hold this rank is the idle owner —
+   * possession, and no hold under it.  The store is atomic because this word
+   * is what a concurrent acquire's admission CAS and, where grants come back
+   * unasked, a returning holder's claim both arbitrate against; on the
+   * coalesce arms the descriptor is already visible when this runs. */
+  (void)arts_atomic_swap(&db->cache.writer_count, ARTS_GRANT_SEED_IDLE);
+#if defined(ARTS_PROTOCOL_VAL) || defined(ARTS_PROTOCOL_INV)
+  /* The directory must name THIS rank too.  A creator that never acquires
+   * never releases, so it can never reach an idle edge: named as the holder
+   * it would absorb the first requester's round and keep the block forever.
+   * A transition, not a field write — demand may already be queued behind
+   * the holder it replaces. */
+  arts_db_grant_home_idle_transition(db);
+#endif
+#endif
+}
+
+/* A create that takes the creator's implicit write hold may race only WITHIN
+ * one rank.  Two ranks doing it to one label both stamp themselves as holders
+ * of a block only one of them can hold, and nothing afterwards can tell them
+ * apart: the directory names one, the other keeps a hold it was never granted
+ * and will write through it without asking.  Only the home sees both creates,
+ * so this is the one place the pattern is visible at all.
+ *
+ * Diagnosed, not repaired: repairing it means revoking a rank that may be
+ * mid-write, which no message here is allowed to mean.  A create that takes
+ * no hold (NO_ACQUIRE) is exempt — every arm of it ends with the home as the
+ * holder, so there is no second holder to disagree about.
+ *
+ * The test is "would this create displace a holder that is not itself": a
+ * repeated create from the SAME rank re-publishes the rank already named and
+ * is left alone, and so is one that finds the block resting at its home. */
+static inline void db_create_diagnose_second_creator(struct arts_db_s *db,
+                                                     unsigned int creator_rank,
+                                                     bool no_acquire) {
+#if defined(ARTS_PROTOCOL_VAL) || defined(ARTS_PROTOCOL_INV)
+  if (no_acquire) {
+    return;
+  }
+  unsigned int holder =
+      atomic_load_explicit(&db->rw_holder, memory_order_acquire);
+  assert((holder == creator_rank || holder == arts_global_rank_id) &&
+         "a create that takes the creator's hold may race only within one "
+         "rank; across ranks it must not acquire");
+  (void)holder;
+#else
+  (void)db;
+  (void)creator_rank;
+  (void)no_acquire;
 #endif
 }
 
@@ -167,13 +213,24 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
     if (cache->db_size == 0) {
       cache->db_size = db_size;
     }
-    if (!db->home_initialized) {
-      arts_db_home_init(db, creator_rank, arts_global_rank_count);
-      db->home_initialized = true;
-    } else {
-      arts_db_create_publish_holder(db, creator_rank);
+    /* The home-directory fields below are out of bounds on a cache-only
+     * stub, and a stub is never installed on a block's own home rank: the
+     * acquire path installs one only when the owner is not this rank, and a
+     * transfer response cannot land here in a supported program.  So a
+     * coalesce target on the home always carries its directory already —
+     * asserted, and then GUARDED, because an assert says nothing about the
+     * build where the write would actually land past the allocation. */
+    assert(db->home_initialized &&
+           "a home rank's descriptor carries its home directory");
+    if (db->home_initialized) {
+      db_create_diagnose_second_creator(db, creator_rank, no_acquire);
+      if (!no_acquire) {
+        arts_db_create_publish_holder(db, creator_rank);
+      }
+      /* NO_ACQUIRE names the home as the holder instead (below), so the
+       * creator is never published as one — not even transiently. */
+      db_create_no_acquire_idle(db, no_acquire);
     }
-    db_create_no_acquire_idle(db, no_acquire);
 #if (!defined(ARTS_PROTOCOL_EXCL) && defined(ARTS_WRITE_POLICY_WT)) ||        \
     defined(ARTS_PROTOCOL_WRF_VAL)
     if (!no_acquire) {
@@ -280,13 +337,24 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
     if (cache->db_size == 0) {
       cache->db_size = db_size;
     }
-    if (!db->home_initialized) {
-      arts_db_home_init(db, creator_rank, arts_global_rank_count);
-      db->home_initialized = true;
-    } else {
-      arts_db_create_publish_holder(db, creator_rank);
+    /* The home-directory fields below are out of bounds on a cache-only
+     * stub, and a stub is never installed on a block's own home rank: the
+     * acquire path installs one only when the owner is not this rank, and a
+     * transfer response cannot land here in a supported program.  So a
+     * coalesce target on the home always carries its directory already —
+     * asserted, and then GUARDED, because an assert says nothing about the
+     * build where the write would actually land past the allocation. */
+    assert(db->home_initialized &&
+           "a home rank's descriptor carries its home directory");
+    if (db->home_initialized) {
+      db_create_diagnose_second_creator(db, creator_rank, no_acquire);
+      if (!no_acquire) {
+        arts_db_create_publish_holder(db, creator_rank);
+      }
+      /* NO_ACQUIRE names the home as the holder instead (below), so the
+       * creator is never published as one — not even transiently. */
+      db_create_no_acquire_idle(db, no_acquire);
     }
-    db_create_no_acquire_idle(db, no_acquire);
 #if (!defined(ARTS_PROTOCOL_EXCL) && defined(ARTS_WRITE_POLICY_WT)) ||        \
     defined(ARTS_PROTOCOL_WRF_VAL)
     if (!no_acquire) {

@@ -63,11 +63,17 @@ MK_HANDLER(arts_handler_db_excl_release)
 #elif defined(ARTS_PROTOCOL_INV)
 MK_HANDLER(arts_handler_db_grant_request)
 MK_HANDLER(arts_handler_db_inv_request)
+#ifdef ARTS_RELEASE_PURGE
+MK_HANDLER(arts_handler_db_grant_return)
+#endif
 #ifdef ARTS_WRITE_POLICY_WB
 MK_HANDLER(arts_handler_db_inv_redirect)
 #endif
 #elif defined(ARTS_WRITE_POLICY_WT) || defined(ARTS_WRITE_POLICY_WB)
 MK_HANDLER(arts_handler_db_grant_request)
+#ifdef ARTS_RELEASE_PURGE
+MK_HANDLER(arts_handler_db_grant_return)
+#endif
 #endif
 
 /* route_table + allocator shims (ooo.c needs them at link time even though the
@@ -113,6 +119,9 @@ static const struct expect_s g_expect[] = {
     E(OOO_DB_GRANT_REQUEST, arts_handler_db_grant_request),
     E(OOO_DB_INV_REQUEST, arts_handler_db_inv_request),
     E(OOO_DB_PUBLISH, arts_handler_db_publish),
+#ifdef ARTS_RELEASE_PURGE
+    E(OOO_DB_GRANT_RETURN, arts_handler_db_grant_return),
+#endif
 #ifdef ARTS_WRITE_POLICY_WB
     E(OOO_DB_INV_REDIRECT, arts_handler_db_inv_redirect),
 #endif
@@ -121,6 +130,9 @@ static const struct expect_s g_expect[] = {
     E(OOO_DB_SNAPSHOT_REQUEST, arts_handler_db_snapshot_request),
     E(OOO_DB_GRANT_REQUEST, arts_handler_db_grant_request),
     E(OOO_DB_PUBLISH, arts_handler_db_publish),
+#ifdef ARTS_RELEASE_PURGE
+    E(OOO_DB_GRANT_RETURN, arts_handler_db_grant_return),
+#endif
 #elif defined(ARTS_WRITE_POLICY_WB)
     E(OOO_DB_ACQUIRE, arts_db_acquire_replay_dep),
     E(OOO_DB_SNAPSHOT_REQUEST, arts_handler_db_snapshot_request),
@@ -150,8 +162,12 @@ int main(void) {
       "EXCL+OWNER"
 #elif defined(ARTS_PROTOCOL_INV) && defined(ARTS_WRITE_POLICY_WB)
       "INV+OWNER"
+#elif defined(ARTS_PROTOCOL_INV) && defined(ARTS_RELEASE_PURGE)
+      "INV+HOME+PURGE"
 #elif defined(ARTS_PROTOCOL_INV)
       "INV+HOME"
+#elif defined(ARTS_WRITE_POLICY_WT) && defined(ARTS_RELEASE_PURGE)
+      "VAL+HOME+PURGE"
 #elif defined(ARTS_WRITE_POLICY_WT)
       "VAL+HOME"
 #elif defined(ARTS_WRITE_POLICY_WB)

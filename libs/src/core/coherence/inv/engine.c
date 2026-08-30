@@ -23,6 +23,7 @@
 #include "arts/coherence/inv/types.h"
 
 #include <semaphore.h>
+#include <assert.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -211,10 +212,13 @@ void arts_db_cache_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
   atomic_store_explicit(&c->waiters.chunks, (uintptr_t)0, memory_order_relaxed);
   atomic_store_explicit(&c->waiters.next_fresh, 1u, memory_order_relaxed);
   atomic_store_explicit(&c->waiters.free_head, 0u, memory_order_relaxed);
-  /* Grant plane.  A creator boots holding the grant: the sentinel (+1) plus
-   * the create-default RW acquire's own count (+1).  Everyone else starts at
-   * zero, which IS "not the owner" — there is no separate ownership bit. */
-  c->writer_count = creator ? 2u : 0u;
+  /* Grant plane.  A creator boots holding the write right with the
+   * create-default RW acquire's own hold under it; everyone else starts at
+   * the all-zero word, which IS "not the owner". */
+  c->writer_count = creator ? ARTS_GRANT_SEED_HOLDING : 0u;
+#ifdef ARTS_RELEASE_PURGE
+  c->pending_grant_return = 0u;
+#endif
   arts_pending_rw_queue_init(&c->pending_rw);
   c->grant_req_in_flight = 0u;
   c->incoming_new_owner = ARTS_NO_PENDING_OWNER;
@@ -337,10 +341,18 @@ static void inv_home_round_close(struct arts_db_s *db,
   /* Wake every releaser this round covered, then drop the claim.  The wakes
    * commute and must land BEFORE the claim drops: the next round can open the
    * instant round_open clears. */
+  /* At most one entry in a batch can hand the write right back: only its
+   * holder can, and there is exactly one. */
+  unsigned int returner = ARTS_GRANT_NO_RETURNER;
   while (entries != NULL) {
     struct arts_db_inv_pub_s *e = entries;
     entries = (struct arts_db_inv_pub_s *)(uintptr_t)atomic_load_explicit(
         &e->link.next, memory_order_relaxed);
+    if (e->returns_grant != 0u) {
+      assert(returner == ARTS_GRANT_NO_RETURNER &&
+             "one batch cannot carry two hand-backs of one write right");
+      returner = e->releaser_rank;
+    }
     /* Unconditional: a flight-plane entry carries cv 0 and completes through
      * the releaser cache's waiter drain. */
 #ifdef ARTS_WRITE_POLICY_WT
@@ -363,6 +375,13 @@ static void inv_home_round_close(struct arts_db_s *db,
   } while (!atomic_compare_exchange_weak_explicit(&db->dir_state, &cur, next,
                                                   memory_order_acq_rel,
                                                   memory_order_acquire));
+  if (returner != ARTS_GRANT_NO_RETURNER) {
+    /* Accepted only now: the round it rode has retired every stale copy and
+     * stamped the publication axis, so a block handed straight on from here
+     * carries no copy this release has already invalidated.  After the claim
+     * drops, too, so the acceptance may open a round of its own. */
+    arts_db_grant_return_arrived(db, returner);
+  }
 }
 
 void inv_home_round_try_open(struct arts_db_s *db) {
@@ -600,6 +619,7 @@ void arts_handler_db_publish(void *item_v, void *args_v) {
       (struct arts_db_inv_pub_s *)arts_malloc(sizeof(*e));
   e->vnew = a->version;
   e->releaser_rank = a->releaser;
+  e->returns_grant = a->returns_grant;
   e->cv = a->cv;
   e->rdzv = (struct arts_rdzv_landing_s){0, 0, 0, 0};
   if (a->data_inline != 0) {

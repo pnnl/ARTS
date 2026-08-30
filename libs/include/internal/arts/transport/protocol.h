@@ -151,6 +151,14 @@ enum arts_msg_type {
    * continuation that fires the RO->RW flip. */
   MSG_DB_EXCL_RECALL,
 
+  /* Grant-arm PURGE-only: holder -> home, "the write right is yours again".
+   * Sent unasked at the holder's own idle edge, which is why the reverse
+   * direction (the home's GRANT_INVALIDATE) carries no traffic under that
+   * release policy.  Data-less: the write-through publish that preceded the
+   * release already put the bytes at the home.  Appended at the end so no
+   * existing ordinal moves. */
+  MSG_DB_GRANT_RETURN,
+
   MSG_COUNT, /* sentinel — keep last; used for array sizing */
 };
 
@@ -249,7 +257,15 @@ struct ARTS_PACKED arts_msg_grant_request_packet_s {
    * answers GRANT_CTS instead of enqueueing, unless the DB itself is a
    * sentinel (db_size==0 at home), which transfers data-less. */
   struct arts_msg_rdzv_landing_s rdzv;
+  /* The version of the copy this requester ALREADY holds, so a server can
+   * tell "needs the bytes" from "needs only the permission" without asking
+   * anyone.  ARTS_GRANT_VERSION_NONE = holds nothing worth keeping, which is
+   * also what an unpublished copy reports: both need the bytes. */
+  uint64_t have_version;
 };
+
+/* No copy, or one whose contents were never published. */
+#define ARTS_GRANT_VERSION_NONE ((uint64_t)0)
 
 /* GRANT_CTS — home → requester: the db_size a first-touch RW requester
  * needs to allocate its landing; the requester re-issues GRANT_REQUEST
@@ -318,7 +334,14 @@ struct ARTS_PACKED arts_msg_publish_packet_s {
   uint64_t data_size;
   uint64_t rdzv_txid;
   uint64_t rdzv_cookie;
+  uint64_t flags; /* ARTS_PUBLISH_FLAG_* */
 };
+
+/* The releaser is handing the write right back with these bytes.  It rides a
+ * PAYLOAD COMMIT leg only, never an announce: the home may act on it no
+ * earlier than the moment the bytes it accompanies have landed, and an
+ * announce is answered before any of them have. */
+#define ARTS_PUBLISH_FLAG_GRANT_RETURN 0x1ULL
 
 /* PUBLISH_CTS — home → releaser: the fresh home landing for an announced
  * dirty publish.  cv is echoed verbatim; the releaser-side handler writes
@@ -358,6 +381,14 @@ struct ARTS_PACKED arts_msg_grant_invalidate_packet_s {
    * the current holder can PUT the transfer payload without a home
    * round-trip.  txid==0 = sentinel DB round (data-less transfer). */
   struct arts_msg_rdzv_landing_s new_owner_rdzv;
+};
+
+/* GRANT_RETURN: holder → home. Body = db_guid(8); the returner is the
+ * header's rank.  Nothing else rides it — the right is handed back whole, and
+ * the bytes went home with the release's publish. */
+struct ARTS_PACKED arts_msg_grant_return_packet_s {
+  struct arts_msg_header_s header;
+  arts_guid_t db_guid;
 };
 
 /* GRANT_CONFIRM_ACK: home → new owner C. Body = db_guid(8). No version: C

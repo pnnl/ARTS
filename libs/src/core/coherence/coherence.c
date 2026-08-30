@@ -109,12 +109,13 @@ void arts_db_cache_common_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
     arts_db_home_init(db_self, self, n);
     db_self->home_initialized = true;
 #if !defined(ARTS_PROTOCOL_EXCL)
-    /* VAL/WRF_VAL: writer_count tracks ownership (sentinel + creator). */
-    c->writer_count = 2;
+    /* The creator boots holding the write right, with its own create-time
+     * hold under it: possession, and one live writer. */
+    c->writer_count = ARTS_GRANT_SEED_HOLDING;
 #endif
   } else if (kind == ARTS_DB_INIT_CREATOR_REMOTE) {
 #if !defined(ARTS_PROTOCOL_EXCL)
-    c->writer_count = 2;
+    c->writer_count = ARTS_GRANT_SEED_HOLDING;
 #endif
   }
   /* WT/WRF_VAL PUBLISH ACK rendezvous is a stack-local sem_t per
@@ -261,9 +262,10 @@ arts_shared_ptr_t arts_db_cache_stub_install(arts_guid_t db_guid,
   stub->db_type = ARTS_DB;
 
   /* db_size==0 ⇒ stub install: buffer alloc deferred until first wire
-   * arrival (install_buffer with the actual db_size).  No home struct
-   * yet — even for is_home, the home struct is created when DB_CREATE
-   * arrives (with the proper rw_holder = creator_rank). */
+   * arrival (install_buffer with the actual db_size).  Cache-only: this path
+   * runs on a rank that is NOT the block's home (the caller gates it on the
+   * owner not being this rank), so there are no home fields to initialize and
+   * the stub's allocation deliberately stops before them. */
   arts_db_cache_init(&stub->cache, db_guid, /*db_size=*/db_size,
                      ARTS_DB_INIT_STUB,
                      /*creator_rank=*/0);
@@ -413,17 +415,28 @@ void arts_db_ro_combine_on_terminal(struct arts_db_cache_s *cache,
   ro_combine_pump(cache);
 }
 void arts_db_ro_combine_grant_drain(struct arts_db_cache_s *cache) {
-  /* Ownership-arrival drain: called from the transfer-commit body while its
-   * sentinel/guard holds writer_count away from zero, so ownership cannot ship
-   * out from under the walk (only the decrement that lands on exactly 0 ships,
-   * and under WB the unconfirmed marker keeps the word off 0 outright).  Every waiter here parked before this drain, and the
-   * transferred buffer contains every release completed before the transfer
-   * (the ownership chain linearizes all writers), so resuming against it is
-   * correct for any park time — unlike a snapshot install, which is only a
-   * specific version.  The in-flight window group (ro_combine_group) is NOT
-   * touched: its response terminal owns it.  Stragglers that push after this
-   * exchange are picked up by their own pump (a fresh request round trip,
-   * correct via the response path). */
+  /* Ownership-arrival drain: called from the transfer-commit body inside the
+   * install's drain guard, which holds a count on the word across this walk.
+   * That is what stops ownership leaving under it, and it holds however the
+   * word is encoded: the guard is one hold, every waiter this commit wakes
+   * adds another, so no release reaching this word can be the one that gives
+   * ownership up — the count cannot fall to the edge while the guard is
+   * there.  It also means a releasing writer cannot take the whole-right
+   * claim, whose precondition is the word carrying exactly one hold.
+   *
+   * Every waiter here parked before this drain, and the buffer this rank now
+   * holds contains every release completed before the transfer (the ownership
+   * chain linearizes all writers), so resuming against it is correct for any
+   * park time — unlike a snapshot install, which is only a specific version.
+   * That still reads correctly when the grant arrived carrying NO bytes: a
+   * server sends the permission alone only when the copy already here is at
+   * the canonical version, and everything completed before the transfer is at
+   * or below that version by the same argument.
+   *
+   * The in-flight window group (ro_combine_group) is NOT touched: its
+   * response terminal owns it.  Stragglers that push after this exchange are
+   * picked up by their own pump (a fresh request round trip, correct via the
+   * response path). */
   arts_lf_link_t *node = arts_lf_stack_drain(&cache->ro_combine);
   while (node != NULL) {
     struct arts_db_snapshot_waiter_s *w =
@@ -580,6 +593,17 @@ struct arts_db_pub_waiter_s {
  * home-resident releaser's buffer IS the canonical copy (its publish is the
  * ordering round alone), and the write-back invalidation arm publishes
  * control only. */
+/* Does a payload commit leg leaving now owe the home a hand-back of the write
+ * right?  Only an arm whose write right migrates can owe one. */
+static inline bool pub_leg_takes_grant_return(struct arts_db_cache_s *cache) {
+#if defined(ARTS_PROTOCOL_VAL) || defined(ARTS_PROTOCOL_INV)
+  return arts_db_grant_return_claim_leg(cache);
+#else
+  (void)cache;
+  return false;
+#endif
+}
+
 static bool pub_flight_carries_payload(struct arts_db_cache_s *cache) {
 #if defined(ARTS_PROTOCOL_INV) && defined(ARTS_WRITE_POLICY_WB)
   (void)cache;
@@ -632,7 +656,7 @@ pub_flight_drive(struct arts_db_cache_s *cache, bool may_block,
     arts_db_buf_release(&buf_h);
     arts_send_db_publish(home_rank, cache->db_guid, version, /*cv=*/0,
                            /*data=*/NULL, /*data_size=*/0, /*rdzv_txid=*/0,
-                           /*rdzv_cookie=*/0);
+                           /*rdzv_cookie=*/0, /*return_grant=*/false);
     return gate;
   }
   /* Payload flight: consume the credit.  The acquire exchange pairs with the
@@ -652,7 +676,8 @@ pub_flight_drive(struct arts_db_cache_s *cache, bool may_block,
                          arts_db_buf_ref_release_cb, (void *)buf_h);
     arts_send_db_publish(home_rank, cache->db_guid, version, /*cv=*/0,
                            /*data=*/NULL, cache->db_size, txid,
-                           /*rdzv_cookie=*/0);
+                           /*rdzv_cookie=*/0,
+                           pub_leg_takes_grant_return(cache));
     return gate;
   }
   if (!may_block) {
@@ -679,7 +704,8 @@ pub_flight_drive(struct arts_db_cache_s *cache, bool may_block,
   wr->landing = (struct arts_rdzv_landing_s){0, 0, 0, 0};
   arts_send_db_publish(home_rank, cache->db_guid, version,
                          (uint64_t)(uintptr_t)wr, /*data=*/NULL,
-                         cache->db_size, /*rdzv_txid=*/0, /*rdzv_cookie=*/0);
+                         cache->db_size, /*rdzv_txid=*/0, /*rdzv_cookie=*/0,
+                         /*return_grant=*/false);
   await_publish_ack(&wr->sem); /* CTS wake — or the shutdown escape */
   if (wr->landing.txid == 0) {
     /* Shutdown escape before the CTS landed: the flight is abandoned with
@@ -699,7 +725,8 @@ pub_flight_drive(struct arts_db_cache_s *cache, bool may_block,
                        arts_db_buf_ref_release_cb, (void *)buf_h);
   arts_send_db_publish(home_rank, cache->db_guid, version, /*cv=*/0,
                          /*data=*/NULL, cache->db_size, wr->landing.txid,
-                         wr->landing.cookie);
+                         wr->landing.cookie,
+                         pub_leg_takes_grant_return(cache));
   /* The commit carries cv 0 — the final ACK completes the FLIGHT, not this
    * rendezvous.  The CTS was the only writer through wr, so it dies here. */
   sem_destroy(&wr->sem);
@@ -718,6 +745,12 @@ pub_flight_drive(struct arts_db_cache_s *cache, bool may_block,
  * Nodes are freed by their woken owners. */
 void arts_db_pub_flight_abandon(struct arts_db_cache_s *cache) {
   INCREMENT_NUM_PUB_FLIGHT_ABANDON_BY(1);
+#if defined(ARTS_PROTOCOL_VAL) || defined(ARTS_PROTOCOL_INV)
+  /* No further leg will leave this cache, so a hand-back still riding on one
+   * would never arrive.  Convert it to its own message here — the same two-CAS
+   * discharge, just the other winner. */
+  arts_db_grant_release_settle(cache);
+#endif
   arts_lf_link_t *n =
       (arts_lf_link_t *)__atomic_exchange_n(&cache->pub_parked, NULL,
                                             __ATOMIC_ACQ_REL);
@@ -1027,6 +1060,72 @@ void arts_db_debug_quiescence_check(void) {
                        "quiescent (baton=%d queued=%d)",
                        (unsigned long)c->db_guid, baton ? 1 : 0,
                        queued ? 1 : 0);
+            viol++;
+          }
+          /* Directory and word must agree.  Naming this rank as the holder
+           * while the word says it possesses nothing is the silent shape of a
+           * lost hand-over: every later requester queues behind a server that
+           * has nothing to serve.  Home fields only — a cache-only stub does
+           * not carry them. */
+          unsigned int hw = arts_atomic_read(&c->writer_count);
+          if (atomic_load_explicit(&db->rw_holder, memory_order_acquire) ==
+                  arts_global_rank_id &&
+              !ARTS_GRANT_OWN_OF(hw)) {
+            ARTS_DEBUG("QUIESCENCE-DEBUG: guid %lu home is named the holder "
+                       "but its word holds nothing (word=%u)",
+                       (unsigned long)c->db_guid, hw);
+            viol++;
+          }
+#ifdef ARTS_RELEASE_PURGE
+          /* Where the right comes back unasked, quiescence means it came
+           * back: a directory still naming a remote holder is one that never
+           * returned, and nothing will ever ask it to. */
+          unsigned int holder =
+              atomic_load_explicit(&db->rw_holder, memory_order_acquire);
+          if (holder != arts_global_rank_id) {
+            ARTS_DEBUG("QUIESCENCE-DEBUG: guid %lu rests with rank %u holding "
+                       "the write right, which is never asked to give it back",
+                       (unsigned long)c->db_guid, holder);
+            viol++;
+          }
+#endif
+        }
+        /* Every hold has a named releaser, so nothing may rest holding one;
+         * an underflowed count is what a release with no matching acquire
+         * leaves behind. */
+        {
+          unsigned int w = arts_atomic_read(&c->writer_count);
+          if (ARTS_GRANT_COUNT_OF(w) != 0u) {
+            ARTS_DEBUG("QUIESCENCE-DEBUG: guid %lu rests with %u unreleased "
+                       "hold(s) (word=%u)",
+                       (unsigned long)c->db_guid, ARTS_GRANT_COUNT_OF(w), w);
+            viol++;
+          }
+        }
+#ifdef ARTS_RELEASE_PURGE
+        if (arts_atomic_read(&c->pending_grant_return) != 0u) {
+          ARTS_DEBUG("QUIESCENCE-DEBUG: guid %lu rests owing a return of the "
+                     "write right",
+                     (unsigned long)c->db_guid);
+          viol++;
+        }
+#endif
+#endif
+#if defined(ARTS_PROTOCOL_EXCL) && defined(ARTS_RELEASE_RETAIN)
+        /* A read grant marked to return owes exactly one return, payable at
+         * the read count's zero edge.  Resting at that edge still marked is
+         * the signature of a promise made after the edge it named had already
+         * passed: the count covers waiters as well as holders, so nothing is
+         * left to reach the edge again, and the directory waits on a return
+         * no one will send. */
+        {
+          uint64_t cw = atomic_load_explicit(&c->cache_state,
+                                             memory_order_acquire);
+          if (CACHE_RO_ST(cw) == CACHE_ST_GRANT_PURGE &&
+              CACHE_RO_CNT(cw) == 0u) {
+            ARTS_DEBUG("QUIESCENCE-DEBUG: guid %lu rests owing a read-grant "
+                       "return with no reader to pay it (word=%llx)",
+                       (unsigned long)c->db_guid, (unsigned long long)cw);
             viol++;
           }
         }

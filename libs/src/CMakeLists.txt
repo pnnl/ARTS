@@ -54,6 +54,17 @@ endif()
 # Sets ${out} (caller scope) to the coherence model TU paths for
 # (proto,placement), RELATIVE to libs/src/core/.  Mirrors
 # libs/src/core/CMakeLists.txt selection.
+# The grant plane's release-policy half: WHO initiates a grant's return.  Only
+# a write-through arm can hand the permission back without the payload, so a
+# write-back grant is always demand-revoked.
+function(arts_grant_release_tu out write_policy release_policy)
+    if(write_policy STREQUAL "WT" AND release_policy STREQUAL "PURGE")
+        set(${out} coherence/grant_purge.c PARENT_SCOPE)
+    else()
+        set(${out} coherence/grant_retain.c PARENT_SCOPE)
+    endif()
+endfunction()
+
 function(arts_coherence_model_tus out arm write_policy release_policy)
     if(arm STREQUAL "WRF_VAL")
         set(tus coherence/wrf_val/wrf_val.c)
@@ -63,6 +74,8 @@ function(arts_coherence_model_tus out arm write_policy release_policy)
         else()
             set(tus coherence/inv/directory.c coherence/inv/engine.c coherence/inv/wt.c coherence/grant.c coherence/grant_queue.c coherence/grant_wt.c)
         endif()
+        arts_grant_release_tu(rel "${write_policy}" "${release_policy}")
+        list(APPEND tus ${rel})
     elseif(arm STREQUAL "EXCL")
         if(release_policy STREQUAL "RETAIN")
             set(tus coherence/excl/directory.c coherence/excl/retain.c)
@@ -75,6 +88,8 @@ function(arts_coherence_model_tus out arm write_policy release_policy)
         else()
             set(tus coherence/val/wb.c coherence/grant.c coherence/grant_queue.c coherence/grant_wb.c coherence/val/directory.c)
         endif()
+        arts_grant_release_tu(rel "${write_policy}" "${release_policy}")
+        list(APPEND tus ${rel})
     endif()
     set(${out} ${tus} PARENT_SCOPE)
 endfunction()
@@ -539,7 +554,7 @@ if(ARTS_BUILD_BENCHMARKS)
                 endif()
                 # Skip variant-specific coherence TUs: the per-arm subdirs, and
                 # the grant plane (linked only by arms whose ownership migrates).
-                if(NOT abs MATCHES "/coherence/(val|excl|wrf_val|inv)/|/coherence/grant(_wt|_wb|_queue)?\\.c$")
+                if(NOT abs MATCHES "/coherence/(val|excl|wrf_val|inv)/|/coherence/grant(_wt|_wb|_queue|_purge|_retain)?\\.c$")
                     list(APPEND srcs "${abs}")
                 endif()
             endforeach()
@@ -584,13 +599,16 @@ if(ARTS_BUILD_BENCHMARKS)
     # the validation family, not part of any family's definition.
     arts_variant(ocr_val_wt        VAL     WT RETAIN OFF)
     arts_variant(ocr_val_wb        VAL     WB RETAIN OFF)
+    arts_variant(ocr_val_wt_purge  VAL     WT PURGE  OFF)
     arts_variant(ocr_val_wt_comb   VAL     WT RETAIN ON)
     arts_variant(ocr_val_wb_comb   VAL     WB RETAIN ON)
+    arts_variant(ocr_val_wt_purge_comb VAL WT PURGE  ON)
     arts_variant(ocr_excl_purge    EXCL    WB PURGE  OFF)
     arts_variant(ocr_excl_retain   EXCL    WB RETAIN OFF)
     arts_variant(wrf_val_wt        WRF_VAL WT RETAIN OFF)
     arts_variant(ocr_inv_wt        INV     WT RETAIN OFF)
     arts_variant(ocr_inv_wb        INV     WB RETAIN OFF)
+    arts_variant(ocr_inv_wt_purge  INV     WT PURGE  OFF)
 endif()
 
 # Link mimalloc-static when selected.  The OBJECT library arts_utils needs

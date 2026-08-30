@@ -227,12 +227,39 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
                  .key = pack->rdzv.key,
                  .txid = pack->rdzv.txid,
                  .cookie = pack->rdzv.cookie},
+        .have_version = pack->have_version,
     };
     arts_ooo_dispatch_or_defer_guid(pack->db_guid, OOO_DB_GRANT_REQUEST,
                                     &args, sizeof(args));
     break;
   }
 #endif /* ARTS_PROTOCOL_WRF_VAL */
+  /* GRANT_RETURN — the voluntary hand-back, which exists only where the
+   * release policy has the holder initiate.  A build whose grants are revoked
+   * by the home has no such message, so receiving one is a mode mismatch. */
+#if (defined(ARTS_PROTOCOL_VAL) || defined(ARTS_PROTOCOL_INV)) &&              \
+    defined(ARTS_RELEASE_PURGE)
+  case MSG_DB_GRANT_RETURN: {
+    ARTS_DEBUG("Coh GRANT_RETURN Received");
+    struct arts_msg_grant_return_packet_s *pack =
+        (struct arts_msg_grant_return_packet_s *)(packet);
+    struct arts_ooo_args_db_grant_return_s args = {
+        .returner = pack->header.rank,
+        .db_guid = pack->db_guid,
+    };
+    arts_ooo_dispatch_or_defer_guid(pack->db_guid, OOO_DB_GRANT_RETURN, &args,
+                                    sizeof(args));
+    break;
+  }
+#else
+  case MSG_DB_GRANT_RETURN: {
+    ARTS_ERROR("this build received a voluntary grant return from rank %u — "
+               "its grants are revoked by the home, never handed back "
+               "unasked; binary mode mismatch?",
+               packet->rank);
+    break;
+  }
+#endif /* grant-arm PURGE */
   /* GRANT_INVALIDATE — protocol-split.
    *   WT/WB: NOT deferred.  Home publishes the invalidate target
    *           (rw_holder) only after that rank's cache install — the CONFIRM
@@ -247,6 +274,15 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
   case MSG_DB_GRANT_INVALIDATE: {
     ARTS_ERROR("WRF_VAL/EXCL build received INVALIDATE from rank %u — "
                "this protocol has no migrating grant; binary mode mismatch?",
+               packet->rank);
+    break;
+  }
+#elif defined(ARTS_RELEASE_PURGE)
+  case MSG_DB_GRANT_INVALIDATE: {
+    ARTS_ERROR("voluntary-return build received INVALIDATE from rank %u — "
+               "under this release policy the grant comes back at the "
+               "holder's own idle edge and the home sends the holder "
+               "nothing; binary mode mismatch?",
                packet->rank);
     break;
   }
@@ -480,6 +516,8 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
         .rdzv_txid = pack->rdzv_txid,
         .rdzv_cookie = pack->rdzv_cookie,
         .data_inline = 0,
+        .returns_grant =
+            (pack->flags & ARTS_PUBLISH_FLAG_GRANT_RETURN) ? 1u : 0u,
     };
     arts_ooo_dispatch_or_defer_guid(pack->db_guid, OOO_DB_PUBLISH, &args,
                                     sizeof(args));

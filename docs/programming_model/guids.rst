@@ -99,10 +99,29 @@ undefined ("potentially create the same object multiple times leading
 to undefined behavior").
 
 The consequence worth knowing is narrower than "replace is unsafe".
-Creating the same label from several ranks at once, where one creator
-wins and the others go on to use the winner's object, works: every
-creator installs an equivalent object and the last one stands.  What
-does **not** work is *reusing* a label across a lifetime boundary:
+Creating the same label at once, where one creator wins and the others
+go on to use the winner's object, works: every creator installs an
+equivalent object and the last one stands.
+
+That holds without qualification only while the racing creators take no
+hold on what they create.  A create acquires its data block by default,
+and that hold is per-rank state: two ranks creating one label at the
+same time each record themselves as holding a block only one of them
+can hold, and nothing afterwards distinguishes the two — one of them
+will go on writing through a hold it does not have.  So:
+
+  Creators that race for one label must either be on **one rank**, or
+  create with ``ARTS_DB_PROP_NO_ACQUIRE`` (``DB_PROP_NO_ACQUIRE``).
+
+Within one rank the race is between threads over one object and has a
+winner; the loser's hold folds into the winner's.  With no hold there
+is nothing to disagree about, and the block's home is its holder from
+creation.  A cross-rank race between creators that DO acquire is
+diagnosed at the home in a debug build; whether a given build happens
+to survive it is an implementation detail and not a promise.
+
+What does **not** work in any arrangement is *reusing* a label across a
+lifetime boundary:
 
 .. code-block:: c
 

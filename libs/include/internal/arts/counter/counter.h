@@ -181,6 +181,22 @@ extern "C" {
    * permission with no payload (the home already holds the newest bytes). */\
   X(NUM_GRANT_BATON_RECLAIM)                                                   \
   X(NUM_GRANT_HOME_DATALESS)                                                   \
+  /* Num: the voluntary-return release policy.  RETURN = write rights handed \
+   * back at a holder's own idle edge; ACCEPT = returns the home took, so     \
+   * RETURN minus ACCEPT across the cluster is what is still in flight;       \
+   * LATCHED = returns parked for an inbound round close rather than accepted \
+   * on arrival, the contended hand-off the single-slot latch exists for;     \
+   * FLAG = hand-backs that rode a release's own publish instead.  RETURN and \
+   * FLAG are the two vehicles and do not overlap: their sum is every         \
+   * hand-back, and RETURN alone is what the fallback still costs.            \
+   * REGRANT_DEDUP = grants served with the permission alone because the      \
+   * requester's own copy was already the current one — the payload a         \
+   * re-acquisition would otherwise have re-sent to its last writer. */       \
+  X(NUM_GRANT_PURGE_RETURN)                                                    \
+  X(NUM_GRANT_PURGE_FLAG)                                                      \
+  X(NUM_GRANT_PURGE_ACCEPT)                                                    \
+  X(NUM_GRANT_PURGE_LATCHED)                                                   \
+  X(NUM_GRANT_REGRANT_DEDUP)                                                   \
   /* Object counters — per arts_id tracking */                                 \
   X(OBJ_NUM_EDT)                                                               \
   X(OBJ_TIME_EDT_EXEC)                                                         \

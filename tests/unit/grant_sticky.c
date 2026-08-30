@@ -35,6 +35,7 @@
 
 #include "arts.h"
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 
@@ -71,13 +72,16 @@ static void excl_perm(arts_guid_t db, unsigned int *rw_st, unsigned int *wc) {
   arts_shared_release(&h);
 }
 #else
-/* Read the grant counter on this rank without disturbing it. */
-static unsigned int lease_count(arts_guid_t db) {
+/* Read the grant word on this rank without disturbing it, as the two facts it
+ * encodes.  How they share the word is the release policy's, so the raw value
+ * is not comparable across policies and the accessors are. */
+static void grant_state(arts_guid_t db, bool *own, unsigned int *count) {
   arts_shared_ptr_t h = arts_route_table_lookup_db(db);
   struct arts_db_s *d = (struct arts_db_s *)arts_shared_get(h);
-  unsigned int wc = (d != NULL) ? arts_atomic_read(&d->cache.writer_count) : 0u;
+  unsigned int w = (d != NULL) ? arts_atomic_read(&d->cache.writer_count) : 0u;
   arts_shared_release(&h);
-  return wc;
+  *own = ARTS_GRANT_OWN_OF(w);
+  *count = ARTS_GRANT_COUNT_OF(w);
 }
 #endif
 
@@ -105,14 +109,17 @@ static void writer_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     g_fail = 1;
   }
 #else
-  /* Own hold + sentinel.  A writer that reached here without the sentinel
-   * would mean the grant was granted per acquire rather than held. */
-  unsigned int wc = lease_count(g_db);
-  if (wc < 2u) {
+  /* Possession, with this writer's own hold counted under it.  A writer that
+   * reached here without possession would mean the grant was granted per
+   * acquire rather than held. */
+  bool own;
+  unsigned int wc;
+  grant_state(g_db, &own, &wc);
+  if (!own || wc < 1u) {
     (void)fprintf(stderr,
-                  "FAIL grant_sticky: writer %u sees writer_count=%u, "
-                  "expected >= 2 (own hold + sentinel)\n",
-                  seq, wc);
+                  "FAIL grant_sticky: writer %u sees own=%d count=%u, "
+                  "expected possession with its own hold counted\n",
+                  seq, own ? 1 : 0, wc);
     g_fail = 1;
   }
 #endif
@@ -138,14 +145,19 @@ static void check_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     g_fail = 1;
   }
 #else
-  /* Every writer has released and nobody else exists to revoke: the sentinel,
-   * and only the sentinel, must remain. */
-  unsigned int wc = lease_count(g_db);
-  if (wc != 1u) {
+  /* Every writer has released and nobody else exists to ask for it:
+   * possession, and no hold under it, must remain.  On one rank every block
+   * is home-resident, so a voluntary-return policy has nowhere to return to
+   * and rests in exactly the same state. */
+  bool own;
+  unsigned int wc;
+  grant_state(g_db, &own, &wc);
+  if (!own || wc != 0u) {
     (void)fprintf(stderr,
-                  "FAIL grant_sticky: after all releases writer_count=%u, "
-                  "expected 1 (the grant survives its writers)\n",
-                  wc);
+                  "FAIL grant_sticky: after all releases own=%d count=%u, "
+                  "expected possession with no holds (the grant survives its "
+                  "writers)\n",
+                  own ? 1 : 0, wc);
     g_fail = 1;
   }
 #endif

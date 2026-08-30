@@ -117,20 +117,24 @@ void *arts_db_user_ptr(struct arts_db_s *db) {
 }
 
 /*
- * arts_db_auto_acquire — Track the creator EDT's hold on a DB.
+ * arts_db_auto_acquire — Track the creator's hold on a DB.
  *
- * For ARTS_DB: the coherence cache_s was allocated with writer_count=2
- * (sentinel + creator EDT) via ARTS_DB_INIT_CREATOR_HOME or
- * ARTS_DB_INIT_CREATOR_REMOTE, so the creator's hold is already
- * counted in the coherence state machine.  release_rw drops it at EDT
- * epilogue.
+ * For ARTS_DB: the coherence cache_s was seeded with possession plus the
+ * creator's own hold via ARTS_DB_INIT_CREATOR_HOME or
+ * ARTS_DB_INIT_CREATOR_REMOTE, so that hold is already counted in the
+ * coherence state machine and release_rw is what drops it.
  *
  * For pinned subtypes (PIN, GPU_PIN, GPU, CXL): there is no
- * DB-level coherence to track; the creator EDT just owns the pointer
+ * DB-level coherence to track; the creator just owns the pointer
  * until it explicitly destroys or hands it off via events.
  *
- * In both cases the GUID is recorded on created_db_list so the EDT
- * epilogue (arts_release_created_dbs) drives the matching release.
+ * In both cases the GUID is recorded on the creating THREAD's created-DB
+ * list, and whoever drains that list drives the matching release: the EDT
+ * epilogue for a task, or the thread's own scheduler entry for a startup
+ * hook, which runs before any task on that thread.  The list is thread-local
+ * and the release chain needs no task context, so a create outside a task is
+ * tracked exactly like one inside it — the alternative leaves the hold
+ * stamped and nothing owning its release.
  */
 static void arts_db_auto_acquire(struct arts_db_s *db) {
   arts_track_created_db(db->cache.db_guid);
@@ -375,8 +379,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
           /* Register the creator's hold BEFORE the DB becomes visible, then
            * install — both install variants fire the OoO list internally on a
            * successful install (no separate fire_oo needed). */
-          if (current_edt && !no_acquire &&
-              !arts_db_creator_skip_hold(db_type)) {
+          if (!no_acquire && !arts_db_creator_skip_hold(db_type)) {
             arts_db_auto_acquire((struct arts_db_s *)ptr);
           } else if (no_acquire && db_type == ARTS_DB) {
             /* NO_ACQUIRE coherent: the creator never acquires or releases, so
@@ -416,11 +419,13 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
                                   memory_order_relaxed);
 #endif /* ARTS_RELEASE_* */
 #else
-            /* Grant-bearing arms: this rank keeps the sentinel and becomes the
-             * idle owner.  With no creator hold there is nothing to release,
-             * so the first foreign request revokes an idle grant rather than
-             * queueing behind a hold nobody will ever drop. */
-            ((struct arts_db_s *)ptr)->cache.writer_count = 1;
+            /* Grant-bearing arms: this rank becomes the idle owner —
+             * possession, and no hold under it.  With no creator hold there
+             * is nothing to release, so the first foreign request finds an
+             * idle grant rather than queueing behind a hold nobody will ever
+             * drop. */
+            ((struct arts_db_s *)ptr)->cache.writer_count =
+                ARTS_GRANT_SEED_IDLE;
 #endif
           }
           if (check) {
@@ -438,8 +443,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
               arts_guid_create_for_rank(arts_global_rank_id, ARTS_GUID_DB),
               len);
           db_create_in_place(guid, ptr, len, db_size, db_type);
-          if (current_edt && !no_acquire &&
-              !arts_db_creator_skip_hold(db_type)) {
+          if (!no_acquire && !arts_db_creator_skip_hold(db_type)) {
             arts_db_auto_acquire((struct arts_db_s *)ptr);
           } else if (no_acquire && db_type == ARTS_DB) {
             /* NO_ACQUIRE coherent: the creator never acquires or releases, so
@@ -479,11 +483,13 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
                                   memory_order_relaxed);
 #endif /* ARTS_RELEASE_* */
 #else
-            /* Grant-bearing arms: this rank keeps the sentinel and becomes the
-             * idle owner.  With no creator hold there is nothing to release,
-             * so the first foreign request revokes an idle grant rather than
-             * queueing behind a hold nobody will ever drop. */
-            ((struct arts_db_s *)ptr)->cache.writer_count = 1;
+            /* Grant-bearing arms: this rank becomes the idle owner —
+             * possession, and no hold under it.  With no creator hold there
+             * is nothing to release, so the first foreign request finds an
+             * idle grant rather than queueing behind a hold nobody will ever
+             * drop. */
+            ((struct arts_db_s *)ptr)->cache.writer_count =
+                ARTS_GRANT_SEED_IDLE;
 #endif
           }
           arts_route_table_install(ptr, guid, arts_global_rank_id, true);
@@ -583,8 +589,8 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
                                                 /*used=*/true)) {
           /* Lost the race -- another thread already installed (e.g. an
            * earlier wire arrival).  Free our stub and adopt the existing
-           * cache; bump its writer_count by 2 to account for our sentinel
-           * + creator EDT (consistent with CREATOR_REMOTE semantics). */
+           * cache; adopt possession and add our creator EDT's hold to it
+           * (consistent with CREATOR_REMOTE semantics). */
           arts_db_free(creator_stub);
           adopted_h = arts_route_table_lookup_db(guid);
           struct arts_db_s *adopted_db =
@@ -594,7 +600,14 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
                               : NULL;
           if (creator_cache != NULL) {
 #if !defined(ARTS_PROTOCOL_EXCL) && !defined(ARTS_PROTOCOL_INV)
-            arts_atomic_add(&creator_cache->writer_count, 2);
+            /* Possession is not carried by an add: added in, its meaning
+             * would depend on what the word happened to hold.  CAS the whole
+             * word instead — take possession, add this creator's own hold. */
+            unsigned int cur;
+            do {
+              cur = arts_atomic_read(&creator_cache->writer_count);
+            } while (arts_atomic_cswap(&creator_cache->writer_count, cur,
+                                       ARTS_GRANT_ADOPT_NEXT(cur)) != cur);
 #endif
           }
         }
@@ -611,13 +624,14 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
             (struct arts_db_buffer_s *)arts_shared_get(creator_buf_h);
         *addr = creator_buf ? (void *)creator_buf->data : NULL;
         arts_db_buf_release(&creator_buf_h);
-        if (current_edt && creator_cache &&
-            !arts_db_creator_skip_hold(ARTS_DB)) {
-          /* Auto-acquire: register the DB on the creator EDT's
-           * created_db_list so arts_release_created_dbs at EDT epilogue
-           * dispatches coherent release_rw, dropping the creator's
-           * writer_count and triggering the eventual WB+TRANSFER. */
-          arts_db_auto_acquire(creator_stub);
+        if (creator_cache != NULL && !arts_db_creator_skip_hold(ARTS_DB)) {
+          /* Register the DB on the creating thread's created-DB list so the
+           * release that drops this hold runs at the end of the creating EDT
+           * (or, for a startup hook, at that thread's scheduler entry).
+           * Register the descriptor that SURVIVED the install race: on the
+           * lost arm our own stub was freed above and only the adopted one is
+           * still addressable. */
+          arts_db_auto_acquire(arts_db_of_cache(creator_cache));
         }
         /* Drop the adopted-DB pin (NULL on the install-success path). */
         arts_shared_release(&adopted_h);

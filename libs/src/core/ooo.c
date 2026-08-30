@@ -156,6 +156,9 @@ static const arts_ooo_handler_fn_t g_ooo_table[OOO_KIND_COUNT] = {
     [OOO_DB_GRANT_REQUEST] = arts_handler_db_grant_request,
     [OOO_DB_INV_REQUEST] = arts_handler_db_inv_request,
     [OOO_DB_PUBLISH] = arts_handler_db_publish,
+#ifdef ARTS_RELEASE_PURGE
+    [OOO_DB_GRANT_RETURN] = arts_handler_db_grant_return,
+#endif
 #ifdef ARTS_WRITE_POLICY_WB
     [OOO_DB_INV_REDIRECT] = arts_handler_db_inv_redirect,
 #endif
@@ -164,6 +167,9 @@ static const arts_ooo_handler_fn_t g_ooo_table[OOO_KIND_COUNT] = {
     [OOO_DB_SNAPSHOT_REQUEST] = arts_handler_db_snapshot_request,
     [OOO_DB_GRANT_REQUEST] = arts_handler_db_grant_request,
     [OOO_DB_PUBLISH] = arts_handler_db_publish,
+#ifdef ARTS_RELEASE_PURGE
+    [OOO_DB_GRANT_RETURN] = arts_handler_db_grant_return,
+#endif
 #elif defined(ARTS_WRITE_POLICY_WB)
     [OOO_DB_ACQUIRE] = arts_db_acquire_replay_dep,
     [OOO_DB_SNAPSHOT_REQUEST] = arts_handler_db_snapshot_request,

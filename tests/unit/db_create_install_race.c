@@ -38,26 +38,31 @@
 ******************************************************************************/
 
 /// @file db_create_install_race.c
-/// @brief Two concurrent creator-remote installs of the SAME labeled GUID drive
-///        the install_if_absent loser path in arts_db_create (remote branch):
-///        the loser frees its creator_stub, adopts the existing cache, and
-///        (non-EXCL) bumps writer_count += 2 + auto_acquire(creator_stub).
-///        Targets the suspected use-after-free where auto_acquire reads
-///        creator_stub->cache.db_guid AFTER arts_db_free(creator_stub).
+/// @brief Two creators on ONE rank race the same labeled GUID, so one loses
+///        arts_route_table_install_if_absent and takes the adopt path: it
+///        frees its own creator_stub, adopts the cache already installed, and
+///        folds its hold into that cache's word.  Targets the use-after-free
+///        where the auto-acquire registration read the FREED stub instead of
+///        the descriptor that survived the race.
 ///
-/// Setup: rank 0 reserves a labeled GUID range whose first child is homed on
-/// rank 0, broadcasts the range GUID to two DIFFERENT remote ranks, and both
-/// remote ranks call arts_db_create_with_guid on the identical child GUID.
-/// Because the home (rank 0) is remote to both creators, each takes the remote
-/// creator-stub path; whichever loses route_table_install_if_absent runs the
-/// adoption arm.  Both creators write a sentinel; an RO reader on home then
-/// verifies a consistent (non-corrupt) value — a UAF / refcount underflow on
-/// the loser path tends to surface as a crash under sanitizers or a stuck DB
-/// (caught by the ctest TIMEOUT).
+/// Same-rank on purpose.  Racing creators that take the creator's implicit
+/// hold are supported only within one rank: they share one cache and one
+/// coherence word, so the race has a winner and the loser's hold is folded
+/// into the winner's state.  Across ranks each creator would stamp itself the
+/// holder of a block only one of them can hold, which the programming model
+/// does not admit — that pattern is diagnosed at the home, not exercised here.
+/// (Cross-rank racing creators that take NO hold are legal and are covered by
+/// grant_purge_no_acquire_creator; not duplicated here.)
 ///
-/// non-EXCL only: the writer_count += 2 adoption arithmetic is #if !EXCL.  The
-/// race is irrelevant under EXCL (no writer_count), so this self-skips there.
-/// Needs >= 3 ranks for two distinct remote creators; SKIPs cleanly otherwise.
+/// Setup: rank 0 reserves a labeled GUID range homed on rank 0 and sends TWO
+/// creator EDTs to the SAME remote rank, which both create the identical child
+/// GUID.  The home being remote is what puts them on the creator-stub path
+/// where the adoption lives.  A reader on the home then verifies a consistent
+/// value — a UAF or refcount underflow on the loser path tends to surface as a
+/// crash under sanitizers or a stuck DB (caught by the ctest TIMEOUT).
+///
+/// non-EXCL only: the adoption arithmetic is #if !EXCL.  Needs >= 2 ranks so
+/// the creators' home is remote to them; SKIPs cleanly otherwise.
 
 #include "arts.h"
 
@@ -91,7 +96,8 @@ void reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramc;
   (void)paramv;
   (void)depc;
-  unsigned int *d = (unsigned int *)depv[0].ptr;
+  /* slot 0 gates on both creators finishing; slot 1 is the block itself. */
+  unsigned int *d = (unsigned int *)depv[1].ptr;
   if (d == NULL || d[0] != SENTINEL) {
     (void)fprintf(stderr,
                   "FAIL: db_create_install_race reader got 0x%x want 0x%x\n",
@@ -100,6 +106,7 @@ void reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     return;
   }
   arts_printf("PASS: db_create_install_race\n");
+  arts_shutdown();
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -118,44 +125,36 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   return;
 #else
   unsigned int nranks = arts_get_total_ranks();
-  if (nranks < 3) {
-    arts_printf("SKIP db_create_install_race: needs >= 3 ranks (have %u)\n",
+  if (nranks < 2) {
+    arts_printf("SKIP db_create_install_race: needs >= 2 ranks (have %u)\n",
                 nranks);
     arts_shutdown();
     return;
   }
 
   /* Reserve a one-element labeled range homed on rank 0; child idx 0 is homed
-   * on rank 0, which is REMOTE to both creator ranks (1 and 2). */
+   * on rank 0, which is REMOTE to the creators (both on rank 1). */
   arts_guid_t range = arts_guid_reserve_range(ARTS_GUID_DB, 1, 0);
   uint64_t rparam = (uint64_t)range;
 
   arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
 
-  /* Two DISTINCT remote ranks create the same labeled GUID concurrently. */
+  /* BOTH creators on the SAME rank: they race that rank's route table, which
+   * is the only install race a coherent create is allowed to have. */
   arts_edt_create(remote_creator, 1, &rparam, 0,
                   &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
   arts_edt_create(remote_creator, 1, &rparam, 0,
-                  &(arts_edt_hint_t){.rank = 2, .finish_event = fe});
+                  &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
 
-  /* Wait for both concurrent creates (and their releases) to drain. */
-  arts_event_wait(fe);
-
-  /* Read back on home; verify a consistent, non-corrupt SENTINEL. */
-  arts_guid_t child = arts_guid_from_index(range, 0);
-  arts_guid_t e_rd = arts_event_create(&ARTS_EVENT_HINT_FINISH);
   arts_guid_t r =
-      arts_edt_create(reader_edt, 0, NULL, 1,
-                      &(arts_edt_hint_t){.rank = 0, .finish_event = e_rd});
-  arts_add_dependence(child, r, 0, DB_MODE_RO);
-  arts_event_wait(e_rd);
-
-  arts_shutdown();
+      arts_edt_create(reader_edt, 1, &rparam, 2, &(arts_edt_hint_t){.rank = 0});
+  arts_add_dependence(fe, r, 0, DB_MODE_NULL);
+  arts_add_dependence(arts_guid_from_index(range, 0), r, 1, DB_MODE_RO);
 #endif
 }
 
 int main(int argc, char **argv) {
-  /* Non-zero when a rank this process spawned ended badly: their exit status
-     reaches nobody else, and a run with a dead rank did not succeed. */
+  /* The checks abort the process, so their verdict is already the exit
+     status; this only adds the runtime's own view of the ranks it spawned. */
   return arts_rt(argc, argv) != 0 ? 1 : 0;
 }

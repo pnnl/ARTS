@@ -30,6 +30,7 @@
 #include "arts/ooo.h"
 #include "arts/runtime_state.h"
 #include "arts/runtime_types.h"
+#include "arts/system/print.h" /* ARTS_ERROR (unreachable-revocation guard) */
 #include "arts/system/schedfuzz.h"
 #include "arts/system/threads.h"
 #include "arts/transport/net.h"
@@ -56,7 +57,7 @@ void arts_db_start_grant_round(struct arts_db_cache_s *cache,
   unsigned int next_owner;
   struct arts_rdzv_landing_s next_rdzv;
   while (!arts_home_grantreq_queue_pop(&db->pending_rw, &next_owner,
-                                       &next_rdzv)) {
+                                       &next_rdzv, NULL)) {
     /* Empty despite our own push: an earlier round already served it (rounds
      * can complete between the push and this claim).  Release the baton with
      * the SAME re-check discipline as the round close: a requester that
@@ -70,7 +71,7 @@ void arts_db_start_grant_round(struct arts_db_cache_s *cache,
      * release-store followed by loads permits exactly that StoreLoad
      * reordering. */
     atomic_thread_fence(memory_order_seq_cst);
-    if (arts_home_grantreq_queue_empty(&db->pending_rw)) {
+    if (!arts_home_grantreq_queue_pending(&db->pending_rw)) {
       return;
     }
     unsigned int expected = 0u;
@@ -111,21 +112,29 @@ static void home_response_commit(arts_shared_ptr_t db_h, arts_guid_t db_guid,
   struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(db_h);
   struct arts_db_cache_s *cache = &db->cache;
 
-  /* Sentinel(+1) + drain guard(+1), single op (0->2): the guard keeps
-   * writer_count >= 1 across the per-waiter +1 drain so a commutative
-   * INVALIDATE(-1) cannot zero the count mid-drain and ship prematurely.  The
-   * 0-crossing is deferred to guard-removal below. */
-  arts_atomic_add(&cache->writer_count, 2u);
-  cache->grant_req_in_flight = 0;
+  /* Possession + drain guard in one transition: the guard keeps a hold on the
+   * word across the per-waiter +1 drain so nothing can reach the zero edge
+   * mid-drain and hand the grant on prematurely.  The 0-crossing is deferred
+   * to the guard removal below. */
+  arts_db_grant_install(cache);
+  /* Clear BEFORE the drain below, and with a full barrier.  The producer is
+   * push-then-flag-CAS, so a waiter this drain misses must find the flag
+   * already clear and open its own request; the drain's own exchange is
+   * acquire-only, so the ordering has to come from this store rather than
+   * from the architecture the drain happens to run on. */
+  __atomic_store_n(&cache->grant_req_in_flight, 0u, __ATOMIC_SEQ_CST);
 
   /* WT drains + runs NOW (no confirm-ack gate): home serves RO so there is
    * no stale-RO window.  Then tell home we installed (CONFIRM), which flips
    * rw_holder + advances the next round. */
-  arts_db_drain_pending_rw_after_grant(cache, version, /*has_next=*/false);
+  unsigned int drained = arts_db_grant_commit_drain(cache, version);
   arts_db_drain_pending_snapshot(cache);
 #ifdef ARTS_RO_COMBINING_LIVE
   /* Read waiters batched while this rank had no local copy resume here
-   * against the transferred buffer instead of re-fetching remotely. */
+   * against the buffer it now holds instead of re-fetching remotely — the
+   * bytes that arrived with the grant, or the ones already here that a
+   * permission-only grant certified as current.  Inside the guard bracket on
+   * purpose: see the drain's own account of what the guard buys it. */
   arts_db_ro_combine_grant_drain(cache);
 #endif
   arts_ooo_drain_guid(db_guid);
@@ -133,13 +142,12 @@ static void home_response_commit(arts_shared_ptr_t db_h, arts_guid_t db_guid,
   unsigned int home_rank = arts_guid_get_rank(db_guid);
   arts_send_db_grant_confirm(home_rank, db_guid, version);
 
-  /* Remove the drain guard: the relocated 0-edge ship-check.  If a next-round
-   * INVALIDATE already withdrew the sentinel and no local writer remains, we
-   * are the unique actor that ships the next transfer. */
-  if ((int)arts_atomic_sub(&cache->writer_count, 1) == 0 &&
-      cache->incoming_new_owner != ARTS_NO_PENDING_OWNER) {
-    arts_db_send_grant_response(cache);
-  }
+  /* Close the commit.  Whether that means dropping a hold the commit kept for
+   * itself, or nothing at all because the hold already became the waiters',
+   * is the release policy's — as is what reaching the edge with no local
+   * writer left implies: shipping onward to a target a round already named, or
+   * handing the right straight back. */
+  arts_db_grant_commit_finish(cache, drained);
 
   arts_shared_release(&db_h);
 }
@@ -269,39 +277,10 @@ void arts_handler_db_grant_confirm(void *item_v, void *args_v) {
    * placement's. */
   arts_db_grant_note_ex_holder(db, prev_holder);
 
-  /* Drain-or-release retry loop: start the next transfer round if there are
-   * pending_rw requests, otherwise release the baton (same loop as WB, minus
-   * the CONFIRM_ACK send). */
-  while (1) {
-    unsigned int next_owner;
-    struct arts_rdzv_landing_s next_rdzv;
-    if (arts_home_grantreq_queue_pop(&db->pending_rw, &next_owner, &next_rdzv)) {
-      db->pending_install_owner = next_owner;
-      unsigned int current =
-          atomic_load_explicit(&db->rw_holder, memory_order_acquire);
-      arts_send_db_grant_invalidate(current, cache->db_guid, next_owner,
-                                        &next_rdzv);
-      return;
-    }
-    arts_sched_fuzz_point(); /* widen the pop-empty<->release window */
-    atomic_store_explicit(&db->invalidate_in_flight, 0u, memory_order_release);
-    /* Dekker-style publication: the baton-release store must be globally
-     * visible BEFORE the emptiness re-check loads, or a requester that
-     * pushed and lost its baton CAS inside the window is missed — a plain
-     * release-store followed by loads permits exactly that StoreLoad
-     * reordering. */
-    atomic_thread_fence(memory_order_seq_cst);
-    if (arts_home_grantreq_queue_empty(&db->pending_rw)) {
-      return;
-    }
-    unsigned int expected = 0u;
-    if (!atomic_compare_exchange_strong_explicit(
-            &db->invalidate_in_flight, &expected, 1u, memory_order_acq_rel,
-            memory_order_acquire)) {
-      return;
-    }
-    INCREMENT_NUM_GRANT_BATON_RECLAIM_BY(1);
-  }
+  /* What the home does once the directory names the new owner — advance the
+   * queue by revoking it again, or wait for it to hand the grant back — is
+   * the release policy's. */
+  arts_db_grant_round_close(cache, db);
 }
 
 /* ===== WT GRANT_INVALIDATE handler (pure body) =================== */
@@ -317,6 +296,18 @@ void arts_handler_db_grant_confirm(void *item_v, void *args_v) {
  * (+2) keeps writer_count non-negative even if the next round's INVALIDATE
  * lands mid-install on another receiver thread. */
 void arts_handler_db_grant_invalidate(void *item_v, void *args_v) {
+#ifdef ARTS_RELEASE_PURGE
+  /* Revocation is not this release policy's mechanism: the holder gives the
+   * grant back at its own idle edge and the home hands it out from there, so
+   * the home sends the holder nothing.  Linked (the TU is shared) but
+   * unreachable — reaching it would mean a second decrementer of a word whose
+   * every transition is single-CAS committed. */
+  (void)item_v;
+  (void)args_v;
+  ARTS_ERROR("grant: a revocation notice reached a rank whose grants are "
+             "returned voluntarily — the home issues none under this release "
+             "policy");
+#else
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
   struct arts_ooo_args_db_grant_invalidate_s *a =
       (struct arts_ooo_args_db_grant_invalidate_s *)args_v;
@@ -347,8 +338,9 @@ void arts_handler_db_grant_invalidate(void *item_v, void *args_v) {
     /* The decrement that drives writer_count to exactly 0 is the unique actor
      * that ships the owner→owner transfer to incoming_new_owner (published
      * above, before the sentinel withdrawal). */
-    arts_db_send_grant_response(cache);
+    arts_db_grant_ship_pending(cache);
   }
+#endif /* ARTS_RELEASE_PURGE */
 }
 
 /* Case-D leaf: the WT write policy defers the home-buffer install to the

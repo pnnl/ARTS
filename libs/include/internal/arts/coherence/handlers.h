@@ -118,6 +118,14 @@ struct arts_db_grant_response_ack_args_s {
  * (coherence/grant.c) where GRANT_REQUEST exists; WRF_VAL provides a
  * no-op body (coherence/wrf_val.c) — WRF_VAL never enqueues this kind. */
 void arts_handler_db_grant_request(void *item_v, void *args_v);
+#ifdef ARTS_RELEASE_PURGE
+/* Cat-B pure body (OoO g_ooo_table[OOO_DB_GRANT_RETURN]): item_v is the home
+ * db_s the engine acquired; args_v is an arts_ooo_args_db_grant_return_s.
+ * Accepts the returned write right, or parks it in the home's single-slot
+ * latch for the round close already inbound.  Defined in
+ * coherence/grant_purge.c. */
+void arts_handler_db_grant_return(void *item_v, void *args_v);
+#endif
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_SNAPSHOT_REQUEST]): item_v is the
  * home db_s the engine acquired (cache is its first member); args_v is an
  * arts_ooo_args_db_snapshot_request_s.  The wire dispatcher decodes the packet
@@ -229,10 +237,13 @@ void arts_send_db_grant_cts(unsigned int requester_rank,
  * Same-rank sends carry `data` inline through the OoO args; remote sends are
  * control-only (announce txid==0 / commit txid!=0 — the payload travels
  * one-sided between them, see arts_db_publish_sync). */
+/* return_grant rides a PAYLOAD COMMIT leg only: it tells the home that the
+ * releaser has given the write right back, and the home may act on that no
+ * earlier than the moment these bytes have landed. */
 void arts_send_db_publish(unsigned int home_rank, arts_guid_t db_guid,
                             uint64_t version, uint64_t cv, const void *data,
                             uint64_t data_size, uint64_t rdzv_txid,
-                            uint64_t rdzv_cookie);
+                            uint64_t rdzv_cookie, bool return_grant);
 /* PUBLISH_CTS: home → releaser, carrying a fresh home landing for an
  * announced dirty publish (cv echoed verbatim). */
 void arts_send_db_publish_cts(unsigned int releaser_rank, arts_guid_t db_guid,
@@ -321,13 +332,31 @@ void arts_db_owner_start_invalidate_round(
 #endif /* ARTS_WRITE_POLICY_WB */
 
 #if defined(ARTS_PROTOCOL_VAL) || defined(ARTS_PROTOCOL_INV)
-/* Shared owner→owner transfer ship (defined in coherence/grant.c):
- * ship the current buffer (+ serialized owner-side map for WB, empty map for
- * WT) to cache->incoming_new_owner via the GRANT_RESPONSE wire,
- * re-arming incoming_new_owner to the sentinel before sending.  Called on the
- * 0-edge of release_rw / the INVALIDATE handler (both write policies) and the WB
+/* Shared owner→owner transfer ship (defined in coherence/grant.c): ship the
+ * current buffer (+ serialized owner-side map for WB, empty map for WT) to
+ * new_owner via the GRANT_RESPONSE wire.  The target is an argument because
+ * where it comes from is the release policy's: a revocation round publishes
+ * it on the holder's cache ahead of the sentinel withdrawal, a home serving
+ * its own queue names the requester it just popped. */
+void arts_db_send_grant_response(struct arts_db_cache_s *cache,
+                                 unsigned int new_owner,
+                                 const struct arts_rdzv_landing_s *new_rdzv,
+                                 bool data_less);
+/* Ship to the target published on this cache by a revocation round, re-arming
+ * the field to the sentinel before the send.  Called on the 0-edge of
+ * release_rw / the INVALIDATE handler (both write policies) and the WB
  * CONFIRM_ACK / WT GRANT_RESPONSE drain-guard removal. */
-void arts_db_send_grant_response(struct arts_db_cache_s *cache);
+void arts_db_grant_ship_pending(struct arts_db_cache_s *cache);
+
+#if defined(ARTS_PROTOCOL_VAL) || defined(ARTS_PROTOCOL_INV)
+/* The version a serve from the home may claim for the bytes it sends — the
+ * arm's own canonical publication axis.  Under a write-through home that is
+ * NOT the served buffer's own version: a home-resident writer mutates that
+ * buffer in place, so its lane stands still while the data moves on, and a
+ * serve stamped from it would hand two different write windows the same
+ * number.  Read under the serve claim, which is what holds it still. */
+uint64_t arts_db_grant_serve_version(struct arts_db_s *db);
+#endif
 #endif /* shared grant plane */
 
 #ifdef ARTS_PROTOCOL_INV

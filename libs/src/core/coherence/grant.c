@@ -24,6 +24,11 @@
  * handlers, where WT drains immediately and WB gates on CONFIRM_ACK).
  * One ARTS_WRITE_POLICY_WB guard remains here: the INVALIDATE self-send is a
  * direct call under WB and an OoO defer under WT.
+ *
+ * Release-policy-divergent steps — who initiates the grant's return, and
+ * therefore what a queued request, a round close and a count-dropping edge
+ * mean — are delegated to a second seam set (coherence/grant_retain.c,
+ * coherence/grant_purge.c) declared in coherence.h.
  */
 #include <assert.h> /* WB INVALIDATE direct-call invariant assert */
 #include <stdbool.h>
@@ -116,6 +121,7 @@ arts_db_acquire_remote_rw(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
   INCREMENT_NUM_DB_ACQUIRE_REMOTE_BY(1);
   arts_object_acquire(true);
   arts_pending_rw_queue_push(&cache->pending_rw, w);
+  arts_sched_fuzz_point(); /* widen the push<->coalescing-flag-CAS window */
 
   /* Kick GRANT_REQUEST if no one else has — GRANT is what eventually
    * triggers our drain in FIFO order.  One request per round, so this counts
@@ -168,20 +174,21 @@ void arts_db_drain_pending_rw_after_grant(struct arts_db_cache_s *cache,
 }
 
 /* ===== Shared owner→owner transfer ship (WT + WB) =============
- * Ship the current buffer to cache->incoming_new_owner via the
- * GRANT_RESPONSE wire, re-arming incoming_new_owner to the sentinel BEFORE
- * the send (a self-transfer dispatches the new owner's install inline, which
- * can recursively republish incoming_new_owner for the next round; clearing it
- * up front leaves that fresh publish intact).  WB serializes its owner-side
- * dedup map; WT has no owner-side map (cached_version == NULL) and emits
- * an empty map (count=0): the receiver unconditionally reconstructs map_size >=
- * 8, so an omitted header would underflow data_size and corrupt the install. */
-void arts_db_send_grant_response(struct arts_db_cache_s *cache) {
-  unsigned int new_owner = cache->incoming_new_owner;
-  struct arts_rdzv_landing_s rdzv = cache->incoming_new_owner_rdzv;
-  cache->incoming_new_owner =
-      ARTS_NO_PENDING_OWNER; /* re-arm before send */
-  cache->incoming_new_owner_rdzv = (struct arts_rdzv_landing_s){0, 0, 0, 0};
+ * Ship the current buffer to new_owner via the GRANT_RESPONSE wire.  WB
+ * serializes its owner-side dedup map; WT has no owner-side map
+ * (cached_version == NULL) and emits an empty map (count=0): the receiver
+ * unconditionally reconstructs map_size >= 8, so an omitted header would
+ * underflow data_size and corrupt the install.
+ *
+ * The target is an argument, not a field read: where it comes from is the
+ * release policy's, not the ship's.  A revocation round publishes it on the
+ * holder's cache ahead of the withdrawal (arts_db_grant_ship_pending below);
+ * a home serving its own queue names the requester it just popped. */
+void arts_db_send_grant_response(struct arts_db_cache_s *cache,
+                                 unsigned int new_owner,
+                                 const struct arts_rdzv_landing_s *new_rdzv,
+                                 bool data_less) {
+  struct arts_rdzv_landing_s rdzv = *new_rdzv;
   arts_shared_ptr_t buf_h = arts_db_buf_acquire(cache);
   struct arts_db_buffer_s *buf =
       (struct arts_db_buffer_s *)arts_shared_get(buf_h);
@@ -251,6 +258,16 @@ void arts_db_send_grant_response(struct arts_db_cache_s *cache) {
                             : 0u;
   hdr.pad = 0;
 
+#ifdef ARTS_RELEASE_PURGE
+  /* Every grant here is issued BY the home, and a home serving itself takes
+   * the shortcut that ships nothing at all — so the self-transfer arm below,
+   * which copies the whole block through a packet, is unreachable.  It is the
+   * only owner→owner data leg this file has left under this release policy,
+   * and it must stay unreachable: reaching it would be two full-size copies
+   * on the path whose whole claim is that it moves no bytes. */
+  assert(new_owner != arts_global_rank_id &&
+         "a home that serves itself hands out no bytes");
+#endif
   if (new_owner == arts_global_rank_id) {
     /* Self-transfer: no wire, no RDMA.  Ex-owner and new owner are the same
      * cache, so the landing this rank advertised in its own request carries
@@ -290,7 +307,15 @@ void arts_db_send_grant_response(struct arts_db_cache_s *cache) {
     return;
   }
 
-  if (buf != NULL && payload_size > 0 && rdzv.txid != 0) {
+  if (data_less) {
+    /* The new owner already holds these exact bytes, so only the permission
+     * needs to move.  Decided here, at the send, because the point is the
+     * bytes on the wire: a receiver-side skip would still have paid for
+     * them.  The advertised landing is echoed back unused, and the receiver
+     * recycles it against the copy it kept. */
+    INCREMENT_NUM_GRANT_REGRANT_DEDUP_BY(1);
+  }
+  if (!data_less && buf != NULL && payload_size > 0 && rdzv.txid != 0) {
     /* One-sided ship: PUT straight from the live buffer into the new owner's
      * landing — zero copy at the source.  The strong buffer ref transfers to
      * the PUT's local completion, keeping the bytes valid until the fabric no
@@ -321,6 +346,20 @@ void arts_db_send_grant_response(struct arts_db_cache_s *cache) {
                                          sizeof(hdr), (char *)map_buf,
                                          /*offset=*/0, (uint64_t)map_size,
                                          arts_free);
+}
+
+/* Ship to the target a revocation round published on this cache, re-arming
+ * the field to the sentinel BEFORE the send: a self-transfer dispatches the
+ * new owner's install inline, which can recursively republish the field for
+ * the next round, and clearing it up front leaves that fresh publish intact.
+ * The field is the channel only where the home revokes a holder; a policy
+ * whose grants move through the home never writes it. */
+void arts_db_grant_ship_pending(struct arts_db_cache_s *cache) {
+  unsigned int new_owner = cache->incoming_new_owner;
+  struct arts_rdzv_landing_s rdzv = cache->incoming_new_owner_rdzv;
+  cache->incoming_new_owner = ARTS_NO_PENDING_OWNER;
+  cache->incoming_new_owner_rdzv = (struct arts_rdzv_landing_s){0, 0, 0, 0};
+  arts_db_send_grant_response(cache, new_owner, &rdzv, /*data_less=*/false);
 }
 
 /* ===== Home-side ownership handlers (VAL; moved from handlers.c) =====
@@ -359,28 +398,15 @@ void arts_handler_db_grant_request(void *item_v, void *args_v) {
     arts_send_db_grant_cts(requester, cache->db_guid, cache->db_size);
     return;
   }
-  arts_home_grantreq_queue_push(&db->pending_rw, requester, &a->rdzv);
+  arts_home_grantreq_queue_push(&db->pending_rw, requester, &a->rdzv,
+                                a->have_version);
   arts_sched_fuzz_point(); /* widen the push<->baton-CAS window */
 
-  /* Active-directory invariant: AT MOST ONE GRANT_INVALIDATE in flight
-   * to the current rw_holder per ownership-transfer round.  CAS 0->1
-   * gates the dispatch — only the thread that flips the bit sends.
-   * Concurrent GRANT_REQUESTs whose CAS loses simply piggyback on the
-   * outstanding round; their requester is queued in pending_rw and is served by
-   * the next CONFIRM-driven round.  The baton is held across the INVALIDATE →
-   * owner→owner transfer → CONFIRM round-trip and cleared in the CONFIRM
-   * handler once the queue drains.  Replaces the pre-fix `was_empty` heuristic
-   * which over-sent on concurrent enqueues. */
-  unsigned int iif_zero = 0;
-  if (!atomic_compare_exchange_strong_explicit(
-          &db->invalidate_in_flight, &iif_zero, 1u, memory_order_acq_rel,
-          memory_order_acquire)) {
-    return; /* another round is in flight; requester stays queued */
-  }
-  /* Baton won: the WT write policy INVALIDATEs the current rw_holder; the WB
-   * write policy pops the FIFO transfer target, publishes pending_install_owner,
-   * and starts the invalidate round. */
-  arts_db_start_grant_round(cache, db, requester);
+  /* The requester is queued; what the home does about it is the release
+   * policy's answer (coherence/grant_retain.c / grant_purge.c).  The push
+   * above is the publication half of a publish-then-check pair in both: a
+   * server that decides "nothing queued" after this push must have seen it. */
+  arts_db_grant_request_arrived(cache, db, requester);
 }
 
 /* ===== Ownership wire senders (VAL; moved from coherence/senders.c) =====
@@ -425,10 +451,23 @@ void arts_send_db_grant_request(struct arts_db_cache_s *cache) {
   } else if (!wants_payload) {
     INCREMENT_NUM_GRANT_HOME_DATALESS_BY(1);
   }
+  /* What this rank already holds.  An unpublished buffer reports the same
+   * "nothing worth keeping" as no buffer at all: its contents were never
+   * anyone's, so a server must send the bytes either way. */
+  uint64_t have_version = ARTS_GRANT_VERSION_NONE;
+  {
+    arts_shared_ptr_t hv = arts_db_buf_acquire(cache);
+    struct arts_db_buffer_s *hb = (struct arts_db_buffer_s *)arts_shared_get(hv);
+    if (hb != NULL) {
+      have_version = arts_atomic_read_u64(&hb->version);
+    }
+    arts_db_buf_release(&hv);
+  }
   struct arts_msg_grant_request_packet_s p;
   arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_GRANT_REQUEST);
   p.header.rank = arts_global_rank_id;
   p.db_guid = db_guid;
+  p.have_version = have_version;
   p.rdzv.addr = rdzv.addr;
   p.rdzv.key = rdzv.key;
   p.rdzv.txid = rdzv.txid;
@@ -444,6 +483,7 @@ void arts_send_db_grant_request(struct arts_db_cache_s *cache) {
         .requester = p.header.rank,
         .db_guid = db_guid,
         .rdzv = rdzv,
+        .have_version = have_version,
     };
     arts_ooo_dispatch_or_defer_guid(db_guid, OOO_DB_GRANT_REQUEST, &args,
                                     sizeof(args));

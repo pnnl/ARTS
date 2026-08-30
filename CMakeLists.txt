@@ -249,20 +249,24 @@ cmake_dependent_option(ARTS_USE_LOCAL_CUDA_ARCHITECTURES
 #                            at every release; home serves reads), WB =
 #                            write-back (payload stays with the last writer;
 #                            directory forwards on demand). Live in INV/VAL.
-#   ARTS_RELEASE_POLICY      PURGE | RETAIN (default) — what a node does with
-#                            its grant when the last local user finishes:
-#                            PURGE = hand copy and permission back to the home;
-#                            RETAIN = keep both until another node asks. Live
-#                            in EXCL.
-# The axes are nominally independent: 12 combinations, 6 built. Everything
+#   ARTS_RELEASE_POLICY      PURGE | RETAIN (default) — WHO initiates the
+#                            grant's return: PURGE = the holder, unasked, at
+#                            its own idle edge (the home sends the holder
+#                            nothing); RETAIN = the home, on demand, and an
+#                            unasked holder keeps the grant. Live in EXCL and
+#                            in WT × {VAL, INV}.
+# The axes are nominally independent: 12 combinations, 8 built. Everything
 # else is a configure error naming the reason:
 #   OCR    × VAL  × {WT, WB} × RETAIN
+#   OCR    × VAL  × WT × PURGE
 #   OCR    × INV  × {WT, WB} × RETAIN
+#   OCR    × INV  × WT × PURGE
 #   OCR    × EXCL × WB × {PURGE, RETAIN}
 #   DB_WRF × VAL  × WT × RETAIN        (home-canonical sync publish)
 # Not built: EXCL×WT (the payload rides the permission, so the release policy
-# already decides both), INV/VAL×PURGE (the migrating write grant is
-# metadata-only; giving it up early saves no data movement).
+# already decides both), INV/VAL×WB×PURGE (a voluntary return hands back only
+# the permission while the bytes stay at the ex-owner, so the home still
+# cannot serve alone — and shipping them home too is write-through).
 set(ARTS_MEMORY_MODEL "OCR" CACHE STRING
     "Memory model the build implements: OCR (default; races legal, runtime-ordered) or DB_WRF (program orders write-write conflicts per DB)")
 set_property(CACHE ARTS_MEMORY_MODEL PROPERTY STRINGS OCR DB_WRF)
@@ -273,7 +277,7 @@ set(ARTS_WRITE_POLICY "WB" CACHE STRING
     "Write policy at release granularity: WT (flush to the home at every release) or WB (resident with the last writer, default). Live in INV/VAL; EXCL requires WB")
 set_property(CACHE ARTS_WRITE_POLICY PROPERTY STRINGS WT WB)
 set(ARTS_RELEASE_POLICY "RETAIN" CACHE STRING
-    "Grant policy at the last local release: PURGE (hand copy and permission back to the home) or RETAIN (keep both until asked, default). Live in EXCL; INV/VAL require RETAIN")
+    "Who initiates the grant's return: PURGE (the holder, unasked, at its own idle edge) or RETAIN (the home, on demand; default). Live in EXCL and in WT x {VAL, INV}; INV/VAL x WB require RETAIN")
 set_property(CACHE ARTS_RELEASE_POLICY PROPERTY STRINGS PURGE RETAIN)
 option(ARTS_RO_REQUEST_COMBINING
     "Combine concurrent same-DB remote read acquires into a single in-flight snapshot request per DB (VAL pull path; no effect under EXCL)" OFF)
@@ -442,13 +446,15 @@ if(ARTS_COHERENCE_PROTOCOL STREQUAL "EXCL" AND ARTS_WRITE_POLICY STREQUAL "WT")
           "Use ARTS_WRITE_POLICY=WB.")
 endif()
 if((ARTS_COHERENCE_PROTOCOL STREQUAL "INV" OR ARTS_COHERENCE_PROTOCOL STREQUAL "VAL")
-   AND ARTS_RELEASE_POLICY STREQUAL "PURGE")
+   AND ARTS_RELEASE_POLICY STREQUAL "PURGE"
+   AND ARTS_WRITE_POLICY STREQUAL "WB")
   message(FATAL_ERROR
-          "${ARTS_COHERENCE_PROTOCOL} x PURGE is not built: the migrating "
-          "write grant is metadata-only in the sharer-bearing families, so "
-          "returning it early saves no data movement and forfeits the "
-          "message-free re-acquisition of a repeated local writer. "
-          "Use ARTS_RELEASE_POLICY=RETAIN.")
+          "${ARTS_COHERENCE_PROTOCOL} x WB x PURGE is not built: a voluntary "
+          "return hands back only the permission while the bytes stay at the "
+          "ex-owner, so the home still cannot serve a reader on its own — and "
+          "shipping the bytes home too is, by definition, write-through. "
+          "Use ARTS_WRITE_POLICY=WT (where the return is metadata-only) or "
+          "ARTS_RELEASE_POLICY=RETAIN.")
 endif()
 if(ARTS_COHERENCE_PROTOCOL STREQUAL "INV" AND ARTS_MEMORY_MODEL STREQUAL "DB_WRF")
   message(FATAL_ERROR

@@ -16,9 +16,9 @@
  */
 #include "arts.h"
 #include "arts/gas/route_table.h"
-#include "arts/runtime_state.h"
 #include "../test_failure_status.h"
 
+#include <sched.h>
 #include <stdint.h>
 #include <stdio.h>
 
@@ -40,12 +40,19 @@ static bool present(arts_guid_t g) {
 }
 
 static void wait_ran(uint32_t want) {
-  /* The consumers are ordinary EDTs; give the scheduler room to run them. */
+  /* The consumers are ordinary EDTs, and this runs INSIDE one — so it waits
+   * for the other workers to pick them up and must not try to run them here.
+   * Driving the scheduler from inside a task re-enters the per-thread
+   * execution bracket the runtime opens around a task body, and a bracket
+   * that is not re-entrant reports the second entry rather than nesting.
+   * Yielding is the whole cooperation this needs; the spin is bounded, so a
+   * run with nobody else to pick them up reports a missing delivery instead
+   * of hanging. */
   for (int spin = 0; spin < 200000; spin++) {
     if (atomic_load_explicit(&g_ran, memory_order_acquire) >= want) {
       return;
     }
-    arts_node_info.scheduler();
+    sched_yield();
   }
 }
 

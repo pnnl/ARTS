@@ -130,11 +130,12 @@ bool arts_db_acquire_is_serialized(arts_db_access_mode_t mode) {
  * confirm-ack divergence lives only in the GRANT_RESPONSE / CONFIRM
  * handlers, not here. */
 void arts_db_release_rw(struct arts_db_cache_s *cache) {
-  /* Defensive: writer_count==0 means our acquire never bumped ownership (e.g. a
-   * cache already torn down by a destroy fan-out); decrementing would
-   * underflow. Atomic acquire-load avoids a TSan race against concurrent
-   * writes. */
-  if (arts_atomic_read(&cache->writer_count) == 0) {
+  /* Defensive: no local hold to drop means our acquire never bumped ownership
+   * (e.g. a cache already torn down by a destroy fan-out); decrementing would
+   * underflow.  Which word states carry no hold is the release policy's —
+   * possession alone is one of them under a voluntary-return policy and not
+   * under a revoked one. */
+  if (arts_db_grant_release_skip(cache)) {
     return;
   }
   /* Acquire current buffer for the version bump + PUBLISH send.  Local ref
@@ -151,8 +152,14 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
   /* HOME keeps home's RO copy fresh: pure synchronous publish every release
    * (a non-home owner; home owners already hold the canonical buffer).  No
    * WB_AND_TRANSFER mode — ownership transfer is the separate owner→owner ship
-   * below. */
-  if (!is_home && buf != NULL) {
+   * below.  Derived ONCE: the hand-back rides this decision, and deriving it
+   * twice is how the two drift apart. */
+  bool will_publish = (!is_home && buf != NULL);
+  /* Where the write right goes back unasked it can travel with these bytes
+   * instead of behind them, which is the whole saving — so the claim is taken
+   * BEFORE the publish, and a won claim replaces the count-dropping edge. */
+  bool handed_back = arts_db_grant_release_claim(cache, will_publish);
+  if (will_publish) {
     /* The flight pins its own source ref; this caller's ref only covers the
      * version bump above. */
     arts_db_publish_sync(cache, new_version);
@@ -162,15 +169,16 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
     arts_db_buf_release(&buf_h);
   }
 
-  /* writer_count is non-negative (post-install flip + install guard absorb any
-   * INVALIDATE that lands during install).  A true 1->0 release reads 0 and
-   * ships the transfer; the (int) cast is defensive. */
-  int rest = (int)arts_atomic_sub(&cache->writer_count, 1); /* post value */
-  if (rest == 0 && cache->incoming_new_owner != ARTS_NO_PENDING_OWNER) {
-    /* An INVALIDATE published a transfer target while writers were live; this
-     * (last) releaser is the unique actor that ships the owner→owner transfer.
-     * Identical for home and non-home owners. */
-    arts_db_send_grant_response(cache);
+  /* The count-dropping edge, and what this rank owes at it, belong to the
+   * release policy — a revoked grant ships onward to the target the round
+   * named, a voluntarily returned one goes back to the home.  Sequenced after
+   * the publish above either way: the bytes must be at the home before the
+   * write right can move.  A claim taken above already dropped the count, and
+   * only has to settle which vehicle carried it. */
+  if (handed_back) {
+    arts_db_grant_release_settle(cache);
+  } else {
+    arts_db_grant_release_commit(cache);
   }
 }
 
@@ -195,6 +203,9 @@ void arts_db_cache_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
    * owner→owner transfer always ships an empty map.  NULL so the shared ship
    * helper's map-build gate takes its empty-map branch. */
   c->cached_version = NULL;
+#ifdef ARTS_RELEASE_PURGE
+  c->pending_grant_return = 0u;
+#endif
   arts_db_cache_common_init(c, db_guid, db_size, kind, creator_rank);
 }
 
@@ -216,6 +227,10 @@ void arts_db_home_init(struct arts_db_s *db, unsigned int rw_holder,
   atomic_store_explicit(&db->invalidate_in_flight, 0, memory_order_relaxed);
   db->cached_version = arts_rank_u64_map_create(nranks);
   db->pending_install_owner = 0;
+#ifdef ARTS_RELEASE_PURGE
+  atomic_store_explicit(&db->pending_return_from, ARTS_GRANT_NO_RETURNER,
+                        memory_order_relaxed);
+#endif
 }
 
 void arts_db_home_teardown(struct arts_db_s *db) {
@@ -408,6 +423,7 @@ struct pub_landed_ctx_s {
   unsigned int releaser;
   arts_guid_t db_guid;
   uint64_t cv;
+  bool returns_grant;
 };
 
 static void pub_landed_cb(void *arg) {
@@ -424,6 +440,14 @@ static void pub_landed_cb(void *arg) {
   }
   arts_send_db_publish_ack(ctx->releaser, ctx->db_guid, ctx->cv, ctx->version,
                              db != NULL ? &db->cache : NULL);
+  if (ctx->returns_grant && db != NULL) {
+    /* The releaser handed the write right back with these bytes.  Accepting
+     * here and not a moment earlier is what makes the two one event: the
+     * stamp above is already in place, so a block handed straight on carries
+     * a version this release has not moved past.  A block destroyed while the
+     * bytes were in flight owes nothing — its directory went with it. */
+    arts_db_grant_return_arrived(db, ctx->releaser);
+  }
   arts_shared_release(&ctx->db_h);
   arts_free(ctx);
 }
@@ -482,6 +506,7 @@ void arts_handler_db_publish(void *item_v, void *args_v) {
   ctx->releaser = a->releaser;
   ctx->db_guid = a->db_guid;
   ctx->cv = a->cv;
+  ctx->returns_grant = (a->returns_grant != 0u);
   arts_net_rdzv_expect(a->rdzv_txid, pub_landed_cb, ctx);
 }
 
@@ -492,7 +517,7 @@ void arts_handler_db_publish(void *item_v, void *args_v) {
  * ref); a waiter left parked at destroy (UB) is cleaned up by the destructor detaches the slot cb + drops the install
  * ref; the cb deleter frees the cache once outstanding lookup refs drain.  A
  * second DESTROY_REQ finds the slot absent and is a no-op.  WT roster
- * source = home->cached_version + the queued ownership requesters. */
+ * source = home->cached_version + the creator-slice probe. */
 void arts_handler_db_destroy(void *item_v, void *args_v) {
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
   struct arts_ooo_args_db_destroy_s *a =
@@ -502,8 +527,7 @@ void arts_handler_db_destroy(void *item_v, void *args_v) {
     return;
   }
   unsigned int self = arts_global_rank_id;
-  /* WT: use home->cached_version as the readers roster, then the queued
-   * ownership requesters. */
+  /* WT: home->cached_version is the readers roster. */
   {
     unsigned int n = arts_global_rank_count;
     for (unsigned int r = 0; r < n; r++) {
@@ -515,14 +539,11 @@ void arts_handler_db_destroy(void *item_v, void *args_v) {
       }
     }
   }
-  {
-    unsigned int q_rank;
-    while (arts_home_grantreq_queue_pop(&db->pending_rw, &q_rank, NULL)) {
-      if (q_rank != self) {
-        arts_send_db_cache_destroy(q_rank, a->db_guid);
-      }
-    }
-  }
+  /* The queued ownership requesters are NOT drained for the roster: the FIFO
+   * has exactly one consumer — the rank holding the transfer baton — and a
+   * destroy popping it concurrently is a second one.  A requester that has
+   * touched this block is already in the version ledger above, and a
+   * first-touch requester is covered by the creator-slice probe below. */
   /* The creator may hold an in-place publish credit taught at create
    * (CREATE_RETURN) without ever having published, so the version ledger
    * cannot name it.  A credit holder must join the teardown roster, or a
@@ -559,6 +580,18 @@ void arts_db_create_install_home_buffer(struct arts_db_cache_s *cache,
     (void)arts_db_buf_install(cache, /*new_version=*/0, /*data_payload=*/NULL,
                               db_size);
   }
+}
+
+/* The home's installed buffer IS the canonical copy under this write policy,
+ * and every publish stamps it in place, so its version is the axis a serve is
+ * judged against. */
+uint64_t arts_db_grant_serve_version(struct arts_db_s *db) {
+  arts_shared_ptr_t h = arts_db_buf_acquire(&db->cache);
+  struct arts_db_buffer_s *b = (struct arts_db_buffer_s *)arts_shared_get(h);
+  uint64_t v = (b != NULL) ? arts_atomic_read_u64(&b->version)
+                           : ARTS_GRANT_VERSION_NONE;
+  arts_db_buf_release(&h);
+  return v;
 }
 
 /* Readers re-check a version at every acquire, so an ex-holder's retained

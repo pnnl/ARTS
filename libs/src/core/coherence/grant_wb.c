@@ -264,7 +264,7 @@ void arts_handler_db_grant_confirm(void *item_v, void *args_v) {
   {
     unsigned int next_owner;
     if (arts_home_grantreq_queue_pop(&db->pending_rw, &next_owner,
-                                    &piggyback_rdzv)) {
+                                    &piggyback_rdzv, NULL)) {
       db->pending_install_owner = next_owner;
       piggyback = next_owner;
       /* No early PROCEED: the next owner's RW cursor is advanced by the CURRENT
@@ -284,47 +284,8 @@ void arts_handler_db_grant_confirm(void *item_v, void *args_v) {
     return;
   }
 
-  /* No pending requester — release the baton (with the freshly-enqueued-racer
-   * recheck retry loop). */
-  while (1) {
-    /* Release the baton. */
-    atomic_store_explicit(&db->invalidate_in_flight, 0u, memory_order_release);
-    /* Dekker-style publication: the baton-release store must be globally
-     * visible BEFORE the emptiness re-check loads, or a requester that
-     * pushed and lost its baton CAS inside the window is missed — a plain
-     * release-store followed by loads permits exactly that StoreLoad
-     * reordering. */
-    atomic_thread_fence(memory_order_seq_cst);
-    /* Re-check for a freshly-enqueued requester that raced the baton
-     * release.  If the queue is still empty, we're done. */
-    if (arts_home_grantreq_queue_empty(&db->pending_rw)) {
-      return;
-    }
-    /* There is a new requester; try to re-acquire the baton. */
-    unsigned int expected = 0u;
-    if (!atomic_compare_exchange_strong_explicit(
-            &db->invalidate_in_flight, &expected, 1u, memory_order_acq_rel,
-            memory_order_acquire)) {
-      /* Another GRANT_REQUEST handler already picked up the baton (race);
-       * that thread will drain the queue. */
-      return;
-    }
-    INCREMENT_NUM_GRANT_BATON_RECLAIM_BY(1);
-    /* Re-acquired the baton: pop the racer and start a fresh round.  This path
-     * starts AFTER the just-confirmed owner is already running (no in-flight
-     * CONFIRM_ACK to piggyback on), so it issues a STANDALONE INVALIDATE to the
-     * current rw_holder, exactly like the first-round request-handler path. */
-    unsigned int next_owner;
-    struct arts_rdzv_landing_s next_rdzv;
-    if (arts_home_grantreq_queue_pop(&db->pending_rw, &next_owner,
-                                    &next_rdzv)) {
-      db->pending_install_owner = next_owner;
-      arts_db_owner_start_invalidate_round(cache, next_owner, &next_rdzv);
-      return;
-    }
-    /* The racer was already consumed by whoever we contended with; loop to
-     * release and recheck. */
-  }
+  /* No pending requester — what the home does next is the release policy's. */
+  arts_db_grant_round_close(cache, db);
 }
 
 /* ===== WB CONFIRM_ACK handler (new owner C) ==================== */
@@ -385,7 +346,7 @@ void arts_handler_db_grant_confirm_ack(void *item_v, void *args_v) {
    * ownership and its drained EDTs ship on their own release 0-edge. */
   if ((int)arts_atomic_sub(&cache->writer_count, 1) == 0 &&
       cache->incoming_new_owner != ARTS_NO_PENDING_OWNER) {
-    arts_db_send_grant_response(cache);
+    arts_db_grant_ship_pending(cache);
   }
 }
 
@@ -411,7 +372,7 @@ void arts_db_start_grant_round(struct arts_db_cache_s *cache,
   unsigned int next_owner;
   struct arts_rdzv_landing_s next_rdzv;
   while (!arts_home_grantreq_queue_pop(&db->pending_rw, &next_owner,
-                                       &next_rdzv)) {
+                                       &next_rdzv, NULL)) {
     /* Empty despite our own push: an earlier round already served it (rounds
      * can complete between the push and this claim).  Release the baton with
      * the SAME re-check discipline as the round close: a requester that
@@ -424,7 +385,7 @@ void arts_db_start_grant_round(struct arts_db_cache_s *cache,
      * release-store followed by loads permits exactly that StoreLoad
      * reordering. */
     atomic_thread_fence(memory_order_seq_cst);
-    if (arts_home_grantreq_queue_empty(&db->pending_rw)) {
+    if (!arts_home_grantreq_queue_pending(&db->pending_rw)) {
       return;
     }
     unsigned int expected = 0u;
@@ -489,7 +450,7 @@ void arts_handler_db_grant_invalidate(void *item_v, void *args_v) {
     return;
   }
   /* rest == 0: we are the unique transfer actor. */
-  arts_db_send_grant_response(cache);
+  arts_db_grant_ship_pending(cache);
 }
 
 /* ===== WB SNAPSHOT_REDIRECT handler (owner side, moved from handlers.c) === */

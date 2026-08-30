@@ -323,6 +323,88 @@ arts_db_acquire_remote_rw(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
 void arts_db_start_grant_round(struct arts_db_cache_s *cache,
                                    struct arts_db_s *db,
                                    unsigned int requester);
+
+/* ===== Release-policy seams (coherence/grant_purge.c / grant_retain.c) =====
+ * WHO initiates the grant's return is the release policy's whole question, and
+ * these five points are where the two answers differ.  Under RETAIN the home
+ * drives every hand-over (it revokes the current holder and the holder ships
+ * onward), so the request arrival starts a round, the round close advances or
+ * releases the baton, and the count-dropping edges only ship when a round has
+ * already named a target.  Under PURGE the holder gives the right back at its
+ * own idle edge and the home hands it out from there, so the request arrival
+ * only queues unless the home is already idle, and the count-dropping edges
+ * are the return itself.
+ *
+ * arrived:      home-side GRANT_REQUEST tail, with the requester queued.
+ * round_close:  home-side CONFIRM tail, with rw_holder already flipped.
+ * release_skip: release_rw's defensive entry guard (true = nothing to drop).
+ * release_commit / guard_remove: the two count-dropping edges — a writer's
+ *               own release, and the removal of the install-time drain guard.
+ * Every one of them is called with the arm's own state already settled: the
+ * release's publish has been acknowledged, the install's drain has run. */
+void arts_db_grant_request_arrived(struct arts_db_cache_s *cache,
+                                   struct arts_db_s *db,
+                                   unsigned int requester);
+void arts_db_grant_round_close(struct arts_db_cache_s *cache,
+                               struct arts_db_s *db);
+bool arts_db_grant_release_skip(struct arts_db_cache_s *cache);
+void arts_db_grant_release_commit(struct arts_db_cache_s *cache);
+/* The install's drain, and what closes it.  Under a demand-revoked policy the
+ * commit keeps a hold of its own across the walk and drops it at the end;
+ * under a voluntary-return policy the commit's hold BECOMES the waiters' holds
+ * in one step before any of them is woken, so the last of them to release sees
+ * a word carrying exactly its own hold and can hand the right back on its own
+ * publish.  commit_drain returns how many waiters it woke; commit_finish is
+ * given that count because with none there is no release to carry anything and
+ * the commit must close the edge itself. */
+unsigned int arts_db_grant_commit_drain(struct arts_db_cache_s *cache,
+                                        uint64_t version);
+void arts_db_grant_commit_finish(struct arts_db_cache_s *cache,
+                                 unsigned int drained);
+/* Chain primitives for a commit that counts before it wakes (grant_queue.c). */
+arts_lf_link_t *arts_pending_rw_queue_take(arts_lf_stack_t *q);
+unsigned int arts_pending_rw_chain_count(arts_lf_link_t *chain);
+void arts_pending_rw_chain_wake(arts_lf_link_t *chain,
+                                void (*cb)(arts_guid_t edt_guid,
+                                           unsigned int slot, void *ctx),
+                                void *ctx);
+/* The home takes the idle holder's place.  A create whose creator never
+ * acquires leaves no rank able to reach an idle edge, so the directory must
+ * name the home itself; and because the descriptor is already visible when
+ * this runs, demand can already be queued behind the holder it replaces.
+ * Hence a transition and not a store: whoever ends up serving that demand is
+ * decided by a baton, exactly as at any other entry to the home's server. */
+void arts_db_grant_home_idle_transition(struct arts_db_s *db);
+
+/* ===== The hand-back as a rider on the release's own publish =============
+ * A write-through release already sends the home its payload, and the home is
+ * exactly who the write right goes back to — so the two travel together and
+ * the hand-back costs no message of its own.  What that buys has to be paid
+ * for in discipline: the hand-back becomes an OBLIGATION on the cache, and an
+ * obligation needs exactly one discharger.
+ *
+ * claim:  before the publish, and only where a hand-back is owed at all, take
+ *         the whole write right in ONE attempt.  A single attempt on purpose:
+ *         any other word means other writers are still live, and that release
+ *         belongs to the ordinary count-dropping edge instead.  A won claim
+ *         arms the obligation and its caller must NOT run that edge.
+ * take_leg: the publish sender, immediately before a payload COMMIT leg,
+ *         asks whether to carry the obligation.  Whoever wins the word sends
+ *         it; there is no second winner.
+ * settle: after the publish returns, the armer re-checks.  Still armed means
+ *         the leg it meant to ride had already gone out, so it converts to
+ *         the standalone message.  Two CAS sites on one word: exactly one
+ *         hand-back, never none, never two.
+ * arrived: the home side of a hand-back, however it travelled. */
+bool arts_db_grant_release_claim(struct arts_db_cache_s *cache,
+                                 bool will_publish);
+bool arts_db_grant_return_claim_leg(struct arts_db_cache_s *cache);
+void arts_db_grant_release_settle(struct arts_db_cache_s *cache);
+void arts_db_grant_return_arrived(struct arts_db_s *db, unsigned int returner);
+/* The install's possession-setting transition (sentinel + drain guard under
+ * RETAIN; the possession bit and that same guard under PURGE).  Possession is
+ * never set by an add: an add cannot state the precondition it depends on. */
+void arts_db_grant_install(struct arts_db_cache_s *cache);
 #endif /* shared grant plane */
 
 #if defined(ARTS_PROTOCOL_VAL) || defined(ARTS_PROTOCOL_INV)

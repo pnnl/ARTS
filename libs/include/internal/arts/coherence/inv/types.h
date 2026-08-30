@@ -303,6 +303,10 @@ struct arts_db_inv_pub_s {
   arts_lf_link_t link; /* FIRST — required by arts_lf_stack_t */
   uint64_t vnew;
   unsigned int releaser_rank;
+  /* The releaser handed the write right back with this release.  The round
+   * close is where it is accepted: not before, because the home may not hand
+   * the block on while a stale copy of it still stands. */
+  unsigned int returns_grant;
   uint64_t cv;                     /* releaser's ack cookie (sem identity) */
   struct arts_rdzv_landing_s rdzv; /* payload landing (HOME); zero under OWNER */
 };
@@ -314,6 +318,7 @@ struct arts_db_inv_pub_s {
 struct arts_home_grantreq_node_s {
   struct arts_home_grantreq_node_s *next;
   unsigned int rank;
+  uint64_t have_version; /* version the requester already holds */
   struct arts_rdzv_landing_s rdzv;
 };
 struct arts_home_grantreq_queue_s {
@@ -325,6 +330,7 @@ struct arts_home_grantreq_queue_s {
 struct arts_home_grantreq_node_s {
   _Atomic(struct arts_home_grantreq_node_s *) next;
   unsigned int rank;
+  uint64_t have_version; /* version the requester already holds */
   struct arts_rdzv_landing_s rdzv;
 };
 struct arts_home_grantreq_queue_s {
@@ -384,6 +390,12 @@ struct arts_db_cache_s {
   uint64_t home_pub_addr;
   uint64_t home_pub_rkey;
   volatile uint64_t home_pub_txid;
+#ifdef ARTS_RELEASE_PURGE
+  /* Armed by a release that gave the write right up while its payload was
+   * still in flight; discharged by whichever of the publish sender and the
+   * release itself CASes it back to zero, so exactly one return goes out. */
+  volatile unsigned int pending_grant_return;
+#endif
 };
 #else
 struct arts_db_cache_s {
@@ -436,6 +448,12 @@ struct arts_db_cache_s {
   uint64_t home_pub_addr;
   uint64_t home_pub_rkey;
   volatile uint64_t home_pub_txid;
+#ifdef ARTS_RELEASE_PURGE
+  /* Armed by a release that gave the write right up while its payload was
+   * still in flight; discharged by whichever of the publish sender and the
+   * release itself CASes it back to zero, so exactly one return goes out. */
+  volatile unsigned int pending_grant_return;
+#endif
 };
 #endif
 
@@ -464,6 +482,14 @@ struct arts_db_s {
   struct arts_home_grantreq_queue_s pending_rw; /* Vyukov MPSC, pop-one */
   arts_db_atomic_uint_t invalidate_in_flight;  /* transfer-round baton */
   unsigned int pending_install_owner; /* baton-holder-written transfer target */
+#ifdef ARTS_RELEASE_PURGE
+  /* Single-slot return latch.  A voluntary return is never rejected: it is
+   * either accepted at once or parked here for the round close that is
+   * already inbound.  Both sides publish then check and consume by CAS, so
+   * exactly one of them accepts any given return.  Grants are serialized, so
+   * at most one return can be outstanding and one slot suffices. */
+  arts_db_atomic_uint_t pending_return_from;
+#endif
 
   /* ---- invalidation round (home side; INV's own) ---- */
 #ifdef __cplusplus
