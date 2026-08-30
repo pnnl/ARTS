@@ -20,10 +20,10 @@ from artsrun.model import (
 
 
 # --- plane ----------------------------------------------------------------
-def test_plane_has_sixteen_positions_and_eight_configurations():
+def test_plane_has_sixteen_positions_and_eleven_configurations():
     plane = load_plane()
     assert len(plane.cells) == 16
-    assert sum(c.buildable for c in plane.cells) == 8
+    assert sum(c.buildable for c in plane.cells) == 11
 
 
 def test_every_unbuildable_position_states_a_reason():
@@ -39,7 +39,7 @@ def test_every_unbuildable_position_states_a_reason():
 
 def test_two_configurations_offer_a_reference_and_the_rest_do_not():
     plane = load_plane()
-    assert len(plane.entries) == 10
+    assert len(plane.entries) == 13
     refs = [e for e in plane.entries if e.is_reference]
     assert {e.key for e in refs} == {"xsocr", "ocrvx"}
     assert plane.entry("xsocr").cell == "EXCL/PURGE/WB"
@@ -200,6 +200,32 @@ def test_benchset_override_marks_the_argument_source():
     resolved = {a.key: a for a in bs.resolve(catalog)}
     assert resolved["nqueens:base"].args == ["8", "2"]
     assert resolved["nqueens:base"].args_overridden
+
+
+def test_benchset_overrides_a_restructured_row_by_the_rewrites_name():
+    catalog = load_catalog()
+    row = next(a for a in catalog.rows if a.restructured_as)
+    bs = Benchset(name="o", apps={
+        row.name: BenchsetEntry(versions=[Version.RESTRUCTURED]),
+        row.restructured_as: BenchsetEntry(args=["7", "3"]),
+    })
+    resolved = {a.key: a for a in bs.resolve(catalog)}
+    got = resolved[f"{row.name}:restructured"]
+    assert got.args == ["7", "3"]
+    assert got.args_overridden
+
+
+def test_a_row_override_never_follows_into_the_rewrites_cli():
+    catalog = load_catalog()
+    row = next(a for a in catalog.rows if a.restructured_as)
+    bs = Benchset(name="o", apps={
+        row.name: BenchsetEntry(versions=[Version.RESTRUCTURED],
+                                args=["9", "9"]),
+    })
+    resolved = {a.key: a for a in bs.resolve(catalog)}
+    got = resolved[f"{row.name}:restructured"]
+    assert got.args == catalog.apps[row.restructured_as].args
+    assert not got.args_overridden
 
 
 def test_benchset_disable_removes_every_version():

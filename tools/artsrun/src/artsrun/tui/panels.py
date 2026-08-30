@@ -33,9 +33,9 @@ class LauncherChanged(Message):
 class PlanePanel(Vertical):
     """The 4x4 grid.
 
-    Every grid position is drawn, including the eight that carry no
-    configuration: seeing why EXCL has no WT column, and VAL no PURGE one, is
-    the point of showing the axes as axes.
+    Every grid position is drawn, including the five that carry no
+    configuration: seeing why EXCL has no WT column, and no family has a
+    WB×PURGE cell, is the point of showing the axes as axes.
     """
 
     def __init__(self, plane: Plane, **kwargs):

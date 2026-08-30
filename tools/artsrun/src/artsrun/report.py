@@ -19,6 +19,7 @@ from artsrun.run.types import CellResult, Skipped, Status
 RESULT_COLUMNS = [
     "app", "version", "nodes", "entry", "kind", "repeat",
     "status", "rc", "wall_s", "e2e_s", "scalar", "note", "log",
+    "teardown_hang",
 ]
 
 # Display metadata for runtime series, carried into the report so a later
@@ -29,10 +30,13 @@ RT_LABEL = {
     "ocr_excl_retain": "EXCL/RETAIN",
     "ocr_inv_wt": "INV/WT",
     "ocr_inv_wb": "INV/WB",
+    "ocr_inv_wt_purge": "INV/WT+PURGE",
     "ocr_val_wt": "VAL/WT",
     "ocr_val_wb": "VAL/WB",
+    "ocr_val_wt_purge": "VAL/WT+PURGE",
     "ocr_val_wt_comb": "VAL+comb/WT",
     "ocr_val_wb_comb": "VAL+comb/WB",
+    "ocr_val_wt_purge_comb": "VAL+comb/WT+PURGE",
     "xsocr": "XSOCR",
     # OCR-vx ships three runtime families; the one built here is the
     # distributed-memory one, which is what the label should name.
@@ -43,10 +47,16 @@ RT_COLOR = {
     "ocr_excl_retain": "#7BA3D8",
     "ocr_inv_wt": "#DD8452",
     "ocr_inv_wb": "#F0B08A",
+    # A third, deeper tone of the family's own hue — WT+PURGE is a third
+    # point in this family, not a fourth family, so it stays on the same
+    # hue as WT/WB rather than drawing a new one.
+    "ocr_inv_wt_purge": "#B65924",
     "ocr_val_wt": "#55A868",
     "ocr_val_wb": "#8CCB9B",
+    "ocr_val_wt_purge": "#3D794B",
     "ocr_val_wt_comb": "#C44E52",
     "ocr_val_wb_comb": "#E08A8D",
+    "ocr_val_wt_purge_comb": "#943135",
     "xsocr": "#8172B3",
     "ocrvx": "#937860",
 }
@@ -67,6 +77,7 @@ def _row(r: CellResult) -> dict:
         "scalar": r.scalar or "",
         "note": r.note,
         "log": str(r.log_path) if r.log_path else "",
+        "teardown_hang": "true" if r.teardown_hang else "",
     }
 
 
@@ -125,7 +136,15 @@ def consensus_table(groups: list[Group], plane: Plane, entries: list[str]) -> Ta
         Verdict.EXPECT_FAIL: "[yellow]EXP![/yellow]",
     }
     for g in groups:
-        cells = [style.get(g.verdicts.get(k, Verdict.NA), "?") for k in entries]
+        cells = []
+        for k in entries:
+            verdict = g.verdicts.get(k, Verdict.NA)
+            text = style.get(verdict, "?")
+            # A dagger, not a new verdict: the cell voted OK, only the way
+            # it got there is worth a reader's second look.
+            if verdict is Verdict.OK and g.teardown_hang.get(k):
+                text = "[green]OK†[/green]"
+            cells.append(text)
         table.add_row(g.app_key, str(g.nodes), g.consensus or "-", *cells)
     return table
 
@@ -171,6 +190,11 @@ def write_summary(
 ) -> str:
     console = Console(record=True, width=200, file=open("/dev/null", "w"))
     console.print(consensus_table(groups, plane, selection.entries))
+    if any(g.teardown_hang.values() for g in groups):
+        console.print(
+            "[dim]† OK: reaped by timeout after a completed, measured run "
+            "(teardown hang)[/dim]"
+        )
     console.print()
     console.print(scaling_table(results, selection.entries))
 

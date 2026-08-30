@@ -325,6 +325,31 @@ counters:
     unit: count
     help: 'Ownership grants into the WT home (permission only, no payload)'
 
+  NUM_GRANT_PURGE_RETURN:
+    group: 'Write grant'
+    unit: count
+    help: 'Write rights handed back at a holder''s own idle edge, standalone'
+
+  NUM_GRANT_PURGE_FLAG:
+    group: 'Write grant'
+    unit: count
+    help: 'Hand-backs that rode a release''s own publish instead of a standalone return'
+
+  NUM_GRANT_PURGE_ACCEPT:
+    group: 'Write grant'
+    unit: count
+    help: 'Purge hand-backs the home accepted; RETURN+FLAG minus ACCEPT is still in flight'
+
+  NUM_GRANT_PURGE_LATCHED:
+    group: 'Write grant'
+    unit: count
+    help: 'Hand-backs parked for an inbound round close instead of accepted on arrival'
+
+  NUM_GRANT_REGRANT_DEDUP:
+    group: 'Write grant'
+    unit: count
+    help: 'Grants served with permission alone because the requester already held the current copy'
+
   OBJ_NUM_EDT:
     group: 'Per-object'
     unit: count

@@ -136,6 +136,23 @@ class Benchset(BaseModel):
                     if entry.args_by_nodes is not None:
                         args_by_nodes = expand_repo(entry.args_by_nodes, root)
                         overridden = True
+                # A rewrite is a separate application target with its own
+                # CLI, so its override is addressed by the rewrite's own
+                # name; the row's override never follows into a different
+                # CLI.  Without this a roster cannot shrink a restructured
+                # row at all, and its cells silently run the rewrite's full
+                # calibrated workload.
+                if version is Version.RESTRUCTURED and app.restructured_as:
+                    rewrite = self.apps.get(app.restructured_as)
+                    if rewrite is not None:
+                        root = str(repo_root())
+                        if rewrite.args is not None:
+                            args = expand_repo(rewrite.args, root)
+                            overridden = True
+                        if rewrite.args_by_nodes is not None:
+                            args_by_nodes = expand_repo(
+                                rewrite.args_by_nodes, root)
+                            overridden = True
                 out.append(
                     ResolvedApp(
                         name=app.name,

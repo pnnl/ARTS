@@ -26,6 +26,29 @@ def test_the_catalog_mirrors_the_runtime_declaration_list():
     assert set(load_counter_catalog().names) == declared
 
 
+def test_the_shipped_default_cfg_mirrors_the_runtime_declaration_list():
+    # configs/counters.cfg is the build's own default counter config. The
+    # CMake parser silently defaults a name it has never seen to OFF with no
+    # diagnostic, so a counter.h addition that never made it into this file
+    # is unlistable from the stock cfg and nothing here says so.
+    header = (repo_root() /
+              "libs/include/internal/arts/counter/counter.h").read_text()
+    body = header.split("ARTS_COUNTER_LIST", 1)[1].split("// Generate enum")[0]
+    declared = set(re.findall(r"X\(([A-Z0-9_]+)\)", body))
+
+    cfg = (repo_root() / "configs/counters.cfg").read_text()
+    listed = set(re.findall(r"^([A-Z][A-Z0-9_]*)=", cfg, re.MULTILINE))
+
+    missing_from_cfg = declared - listed
+    stale_in_cfg = listed - declared
+    assert not missing_from_cfg, (
+        f"counter.h names absent from configs/counters.cfg: "
+        f"{sorted(missing_from_cfg)}")
+    assert not stale_in_cfg, (
+        f"configs/counters.cfg names counter.h no longer declares: "
+        f"{sorted(stale_in_cfg)}")
+
+
 def test_every_counter_states_a_group_and_a_unit():
     for info in load_counter_catalog().counters.values():
         assert info.group

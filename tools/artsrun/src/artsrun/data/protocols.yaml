@@ -50,6 +50,10 @@ cells:
     write: WB
     variant: ocr_inv_wb
     reference: ocrvx
+  - family: INV
+    release: PURGE
+    write: WT
+    variant: ocr_inv_wt_purge
   - family: VAL
     release: RETAIN
     write: WT
@@ -58,6 +62,10 @@ cells:
     release: RETAIN
     write: WB
     variant: ocr_val_wb
+  - family: VAL
+    release: PURGE
+    write: WT
+    variant: ocr_val_wt_purge
   - family: VAL_COMB
     release: RETAIN
     write: WT
@@ -66,6 +74,10 @@ cells:
     release: RETAIN
     write: WB
     variant: ocr_val_wb_comb
+  - family: VAL_COMB
+    release: PURGE
+    write: WT
+    variant: ocr_val_wt_purge_comb
 
 # Why a grid position carries no configuration.  Keyed by the rule that
 # excludes it; the model picks the rule that applies.
@@ -74,8 +86,10 @@ unbuildable:
     EXCL requires WB — the payload rides the permission, so the release
     policy already decides both halves.
   needs_retain: >-
-    INV and VAL require RETAIN — their write grant migrates as metadata only,
-    so returning it early saves no payload motion.
+    Write-back requires RETAIN — a voluntary return hands back only the
+    permission while the bytes stay at the ex-owner, so the home still
+    cannot serve a reader alone (shipping the bytes home too is, by
+    definition, write-through).
 
 references:
   xsocr:

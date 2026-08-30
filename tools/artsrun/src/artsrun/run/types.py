@@ -76,6 +76,12 @@ class CellResult:
     scalar: str | None = None
     extra: dict[str, str] = field(default_factory=dict)
     note: str = ""
+    # A timeout reap whose log already carried the completion marker and the
+    # runtime's own end-to-end stamp before the process was killed: the
+    # measured run finished, only its teardown hung.  Judged OK with this
+    # flag set rather than as a new status, so a reader can still ask "is
+    # this cell OK" with one check.
+    teardown_hang: bool = False
 
     @property
     def ran(self) -> bool:

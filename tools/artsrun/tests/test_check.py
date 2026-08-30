@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from artsrun.check import Verdict, extract, minority_report, vote
+from artsrun.check import Verdict, apply_to, extract, minority_report, vote
 from artsrun.model.benchset import ResolvedApp
 from artsrun.model.catalog import AppClass, ScalarKind, Version
 from artsrun.model.plane import RuntimeKind, SelectionEntry
@@ -132,3 +132,63 @@ def test_node_counts_are_voted_separately():
     groups = vote([r1, r2])
     assert [g.nodes for g in groups] == [1, 2]
     assert all(g.unanimous for g in groups)
+
+
+# --- teardown-hang leniency -------------------------------------------------
+def _timeout_result(entry_key: str, text: str, app: ResolvedApp, tmp_path) -> CellResult:
+    r = CellResult(cell=_cell(entry_key, app), status=Status.TIMEOUT, rc=124)
+    log = tmp_path / f"{entry_key}.log"
+    log.write_text(text)
+    r.log_path = log
+    return r
+
+
+def test_a_reap_with_the_marker_and_the_e2e_stamp_is_ok_with_a_note(tmp_path):
+    app = _app()
+    r = _timeout_result("a", "RESULT = 42\n[E2E] 1500000000\n", app, tmp_path)
+    apply_to(r)
+    assert r.status is Status.OK
+    assert r.scalar == "42"
+    assert r.e2e_s == 1.5
+    assert r.teardown_hang
+    assert r.note
+
+
+def test_a_reap_with_the_marker_but_no_e2e_stamp_stays_a_timeout(tmp_path):
+    app = _app()
+    r = _timeout_result("a", "RESULT = 42\n", app, tmp_path)
+    apply_to(r)
+    assert r.status is Status.TIMEOUT
+    assert not r.teardown_hang
+
+
+def test_a_reap_with_an_e2e_stamp_but_no_marker_stays_a_timeout(tmp_path):
+    app = _app()
+    r = _timeout_result("a", "[E2E] 1500000000\n", app, tmp_path)
+    apply_to(r)
+    assert r.status is Status.TIMEOUT
+    assert not r.teardown_hang
+
+
+def test_a_clean_exit_is_unaffected_by_the_teardown_hang_check(tmp_path):
+    app = _app()
+    r = CellResult(cell=_cell("a", app), status=Status.OK, rc=0)
+    log = tmp_path / "clean.log"
+    log.write_text("RESULT = 42\n[E2E] 1500000000\n")
+    r.log_path = log
+    apply_to(r)
+    assert r.status is Status.OK
+    assert not r.teardown_hang
+    assert r.note == ""
+
+
+def test_a_teardown_hang_cell_votes_in_consensus_and_is_tagged(tmp_path):
+    app = _app()
+    ok_result = _result("a", "1.0", app)
+    hang_result = _timeout_result("b", "RESULT = 1.0\n[E2E] 2000000000\n", app, tmp_path)
+    apply_to(hang_result)
+    group = vote([ok_result, hang_result])[0]
+    assert group.verdicts["a"] is Verdict.OK
+    assert group.verdicts["b"] is Verdict.OK
+    assert group.teardown_hang["b"]
+    assert not group.teardown_hang["a"]

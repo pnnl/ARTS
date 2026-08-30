@@ -8,8 +8,9 @@
 # list, referenced everywhere: a per-app copy of it silently omits new
 # configurations from whichever apps forgot to grow.
 set(ARTS_VARIANT_SUFFIXES
-    ocr_val_wt ocr_val_wb ocr_val_wt_comb ocr_val_wb_comb
-    ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb)
+    ocr_val_wt ocr_val_wb ocr_val_wt_purge ocr_val_wt_comb ocr_val_wb_comb
+    ocr_val_wt_purge_comb
+    ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb ocr_inv_wt_purge)
 
 set(OCR_APPS_ROOT "${CMAKE_SOURCE_DIR}/third_party/ocr-apps/apps")
 set(OCR_LIBS_ROOT "${OCR_APPS_ROOT}/libs/src")

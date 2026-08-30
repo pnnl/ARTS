@@ -33,20 +33,20 @@ def test_everything_is_selected_by_default():
         )
 
     entries, nodes, apps = drive(check)
-    assert len(entries) == 10
+    assert len(entries) == 13
     assert nodes == [1, 2, 4, 8]
     assert apps > 0
 
 
-def test_the_plane_draws_every_position_but_only_offers_eight():
+def test_the_plane_draws_every_position_but_only_offers_eleven():
     async def check(app, pilot):
         plane = app.query_one("#plane", PlanePanel)
         blanks = plane.query(".plane-cell.blank")
         return len(plane.toggles), len(blanks)
 
     toggles, blanks = drive(check)
-    assert toggles == 10
-    assert blanks == 8
+    assert toggles == 13
+    assert blanks == 5
 
 
 def test_one_control_clears_then_restores_the_whole_plane():
@@ -60,9 +60,9 @@ def test_one_control_clears_then_restores_the_whole_plane():
         return first, cleared, restored
 
     first, cleared, restored = drive(check)
-    assert first == 10
+    assert first == 13
     assert cleared == 0
-    assert restored == 10
+    assert restored == 13
 
 
 def test_the_control_acts_on_the_surface_that_is_showing():
@@ -79,7 +79,7 @@ def test_the_control_acts_on_the_surface_that_is_showing():
 
     apps, entries = drive(check)
     assert apps == 0        # the visible surface cleared
-    assert entries == 10    # the others did not
+    assert entries == 13    # the others did not
 
 
 def test_a_version_the_application_lacks_is_absent_not_unchecked():
@@ -108,7 +108,7 @@ def test_the_selection_becomes_a_campaign_of_the_expected_size():
 
     cells, entries, nodes = drive(check)
     assert cells == len(entries) * 4 * (cells // (len(entries) * 4))
-    assert len(entries) == 10
+    assert len(entries) == 13
     assert nodes == [1, 2, 4, 8]
 
 

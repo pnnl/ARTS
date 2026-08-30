@@ -1,9 +1,15 @@
 """Read each cell's result scalar and vote a consensus across configurations.
 
-Two rules make the verdict trustworthy. A run whose completion marker never
+Three rules make the verdict trustworthy. A run whose completion marker never
 appeared fails regardless of its exit status, because a wedged run that printed
-part of an answer must not pass. And the only cells excluded from a vote are
-structurally ineligible ones — never a cell that merely disagreed.
+part of an answer must not pass. A process reaped by timeout is judged on what
+its log already carries, not its exit code alone: one whose log shows both the
+completion marker and the runtime's own end-to-end stamp measured itself
+before the reap, so it is OK with a note rather than a failure — a hung
+teardown after a finished, measured run is not the same defect as a run that
+never finished; a reap missing either one stays a failure. And the only cells
+excluded from a vote are structurally ineligible ones — never a cell that
+merely disagreed.
 """
 
 from __future__ import annotations
@@ -69,7 +75,8 @@ def extract_extra(text: str, patterns: dict[str, str]) -> dict[str, str]:
 
 
 def apply_to(result: CellResult) -> CellResult:
-    """Fill in a finished cell's scalar, and demote a run that never finished."""
+    """Fill in a finished cell's scalar, and settle a run whose exit status
+    alone does not say whether it measured anything."""
     if result.log_path is None or not result.log_path.is_file():
         if result.status is Status.OK:
             result.status = Status.FAIL
@@ -83,6 +90,15 @@ def apply_to(result: CellResult) -> CellResult:
     if result.status is Status.OK and not completed:
         result.status = Status.FAIL
         result.note = "exited cleanly but never printed its completion marker"
+    elif result.status is Status.TIMEOUT and completed and result.e2e_s is not None:
+        # The process was reaped by timeout, but its log already carries both
+        # the completion marker and the runtime's own end-to-end stamp — the
+        # application finished and the run measured itself; only the
+        # teardown afterward hung.  A reap missing either one stays a
+        # timeout: nothing says the run measured itself completely.
+        result.status = Status.OK
+        result.teardown_hang = True
+        result.note = "reaped by timeout after a completed, measured run (teardown hang)"
     return result
 
 
@@ -115,6 +131,9 @@ class Group:
     results: list[CellResult] = field(default_factory=list)
     consensus: str | None = None
     verdicts: dict[str, Verdict] = field(default_factory=dict)
+    # Keyed the same as verdicts: whether the entry's voting cell was a
+    # teardown-hang leniency case, for a table to tag rather than hide.
+    teardown_hang: dict[str, bool] = field(default_factory=dict)
 
     @property
     def unanimous(self) -> bool:
@@ -159,6 +178,7 @@ def vote(results: list[CellResult]) -> list[Group]:
                 group.verdicts[r.cell.entry.key] = Verdict.OK
             else:
                 group.verdicts[r.cell.entry.key] = Verdict.DISAGREE
+            group.teardown_hang[r.cell.entry.key] = r.teardown_hang
 
         # A pinned answer catches the case where every configuration agrees on
         # the same wrong value — but it only answers for the workload it was
