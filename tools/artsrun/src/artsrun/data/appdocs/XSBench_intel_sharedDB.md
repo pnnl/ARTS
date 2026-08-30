@@ -200,7 +200,7 @@ workers, **131.5M/s at 108** (91% per-worker efficiency, `-g 1000` small),
 the calibrated `-s large -g 96` the kernel runs ~1.2-1.3 µs/lookup at 15
 workers (14.8M/s). `-l` is per instance and int-typed (2³¹ cap); the node
 ladder divides it to hold the aggregate at 1.6G, which sizes the 1-node
-bentley-geometry cell at ~108 s and lets the high-node cells shrink as the
+ferrari-geometry cell at ~108 s and lets the high-node cells shrink as the
 row's near-perfect scaling dictates.
 
 ## Family shape (measured, 15w+1p × 1/2/4/8 nodes, `-s large -g 96 -l 50M -t 108 -p 32` fixed)

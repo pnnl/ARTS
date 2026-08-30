@@ -26,7 +26,7 @@ REQUIRED_SECTIONS = [
 
 def drive(coro_factory):
     async def main():
-        app = ArtsRunApp(profile="bentley", benchset="paper-main")
+        app = ArtsRunApp(profile="ferrari", benchset="paper-main")
         async with app.run_test() as pilot:
             return await coro_factory(app, pilot)
 

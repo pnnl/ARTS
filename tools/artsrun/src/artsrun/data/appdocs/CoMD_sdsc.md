@@ -199,7 +199,7 @@ else.
   (32 nodes x 108 workers = 3,456).
 - **`-N` is sized from the 32-node end, not from 1n** — this port
   anti-scales (every step re-wires the whole `B`-wide five-phase DAG over
-  the wire, measured 12.4/19.2/25.5 s per step at 2/4/8 bentley nodes, an
+  the wire, measured 12.4/19.2/25.5 s per step at 2/4/8 ferrari nodes, an
   arm-invariant wall), so the longest cell is the largest geometry and
   `-N 15` puts its extrapolated ~38 s/step near the 600 s budget.  The 1n
   cell is then ~12 s and the dane1 anchor cell (one 108w+4p node) 14.7 s —

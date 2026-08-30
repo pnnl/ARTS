@@ -167,7 +167,7 @@ not change per-round parallelism.
   sequential leaves where they were created", `max_set+2` means "scatter
   those too", and anything beyond saturates: at `cutoff 16`, `s5` = 295.1 s
   leaves the leaves local, `s6` = 287.2 scatters them, and `s7` = 287.3 is
-  the same run again.  The plane at `n = 20` over 8 bentley nodes, E2E seconds:
+  the same run again.  The plane at `n = 20` over 8 ferrari nodes, E2E seconds:
 
   | cutoff (max_set) | s2 | s3 | s4 | s5 | s6 | s7 | s8 |
   |---|---|---|---|---|---|---|---|
@@ -202,7 +202,7 @@ not change per-round parallelism.
 - Memory is not the limiting factor (8-byte DBs, destroyed on consumption);
   size for total EDT count and remote-acquire volume, not footprint.
 - **The hinted tier is what the app is for.**  Base at `n=18, cutoff 12`:
-  32.7 s at one bentley node, 151.3 at two, 132.7 at four.  Hinted at the same
+  32.7 s at one ferrari node, 151.3 at two, 132.7 at four.  Hinted at the same
   size: 32.7 / 18.5 / 10.0 / 5.2 over 1/2/4/8 nodes.  At the trend size with
   the calibrated grain (`18 14 1 5`) the four arms run
   30.8 / 16.8 / 9.8 / 5.1 and sit within **0.5%** of each other — the

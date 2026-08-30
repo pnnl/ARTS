@@ -225,7 +225,7 @@ spatial box-home design adopted in the 2026-08-07 anti-scale verdicts; the
 residual granularity amplification (~460x per remote face read) is structural
 and out of a hint's reach.
 
-Measured (bentley trend sweep, 15w+1p, `['5','4096']`, val_wb / best-of-arm
+Measured (ferrari trend sweep, 15w+1p, `['5','4096']`, val_wb / best-of-arm
 range): base 111 s → 348 / 330 / 350 s at 2/4/8 n — the whole-box exchange
 saturates immediately and flattens; hinted 112 s → 160 / 175 / 184 s
 (range across the four arms ≤ 8%, `val_wb_comb` consistently best) — the
@@ -272,7 +272,7 @@ anti-scaler rule: this program's worst cells are its LARGE geometries, so
 the anchor is sized small — the dane1 anchor (1 node, 108w+4p) runs
 14.5 s, 8 nodes runs 26.1 s, and the 32-node extrapolation stays in the
 tens of seconds while the anti-scaling *shape* (the measurement) is fully
-visible.  `['5','4096']` is the bentley 15w+1p × {1,2,4,8} trend size
+visible.  `['5','4096']` is the ferrari 15w+1p × {1,2,4,8} trend size
 (~112 s at 1 n), where the measured family table above was taken.
 `expect_args` equals `args`: the pinned `||error||` is grid-dependent
 (discretization error) and prints identically across arms, node counts,

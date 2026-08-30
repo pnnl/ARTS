@@ -142,7 +142,7 @@ if [ "$DO_HARNESS" = 1 ]; then
   [ "$DO_BUILD" = 1 ] && ensure_build "$hd" ocr_val_wb OFF "-DARTS_BUILD_BENCHMARKS=ON"
   drain_ports
   echo "================= APPLICATION MATRIX ================="
-  timeout -k 30 2400 artsrun run -p bentley -b paper-main --nodes 1 \
+  timeout -k 30 2400 artsrun run -p ferrari -b paper-main --nodes 1 \
       --build-dir "$hd" >"$LOGDIR/apps.log" 2>&1
   tally=$( grep -E 'MINORITY REPORT|No disagreement' "$LOGDIR/apps.log" | head -1 )
   APPS_RESULT="${tally:-NORUN}"

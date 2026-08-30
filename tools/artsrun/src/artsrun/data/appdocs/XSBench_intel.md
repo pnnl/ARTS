@@ -236,7 +236,7 @@ and init linearly and leaves the compute rate untouched at one node; at
 multinode the `U`-wide alignment fan-out acquires remotely, so init is
 ~150 s at 2-8 nodes for `-s large -g 96` (roughly flat in node count,
 2× that at g=192, minutes-to-hours at g≥1000 under large). The calibrated
-`-g 96` keeps a 34K-DB plane while holding init inside the 600 s bentley
+`-g 96` keeps a 34K-DB plane while holding init inside the 600 s ferrari
 ceiling with the compute phase still the majority of the worst cell.
 
 ## Family shape (measured, 15w+1p × 1/2/4/8 nodes, `-s large -g 96 -l 300000 -b 3456`)

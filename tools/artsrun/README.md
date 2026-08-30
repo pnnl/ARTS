@@ -56,8 +56,8 @@ artsrun profile new junction2 --from junction   # copy, then $EDITOR
 artsrun profile set junction2 workers=31 slurm.partition=pbatch
 artsrun benchset list | show X | new Y --from X | edit Y
 artsrun benchset set paper-main nqueens --args "12 4" --versions asborn,optimized
-artsrun config render -p bentley -n 4    # inspect a rendered configuration
-artsrun run -p bentley -b paper-main --dry-run
+artsrun config render -p ferrari -n 4    # inspect a rendered configuration
+artsrun run -p ferrari -b paper-main --dry-run
 artsrun run -p junction -b paper-main --detach
 artsrun watch                             # live view of the latest campaign
 artsrun watch 20260811-220547             # …or of a named one
@@ -65,7 +65,7 @@ artsrun report                            # reprint the latest summary
 
 artsrun counters --set perf --enabled     # what a counter set turns on
 artsrun counterset list | show X | render X
-artsrun run -p bentley -b paper-main -c perf
+artsrun run -p ferrari -b paper-main -c perf
 ```
 
 On the screens: `1`–`4` switch surfaces, `5` is the run tab, `space`

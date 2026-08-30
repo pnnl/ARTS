@@ -171,7 +171,7 @@ apps:
     # fork-join over the wire, so the LONGEST cell is the LARGEST geometry
     # and -N (the duration knob; per-step structure is the invariant) is
     # sized by the 32-node budget, not by 1n -- measured per-step wall
-    # 12.4/19.2/25.5 s at 2/4/8 bentley nodes (~+6.5 s per doubling)
+    # 12.4/19.2/25.5 s at 2/4/8 ferrari nodes (~+6.5 s per doubling)
     # extrapolates to ~38 s/step at 32n, so -N 15 puts the worst cell
     # near the 600 s budget (1n is then ~12 s: correct for this class).
     # The period must divide -N or the final print's kinetic term is
@@ -462,7 +462,7 @@ apps:
     expect_args: ['5', '512']
     # Anti-scaler: the worst cells are the LARGE geometries, so the anchor
     # is sized small (dane1 14.5s, 8n 26.1s; 32n extrapolates ~35-55s).
-    # 5 4096 is the bentley trend size, not the campaign size.
+    # 5 4096 is the ferrari trend size, not the campaign size.
     args: ['5', '512']
     hinted: true
     restructured_as: hpgmg_dist
@@ -955,7 +955,7 @@ apps:
     # the row (~98K lookups/s at 15 workers, LESS at 108 — spawn-limited),
     # multinode is wire-bound (~0.6-0.7K lookups/s at 2 nodes), init is
     # negligible (the exploded plane is only ~3 DBs per nuclide).  -l is
-    # sized by the worst cell (hinted val_wb at 8 bentley nodes ≈ 330 s
+    # sized by the worst cell (hinted val_wb at 8 ferrari nodes ≈ 330 s
     # against the 600 s ceiling); -b 3456 is the Master/Worker window rule
     # (cover the largest machine); -s/-p/-w stay at the benchmark's
     # canonical defaults (H-M large, 1000 poles, 100 windows; this port has
@@ -985,7 +985,7 @@ apps:
     # same fork-SPMD code family): every logical count is node-invariant —
     # 32 instances, 108 chains each (1x the campaign node's persistent
     # workers), 1,000,000 lookups per instance = a constant 32M aggregate,
-    # sized to ~127 s at one 15-worker bentley node (the multipole kernel
+    # sized to ~127 s at one 15-worker ferrari node (the multipole kernel
     # runs ~250K lookups/s there — two orders below XSBench's).  The
     # fork's block partition maps the 32 instances onto however many PDs
     # the run has.
@@ -1003,7 +1003,7 @@ apps:
     # it back through ONE whole-image block acquired RW, and write permission
     # is exclusive per policy domain, so the block tours the domains and each
     # hop carries the whole image.  Measured at 2000 a side: 13.2s / 1.4GB at
-    # one bentley node against 78.7s / 110.5GB at two.
+    # one ferrari node against 78.7s / 110.5GB at two.
     #
     # No hinted tier: a placement layer here either collapses the pipeline onto
     # one rank (measured: 97% of the useful work on one of four, five tasks
@@ -1444,7 +1444,7 @@ apps:
     # The compute plane is wire-bound and mildly anti-scaling in every arm
     # (each lookup is a spawned three-task chain whose aggregator fans in
     # one nuclide-grid DB per nuclide of the drawn material), so this is an
-    # exhibition row sized by the worst cell against the 600 s bentley
+    # exhibition row sized by the worst cell against the 600 s ferrari
     # ceiling; a Dane-geometry single node runs it in seconds, the accepted
     # shape for an anti-scaling row.  The grid checksum depends only on
     # -s/-g, so the pin survives -l changes.

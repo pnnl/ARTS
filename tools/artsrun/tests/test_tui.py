@@ -14,7 +14,7 @@ def drive(coro_factory):
     """Run one piloted session and return whatever it produced."""
 
     async def main():
-        app = ArtsRunApp(profile="bentley", benchset="paper-main")
+        app = ArtsRunApp(profile="ferrari", benchset="paper-main")
         async with app.run_test() as pilot:
             return await coro_factory(app, pilot)
 
@@ -539,7 +539,7 @@ def _launcher_view(profile_name):
 
 
 def test_a_local_profile_hides_both_launcher_sections_and_locks_ports():
-    view = _launcher_view("bentley")
+    view = _launcher_view("ferrari")
     assert view["ssh"] is False
     assert view["slurm"] is False
     assert view["ports_disabled"] is True
@@ -652,7 +652,7 @@ def _visible_field_slack(profile_name, launcher=None):
 
 def test_no_visible_field_clips_its_text():
     # "claimed automatically" is the longest placeholder and was being cut.
-    for profile, launcher in (("bentley", None), ("junction", None),
+    for profile, launcher in (("ferrari", None), ("junction", None),
                               ("junction", "ssh")):
         for key, text, width in _visible_field_slack(profile, launcher):
             assert width >= len(text), (

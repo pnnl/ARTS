@@ -141,7 +141,7 @@ Calibrated as what this row now is, a scaling application: catalog args
 `['6','4096']` — a 1024³ grid of 64³-cell boxes, ~113 GiB — whose dane1
 anchor (108w+4p) runs ~128 s in the ~150 s class and IS the worst cell.
 
-Trend sweep (bentley, 15w+1p, at the trend size `['5','4096']`, E2E / solve):
+Trend sweep (ferrari, 15w+1p, at the trend size `['5','4096']`, E2E / solve):
 
 | arm | 1 n | 2 n | 4 n | 8 n |
 |-----|-----|-----|-----|-----|

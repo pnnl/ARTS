@@ -186,7 +186,7 @@ together; the matrix never changes) and the base program expresses none.
 
 A hint layer was written for this application and then **removed**: every
 form of it measured slower than the base program, at every geometry and
-both problem sizes tried.  Solve time at 8 bentley nodes, class A (base
+both problem sizes tried.  Solve time at 8 ferrari nodes, class A (base
 17.9/18.0/18.0 s over three runs):
 
 | layer | solve |
@@ -255,7 +255,7 @@ fixes `niter`), `-i` moves duration only.
   two-node run was still going at 430 s). At 2× no worker is idle — the
   rest is stealing headroom, not coverage.
 - **This is an anti-scaler, and the calibration says so.** Measured (hinted,
-  val_wb): class A `-b 25` runs 1.3 s at one bentley node, 15.6 s at two and
+  val_wb): class A `-b 25` runs 1.3 s at one ferrari node, 15.6 s at two and
   27.3 s at eight — every added node costs time, because the operand
   broadcast, the single-EDT gather and the serial vector spine all grow with
   the rank count while the per-task grain shrinks. One class up the wall is

@@ -249,7 +249,7 @@ constraint this variant has and the other two do not:
   single-DB-capped shape.
 - At `N=65536` the ~16 GiB score payload is spread `1/nranks` per rank
   under the labeled round-robin homing — negligible at 8 nodes but the
-  **full** 16 GiB lands on the single rank of a 1-node run (bentley's
+  **full** 16 GiB lands on the single rank of a 1-node run (ferrari's
   ~1 TB/node makes this comfortable here, but it is the one LCS variant
   where memory belongs in the sizing decision at all).
 - Shrinking `base` (holding `N` fixed) grows `L` (more wavefront

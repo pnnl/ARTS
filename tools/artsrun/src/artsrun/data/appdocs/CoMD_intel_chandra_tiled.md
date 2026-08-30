@@ -283,7 +283,7 @@ total footprint, it concentrates it.
   dane1 cell (one 108w+4p node) at 126 s, inside the ~150 s anchor band;
   the largest geometry only gets faster from there.  `-n 10` is the
   canonical print period (it also paces the kinetic-energy allreduce).
-- On the reduced 15w bentley ladder the full-size cell costs ~500 s at 1n,
+- On the reduced 15w ferrari ladder the full-size cell costs ~500 s at 1n,
   ~250 s of it the 40M-atom init — a reduced trend workload (half-linear
   `-x 108`, same rank grid) is the right shape for repeated trend sweeps.
 - Do **not** leave `-i/-j/-k` at their defaults for a measurement: the run is

@@ -257,7 +257,7 @@ domain, caching the domain factorization, and handing back the cached hint by
 reference bring it to **161.4 s**; the 4% that remains at one node is the cost
 of offering a hint at all, where a single domain has nothing to gain from one.
 
-What it buys, at the trend size over bentley nodes:
+What it buys, at the trend size over ferrari nodes:
 
 | | 1n | 2n | 4n | 8n |
 |---|---|---|---|---|

@@ -172,7 +172,7 @@ def test_the_sampling_interval_reaches_the_runtime_configuration():
     from artsrun.render import render_arts
     from artsrun.store import load_profile
 
-    text = render_arts(load_profile("bentley"), 2,
+    text = render_arts(load_profile("ferrari"), 2,
                        counter_folder="/runs/c", capture_interval=250)
     assert "counter_capture_interval=250" in text
     assert "counter_folder=/runs/c" in text

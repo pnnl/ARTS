@@ -133,7 +133,7 @@ small-DB placement the 2026-07-10 pin experiments showed this class needs.
   2.26/2.28/2.37; only `6` (6.02 s at 4 nodes) and `16` fall off.
 - Memory is never the limit; leave it out of the sizing decision.
 - **The hinted tier is what the app is for.**  Base at `n = 38`: 78.9 s at
-  one bentley node, and TIMEOUT past 400 s at two and at four — every
+  one ferrari node, and TIMEOUT past 400 s at two and at four — every
   recursion child is a remote spawn.  Hinted at the same size: 78.8 / 43.2 /
   25.0.  At the trend size (`36`, scatter 11) the hinted tier runs
   24.2 / 10.6 / 4.8 / 2.3 s over 1/2/4/8 nodes — **10.5x on 8 nodes**, and
