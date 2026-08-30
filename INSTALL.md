@@ -121,9 +121,9 @@ with defaults lives in [README.md](README.md#build-options); the most common are
 | ------ | ------- | ------- |
 | `CMAKE_BUILD_TYPE` | `Debug` | `Debug` or `Release`. |
 | `ARTS_MEMORY_MODEL` | `OCR` | Memory model — `OCR` (default; implements the OCR v1.2.0 §1.6 contract) or `DB_WRF` (write-race-free at DB granularity: the program must event-order every write-write conflict on a DB; evaluation only — emits a configure warning). Compile-time; all ranks must share one build. |
-| `ARTS_COHERENCE_PROTOCOL` | `VAL` | Coherence family — who keeps reader copies valid: `VAL` (default; acquire-time version validation, readers never blocked/tracked/invalidated), `INV` (release-time invalidation rounds), or `EXCL` (per-DB distributed reader-writer lock). Valid combos: OCR×{VAL,INV}×{WT,WB}, OCR×EXCL×WB×{PURGE,RETAIN}, DB_WRF×VAL×WT. |
+| `ARTS_COHERENCE_PROTOCOL` | `VAL` | Coherence family — who keeps reader copies valid: `VAL` (default; acquire-time version validation, readers never blocked/tracked/invalidated), `INV` (release-time invalidation rounds), or `EXCL` (per-DB distributed reader-writer lock). Valid combos: OCR×{VAL,INV}×WT×{PURGE,RETAIN}, OCR×{VAL,INV}×WB×RETAIN, OCR×EXCL×WB×{PURGE,RETAIN}, DB_WRF×VAL×WT×RETAIN. |
 | `ARTS_WRITE_POLICY` | `WB` | Write policy at release granularity — `WT` (write-through: payload flushed to the block's home at every release; home serves reads) or `WB` (default; write-back: payload stays with the last writer, directory forwards on demand). Live in INV/VAL; EXCL requires WB. |
-| `ARTS_RELEASE_POLICY` | `RETAIN` | What a node does with its write grant when the last local user finishes — `PURGE` (hand copy and permission back to the home) or `RETAIN` (default; keep both until another node asks). Live in EXCL; INV/VAL require RETAIN. |
+| `ARTS_RELEASE_POLICY` | `RETAIN` | What a node does with its write grant when the last local user finishes — `PURGE` (hand copy and permission back to the home) or `RETAIN` (default; keep both until another node asks). Live in EXCL and in WT × {VAL, INV}; WB requires RETAIN. |
 | `ARTS_USE_GPU` | `OFF` | Enable CUDA GPU support. |
 | `ARTS_BUILD_TESTS` | `OFF` | Build the ctest suite. |
 | `ARTS_BUILD_BENCHMARKS` | `ON` | Build the OCR benchmark apps (needs MPI). |

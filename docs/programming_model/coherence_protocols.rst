@@ -40,22 +40,25 @@ when a grant goes back:
   or ``WB`` (default; write-back — the payload stays with the last writer
   and moves only on demand, through directory forwarding).
 * ``ARTS_RELEASE_POLICY`` selects the **release policy** — what a node does
-  with its grant when the last local user finishes — live under EXCL:
-  ``PURGE`` (hand copy and permission back to the home) or ``RETAIN``
-  (default; keep both until another node asks, and let the home recall
-  them).
+  with its grant when the last local user finishes — live under EXCL and
+  under ``WT`` in VAL/INV: ``PURGE`` (hand copy and permission back to the
+  home) or ``RETAIN`` (default; keep both until another node asks, and let
+  the home recall them).
 
 The axes are nominally independent: within OCR the family × write-policy ×
-release-policy space has 12 combinations, of which **six** are built (the
-non-live axis is pinned at its only sensible value in each family); DB_WRF
-adds one more, for **seven build configurations** in total, one build
-directory each: OCR×VAL×{WT,WB}, OCR×INV×{WT,WB}, OCR×EXCL×{PURGE,RETAIN},
-DB_WRF×VAL×WT. Everything else is a configure-time ``FATAL_ERROR`` naming
-the reason: EXCL×WT (under exclusion no copy outlives a write turn, so the
-payload rides the permission and the release policy already decides both),
-INV/VAL×PURGE (the migrating write grant is metadata-only in the
-sharer-bearing families; returning it early saves no data movement and only
-forfeits the message-free re-acquisition of a repeated local writer),
+release-policy space has 12 combinations, of which **eight** are built (the
+dead ones excluded by the reasons below); DB_WRF adds one more, for **nine
+build configurations** in total, one build directory each:
+OCR×VAL×WT×{PURGE,RETAIN}, OCR×VAL×WB×RETAIN, OCR×INV×WT×{PURGE,RETAIN},
+OCR×INV×WB×RETAIN, OCR×EXCL×WB×{PURGE,RETAIN}, DB_WRF×VAL×WT×RETAIN.
+Everything else is a configure-time ``FATAL_ERROR`` naming the reason:
+EXCL×WT (under exclusion no copy outlives a write turn, so the payload
+rides the permission and the release policy already decides both),
+INV/VAL×WB×PURGE (a voluntary return hands back only the permission while
+the bytes stay at the ex-owner, so the home still cannot serve a reader on
+its own — and shipping the bytes home too is, by definition,
+write-through; at ``WT`` the same return costs no data motion, which is why
+PURGE is built there instead — see :ref:`orthogonal_dimensions`),
 DB_WRF×EXCL and DB_WRF×INV (both mechanisms already order writers at
 runtime — admission for EXCL, per-release rounds for INV — making the
 program-side write-ordering obligation redundant), and DB_WRF×VAL×WB
@@ -233,6 +236,13 @@ cache holds, credited by serves, by write-back installs, and by the
 releaser/shipper itself under WB): a request from a rank whose ledger
 already matches the master version receives a header-only, no-data reply.
 
+An optional build-time mitigation, ``ARTS_RO_REQUEST_COMBINING``, layers
+request coalescing on top of this dedup: while one snapshot request for a DB
+is in flight, later same-rank read acquires for that DB park and share its
+response instead of issuing their own. It is orthogonal to write and release
+policy — every position this family builds, ``WT``×``PURGE`` included, can
+turn it on.
+
 INV — write-invalidate, durable reader copies
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -306,7 +316,7 @@ Retired and rejected arms
 Orthogonal protocol dimensions
 -------------------------------
 
-The implemented axes fix seven points in a larger design space. The following
+The implemented axes fix nine points in a larger design space. The following
 dimensions are orthogonal to each other; entries marked *roadmap* are
 documented options, not commitments.
 
@@ -333,16 +343,48 @@ Release policy (permission return)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 When does the write grant go back? Live under EXCL
-(``ARTS_RELEASE_POLICY``):
+(``ARTS_RELEASE_POLICY``), and — since it governs the same migrating grant —
+under ``WT`` in VAL/INV as well:
 
-* **PURGE** — copy and permission return to the home as soon as the last
-  local user finishes; the next turn re-requests and re-fetches.
+* **PURGE** — the holder returns copy and permission unasked, at its own
+  idle edge (the moment its last local writer finishes); the home never
+  sends a holder anything to make this happen.
 * **RETAIN** (default) — both stay until another node asks; the home recalls
   them on demand (callback-locking style), so a repeated local turn is free.
 
-Under INV/VAL this axis is pinned at RETAIN: the migrating write grant is
-metadata-only there, so returning it early saves no data movement and only
-forfeits the message-free re-acquisition of a repeated local writer.
+Under EXCL no reader copy outlives a write turn, so payload and permission
+are one token and this axis alone decides when it returns — see the EXCL
+family description above for the mechanics.
+
+Under VAL/INV the write policy already moves the *payload* at every release
+under ``WT``, so PURGE there is a decision about the *grant* alone, layered
+on top of that:
+
+* Every grant transfer, in either direction, passes through the home — a
+  holder never sends another holder a revocation, and, unlike RETAIN, never
+  receives one from the home either. An idle holder hands the grant back on
+  its own; a holder that wants the grant queues at the home like any other
+  requester.
+* Because the payload already reached the home on the release that made the
+  holder idle, the permission's return costs no data motion — only a
+  metadata handoff. This is exactly why PURGE is built at ``WT``, where that
+  holds, and refused at ``WB``, where it does not (see the combination list
+  above).
+* The return travels with that same release's write-through publish when
+  one is still in flight, at no extra message cost; a release with nothing
+  left to publish sends a standalone return instead. Either path lands the
+  grant back at the home, which serves the next request from there — a new
+  holder never talks to the one before it.
+* A grant request carries the requester's already-installed buffer version.
+  When it already matches the DB's canonical version — the common case for
+  a rank re-acquiring a DB it already holds a current copy of — the home
+  grants permission only, with no payload in the reply.
+
+Under ``WB`` the release policy is pinned at RETAIN in every family: a
+voluntary return there would hand back only the permission while the
+canonical bytes stay at the ex-owner, so the home still could not serve a
+reader on its own — and shipping the bytes home too is, by definition,
+write-through.
 
 Propagation strategy
 ~~~~~~~~~~~~~~~~~~~~
@@ -508,7 +550,8 @@ caught at configure time. A 2026-07-31 terminology pass subsequently renamed
 the mechanism axis itself — ``RCU → VAL``, ``RWLOCK → EXCL``, ``MSI → INV``
 — and split the old ``ARTS_DATA_PLACEMENT={HOME,OWNER}`` axis into
 ``ARTS_WRITE_POLICY={WT,WB}`` (live under VAL/INV) and
-``ARTS_RELEASE_POLICY={PURGE,RETAIN}`` (live under EXCL); using an old
+``ARTS_RELEASE_POLICY={PURGE,RETAIN}`` (at that time live only under EXCL);
+using an old
 ``-DARTS_COHERENCE_PROTOCOL={RCU,RWLOCK,MSI}`` or any
 ``-DARTS_DATA_PLACEMENT=...`` value is likewise a configure-time
 ``FATAL_ERROR`` with a mapping message. This page describes the current

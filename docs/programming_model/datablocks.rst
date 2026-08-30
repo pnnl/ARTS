@@ -103,7 +103,8 @@ governed by the build-time protocol selection:
   write turns — ``WB`` (write-back, default) or ``WT`` (write-through at
   release); live under INV/VAL.
 * ``ARTS_RELEASE_POLICY`` selects when a node's write grant goes back —
-  ``RETAIN`` (default) or ``PURGE``; live under EXCL.
+  ``RETAIN`` (default) or ``PURGE``; live under EXCL and under WT × {VAL,
+  INV} (``WB`` requires ``RETAIN``).
 
 See :ref:`coherence_protocols` for the normative definition of all axes.  The
 other subtypes (``ARTS_DB_PIN``, ``ARTS_DB_CXL``, ``ARTS_DB_GPU``,

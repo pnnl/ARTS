@@ -112,8 +112,8 @@ All options are set with ``-D<NAME>=<VALUE>`` on the cmake line.
        readers never blocked/invalidated), ``INV`` (invalidation: directory
        write-invalidate with acknowledged per-release invalidation rounds),
        or ``EXCL`` (exclusion: per-DB distributed reader-writer lock).
-       Valid combos: OCR×VAL×{WT,WB}, OCR×INV×{WT,WB},
-       OCR×EXCL×{PURGE,RETAIN}, DB_WRF×VAL×WT.
+       Valid combos: OCR×{VAL,INV}×WT×{PURGE,RETAIN}, OCR×{VAL,INV}×WB×RETAIN,
+       OCR×EXCL×WB×{PURGE,RETAIN}, DB_WRF×VAL×WT×RETAIN.
    * - ``ARTS_WRITE_POLICY``
      - WB
      - Write policy at release granularity, live in INV/VAL — ``WT``
@@ -122,9 +122,10 @@ All options are set with ``-D<NAME>=<VALUE>`` on the cmake line.
        and moves on demand).
    * - ``ARTS_RELEASE_POLICY``
      - RETAIN
-     - Release policy, live in EXCL — ``PURGE`` (copy and permission return
-       to the home when the last local user finishes) or ``RETAIN`` (keep
-       both until another node asks; the home recalls on demand).
+     - Release policy, live in EXCL and in WT × {VAL, INV} — ``PURGE``
+       (copy and permission return to the home when the last local user
+       finishes) or ``RETAIN`` (keep both until another node asks; the home
+       recalls on demand). ``WB`` requires ``RETAIN``.
    * - ``ARTS_RO_REQUEST_COMBINING``
      - OFF
      - Combine concurrent same-DB remote RO acquires into a single
