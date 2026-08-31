@@ -397,6 +397,69 @@ def test_an_edited_argument_becomes_an_override():
     assert drive(check) == (["12", "4"], True)
 
 
+def _a_row_with_a_rewrite() -> tuple[str, str]:
+    """A row that offers restructured, and the target it delegates to.
+
+    Taken from the catalog rather than named here: which applications have a
+    rewrite is a result of their cycles, not a property of the editing.
+    """
+    from artsrun.model.catalog import load_catalog
+    row = next(a for a in load_catalog().rows if a.restructured_as)
+    return row.name, row.restructured_as
+
+
+def test_a_rewrite_gets_its_own_argument_line():
+    row, rewrite = _a_row_with_a_rewrite()
+
+    async def check(app, pilot):
+        from textual.widgets import Input
+
+        bench = app.query_one("#bench", BenchsetPanel)
+        box = bench.query_one(f"#a-{rewrite}", Input)
+        return box.value, box.placeholder
+
+    value, placeholder = drive(check)
+    from artsrun.model.catalog import load_catalog
+    assert value == ""      # the roster overrides the rewrite nowhere
+    # Its own calibration, not the row's: the two are separate windows.
+    assert placeholder == " ".join(load_catalog().apps[rewrite].args)
+
+
+def test_editing_the_rewrites_line_overrides_only_the_rewrite():
+    row, rewrite = _a_row_with_a_rewrite()
+
+    async def check(app, pilot):
+        from textual.widgets import Input
+
+        bench = app.query_one("#bench", BenchsetPanel)
+        bench.query_one(f"#a-{rewrite}", Input).value = "7 3"
+        edited = bench.edited_benchset("scratch")
+        resolved = {a.key: a for a in edited.resolve(app.catalog)}
+        return (resolved[f"{row}:restructured"].args,
+                resolved[f"{row}:base"].args)
+
+    rewritten, base = drive(check)
+    assert rewritten == ["7", "3"]
+    # The row's own tiers keep their calibration — the two lines are separate.
+    from artsrun.model.catalog import load_catalog
+    assert base == load_catalog().apps[row].args
+
+
+def test_an_empty_rewrite_line_writes_no_override():
+    row, rewrite = _a_row_with_a_rewrite()
+
+    async def check(app, pilot):
+        bench = app.query_one("#bench", BenchsetPanel)
+        edited = bench.edited_benchset("scratch")
+        resolved = {a.key: a for a in edited.resolve(app.catalog)}
+        return (rewrite in edited.apps,
+                resolved[f"{row}:restructured"].args_overridden)
+
+    present, overridden = drive(check)
+    assert not present
+    assert not overridden
+
+
 def test_an_unchecked_application_is_saved_as_disabled():
     async def check(app, pilot):
         bench = app.query_one("#bench", BenchsetPanel)

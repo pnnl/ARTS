@@ -183,7 +183,7 @@ def show_apps(
     # The binary usually repeats the name; showing it only when it differs
     # keeps the version columns from being squeezed out of the table.
     table.add_column("binary", no_wrap=True)
-    for column in ("as-born", "hinted", "restructured"):
+    for column in ("base", "hinted", "restructured"):
         table.add_column(column, justify="center", no_wrap=True)
     table.add_column("args", max_width=36, overflow="ellipsis")
 
@@ -219,7 +219,7 @@ def show_apps(
             )
     console.print(table)
     console.print(
-        "[dim]as-born = the application as published, its own hints included "
+        "[dim]base = the application as published, its own hints included "
         "· hinted = structure untouched, EDT/DB placement hints added or "
         "changed as far as hints alone can carry it · restructured = its "
         "decomposition redesigned as a separate target[/dim]"

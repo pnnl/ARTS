@@ -429,7 +429,7 @@ class BenchsetPanel(VerticalScroll):
 
         with Horizontal(classes="bench-row head"):
             yield Label("", classes="bench-name")
-            for column in ("as-born", "hinted", "restructured"):
+            for column in ("base", "hinted", "restructured"):
                 yield Label(column, classes="bench-col-head")
             yield Label("arguments", classes="bench-args-head")
 
@@ -501,6 +501,24 @@ class BenchsetPanel(VerticalScroll):
                     placeholder=" ".join(app.args) or "no arguments",
                     id=f"a-{app.name}", classes="bench-args",
                 )
+            # A rewrite is a separate target with its own command line and its
+            # own calibration, so it cannot share the row's box.  It takes a
+            # line of its own carrying nothing but that command line: whether
+            # it runs is already the row's `restructured` box.
+            if app.restructured_as:
+                rewrite = self.catalog.apps[app.restructured_as]
+                sub = self.benchset.apps.get(rewrite.name)
+                sub_args = sub.args if sub and sub.args is not None else None
+                with Horizontal(classes="bench-row"):
+                    yield Label(f"[dim]  └ {rewrite.name}[/dim]",
+                                classes="bench-name")
+                    for _ in range(3):
+                        yield Static("", classes="bench-cell blank")
+                    yield Input(
+                        value=" ".join(sub_args) if sub_args else "",
+                        placeholder=" ".join(rewrite.args) or "no arguments",
+                        id=f"a-{rewrite.name}", classes="bench-args",
+                    )
 
     @property
     def toggles(self) -> list[Toggle]:
@@ -548,6 +566,12 @@ class BenchsetPanel(VerticalScroll):
             self.query_one(f"#a-{app.name}", Input).value = (
                 " ".join(override) if override else ""
             )
+            if app.restructured_as:
+                sub = self.benchset.apps.get(app.restructured_as)
+                sub_args = sub.args if sub and sub.args is not None else None
+                self.query_one(f"#a-{app.restructured_as}", Input).value = (
+                    " ".join(sub_args) if sub_args else ""
+                )
         self.status("")
 
     def status(self, message: str, *, error: bool = False) -> None:
@@ -575,6 +599,16 @@ class BenchsetPanel(VerticalScroll):
                 versions=versions or None,
                 args=args,
             )
+            # The rewrite's line is addressed by the rewrite's own name, which
+            # is where `resolve` looks for it.  It carries arguments only —
+            # membership belongs to the row it appears under — so an empty box
+            # writes no entry at all and the catalog's calibration stands.
+            if app.restructured_as:
+                sub_box = self.query_one(
+                    f"#a-{app.restructured_as}", Input).value.strip()
+                if sub_box:
+                    apps[app.restructured_as] = BenchsetEntry(
+                        args=sub_box.split())
         return Benchset(name=name, description=self.benchset.description,
                         apps=apps)
 

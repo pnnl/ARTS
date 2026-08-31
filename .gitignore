@@ -49,6 +49,7 @@ third_party/ocrPNNL/
 !/experiments/benchsets/
 /experiments/benchsets/*
 !/experiments/benchsets/paper-main.yaml
+!/experiments/benchsets/attacks.yaml
 /scratch/*
 !/scratch/.gitkeep
 /notes/

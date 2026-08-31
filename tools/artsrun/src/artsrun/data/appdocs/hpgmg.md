@@ -98,7 +98,7 @@ Dependence slots resolved ≈ 375 000: 189 k box-RO, 74 k box-RW, 77 k level-RO,
 34 k on the nine constant boxes.
 
 Counter cross-check: taken at `4 1` / `4 8` / `4 64` (L = 5/6/7) against a
-since-reverted norm-collector variant; the formulas above are the as-born
+since-reverted norm-collector variant; the formulas above are the base
 wiring with that variant's `N_0` result blocks, output events and collector
 subtracted analytically (ΔNUM_EDT_CREATE = +698 / +4 371 between the sizes is
 unchanged; a fresh counter run should reconfirm the absolutes).  The absolutes
@@ -127,8 +127,8 @@ Per-box EDTs uniformly take the level DB on slot 0 and their own box on slot 1.
 take level RO + box **RW**; `norm_edt` takes the level **RW** and its box RO,
 depositing one double into the level's `b_norms` slot — so the whole norm
 fan-out serializes on the level datablock's per-node-exclusive turns, the
-port's starkest one-datablock fan-in (kept as-born: it is part of what the
-baseline exhibits).  `exchange_edt` adds 6 (face) or 26 (face+edge+
+port's starkest one-datablock fan-in (kept as it ships: it is part of what the
+base tier exhibits).  `exchange_edt` adds 6 (face) or 26 (face+edge+
 vertex) neighbour boxes **RO**; out-of-domain neighbours resolve to the level's
 single `constant_box_guid`, so one DB appears `6B²` times per 6-neighbour round
 and `27B³ − (3B−2)³` times per 26-neighbour round — at level 0 of the calibrated

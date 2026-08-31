@@ -1542,50 +1542,50 @@ foreach(sfx ${ARTS_VARIANT_SUFFIXES})
 endforeach()
 
 # ==========================================================================
-# wordcount  (bespoke: source lives in this repo, not in ocr-apps)
+# mapreduce_wordcount  (bespoke: source lives in this repo, not in ocr-apps)
 # Canonical MapReduce word count in native OCR, weak-scaling form: the
 # corpus is synthesized per map tile from its global id (closed
 # vocabulary, no ingest I/O), reduced over a K-ary spawner-built tree
 # whose lower levels stay node-local.  Portable OCR API only, so all
 # three runtimes build it.
 # ==========================================================================
-set(WORDCOUNT_SRC "${CMAKE_CURRENT_SOURCE_DIR}/wordcount.c")
+set(WORDCOUNT_SRC "${CMAKE_CURRENT_SOURCE_DIR}/mapreduce_wordcount.c")
 
 if(TARGET ocr_xsocr_static)
-    add_executable(wordcount_xsocr ${WORDCOUNT_SRC})
-    target_include_directories(wordcount_xsocr PRIVATE
+    add_executable(mapreduce_wordcount_xsocr ${WORDCOUNT_SRC})
+    target_include_directories(mapreduce_wordcount_xsocr PRIVATE
         ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR})
-    target_compile_definitions(wordcount_xsocr PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
-    target_link_libraries(wordcount_xsocr PRIVATE ocr_xsocr_static pthread m)
-    target_link_options(wordcount_xsocr PRIVATE -no-pie -fno-pie)
-    set_target_properties(wordcount_xsocr PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
+    target_compile_definitions(mapreduce_wordcount_xsocr PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
+    target_link_libraries(mapreduce_wordcount_xsocr PRIVATE ocr_xsocr_static pthread m)
+    target_link_options(mapreduce_wordcount_xsocr PRIVATE -no-pie -fno-pie)
+    set_target_properties(mapreduce_wordcount_xsocr PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-    target_compile_options(wordcount_xsocr PRIVATE ${BENCH_C_OPT})
+    target_compile_options(mapreduce_wordcount_xsocr PRIVATE ${BENCH_C_OPT})
 endif()
 
 foreach(sfx ${ARTS_VARIANT_SUFFIXES})
-    add_executable(wordcount_arts_${sfx} ${WORDCOUNT_SRC}
+    add_executable(mapreduce_wordcount_arts_${sfx} ${WORDCOUNT_SRC}
                    $<TARGET_OBJECTS:ocr_arts_objects>)
-    target_include_directories(wordcount_arts_${sfx} PRIVATE
+    target_include_directories(mapreduce_wordcount_arts_${sfx} PRIVATE
         ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR} ${OCR_INC_DIR})
-    target_compile_definitions(wordcount_arts_${sfx} PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
-    target_link_libraries(wordcount_arts_${sfx} PRIVATE arts_static_${sfx} pthread m)
-    target_link_options(wordcount_arts_${sfx} PRIVATE -no-pie -fno-pie)
-    set_target_properties(wordcount_arts_${sfx} PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
+    target_compile_definitions(mapreduce_wordcount_arts_${sfx} PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
+    target_link_libraries(mapreduce_wordcount_arts_${sfx} PRIVATE arts_static_${sfx} pthread m)
+    target_link_options(mapreduce_wordcount_arts_${sfx} PRIVATE -no-pie -fno-pie)
+    set_target_properties(mapreduce_wordcount_arts_${sfx} PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-    target_compile_options(wordcount_arts_${sfx} PRIVATE ${BENCH_C_OPT})
+    target_compile_options(mapreduce_wordcount_arts_${sfx} PRIVATE ${BENCH_C_OPT})
 endforeach()
 
 if(TARGET ocr_vdm_mpi)
-    add_executable(wordcount_ocrvx ${WORDCOUNT_SRC})
-    target_include_directories(wordcount_ocrvx PRIVATE
+    add_executable(mapreduce_wordcount_ocrvx ${WORDCOUNT_SRC})
+    target_include_directories(mapreduce_wordcount_ocrvx PRIVATE
         ${OCR_LIBS_ROOT}/macros/macros ${OCRVX_OCR_INC})
-    target_compile_definitions(wordcount_ocrvx PRIVATE
+    target_compile_definitions(mapreduce_wordcount_ocrvx PRIVATE
         ${OCR_EXT_DEFINES} "OCR_TYPE_H=vdm.h" OCR_ENABLE_EDT_NAMING)
-    target_link_libraries(wordcount_ocrvx PRIVATE ocr_vdm_mpi m)
-    target_link_options(wordcount_ocrvx PRIVATE -no-pie -fno-pie)
-    set_target_properties(wordcount_ocrvx PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
+    target_link_libraries(mapreduce_wordcount_ocrvx PRIVATE ocr_vdm_mpi m)
+    target_link_options(mapreduce_wordcount_ocrvx PRIVATE -no-pie -fno-pie)
+    set_target_properties(mapreduce_wordcount_ocrvx PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-    target_compile_options(wordcount_ocrvx PRIVATE ${BENCH_C_OPT}
+    target_compile_options(mapreduce_wordcount_ocrvx PRIVATE ${BENCH_C_OPT}
         "-include" "${OCRVX_COMPAT_H}")
 endif()

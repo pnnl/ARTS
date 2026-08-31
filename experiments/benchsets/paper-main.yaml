@@ -5,10 +5,14 @@
 # versions, and any calibration that differs from the catalog default.
 # Set `enabled: false` to drop one without editing the tool.
 #
-# Version policy: the campaign's subject is `hinted`; an app lists
-# `base` only when it offers no hinted variant (no hint layer, so
-# base IS the hinted placement).  `restructured` stays reserved for
-# apps whose anti-scaling hints alone cannot fix.
+# Version policy: every application runs every version it offers.  base and
+# hinted are one program differing by a hint layer, so they share arguments
+# and the comparison between them is direct; the calibration window belongs
+# to base, the tier that has to survive the whole node sweep, and hinted
+# follows it (a hint layer is a no-op at one place, so the two share an
+# anchor by construction).  `restructured` is a different program and carries
+# its own row and its own window.  An app lists fewer versions only when it
+# does not offer them — no hint layer, or no rewrite.
 
 name: paper-main
 description: curated roster for the coherence comparison
@@ -30,7 +34,7 @@ apps:
     versions: [base]
   CoMD_sdsc:
     enabled: true
-    versions: [hinted]
+    versions: [base, hinted]
   CoMD_sdsc2:
     enabled: false   # unsupported: needs EW semantics the runtime does not implement
   curvefit:
@@ -47,7 +51,7 @@ apps:
     versions: [base, hinted, restructured]
   fibonacci:
     enabled: true
-    versions: [hinted]
+    versions: [base, hinted]
   globalsum_cgNoShim:
     enabled: false
     versions: [base]
@@ -68,10 +72,10 @@ apps:
     versions: [base]
   hpgmg:
     enabled: true
-    versions: [hinted, restructured]
+    versions: [base, hinted, restructured]
   LCS_all_db_distributed:
     enabled: true
-    versions: [hinted, restructured]
+    versions: [base, hinted, restructured]
   LCS_distributed_ST:
     enabled: true
     versions: [base]
@@ -83,7 +87,7 @@ apps:
     versions: [base]
   miniAMR_intel:
     enabled: true
-    versions: [hinted]
+    versions: [base, hinted]
   # Off the roster 2026-08-23: reclassified kind: microbench -- same
   # philosophy as miniAMR_intel and dominated by it, with every EDT pinned to
   # the creating rank so nothing distributes.
@@ -101,13 +105,13 @@ apps:
     versions: [base]
   nekbone:
     enabled: true
-    versions: [hinted, restructured]
+    versions: [base, hinted, restructured]
   npb_cg:
     enabled: true
     versions: [base, restructured]
   nqueens:
     enabled: true
-    versions: [hinted]
+    versions: [base, hinted]
   p2p:
     enabled: true
     versions: [base]
@@ -128,7 +132,7 @@ apps:
     versions: [base]
   RSBench_intel:
     enabled: true
-    versions: [hinted]
+    versions: [base, hinted]
   RSBench_intel_sharedDB:
     enabled: true
     versions: [base]
@@ -182,13 +186,13 @@ apps:
     versions: [base]
   triangle:
     enabled: true
-    versions: [hinted]
+    versions: [base, hinted]
   xeonNumaSize:
     enabled: false
     versions: [base]
   XSBench_intel:
     enabled: true
-    versions: [hinted]   # restructured is held back in the catalog until its source lands
+    versions: [base, hinted]   # restructured is held back in the catalog until its source lands
   XSBench_intel_sharedDB:
     enabled: true
     versions: [base]   # SPMD self-placed (fork pins ranks, chains carry rank hints) — no hint layer to add

@@ -153,13 +153,23 @@ apps:
     marker: 'Final energy'
     scalar_re: 'Final energy\s*:\s*([\-+0-9.eE]+)'
     tolerance: 1e-06
-    # Scaling-app anchor: -N 100 (the benchmark's own default) lands the
-    # dane1 cell (one 108w+4p node) at ~126 s, inside the ~150 s anchor
-    # band; the 24x12x12 rank grid is 3456 = one persistent chain per
-    # worker at the largest campaign geometry, node-invariant.
-    expect: '-1.166049797578'
-    expect_args: ['-x', '216', '-y', '216', '-z', '216', '-N', '100', '-n', '10', '-i', '24', '-j', '12', '-k', '12']
-    args: ['-x', '216', '-y', '216', '-z', '216', '-N', '100', '-n', '10', '-i', '24', '-j', '12', '-k', '12']
+    # A strong scaler (52.4 -> 30.5 -> 19.3 -> 15.2 s over 1..8 reduced-
+    # geometry ranks, 3.46x), so the box is sized against the ~150 s anchor.
+    # The 24x12x12 rank grid is 3456 = one persistent chain per worker at the
+    # largest campaign geometry, node-invariant, and -N 100 is the benchmark's
+    # own default; the box is therefore the only knob, and it must be a
+    # multiple of the grid, which leaves 240 and 264 with nothing between.
+    #
+    # MEMORY decides between them, and it is the binding constraint here
+    # rather than the window.  Every link cell reserves MAXATOMS slots whether
+    # or not atoms occupy them, so the resident set is set by the box at
+    # startup: it does not move with the step count (209 GB at 10 steps and at
+    # 50) nor across the arms.  264 would hit the window exactly at 149.4 s but
+    # holds 225.6 GB, 88% of a node; 240 runs 104.1 / 104.5 / 105.9 s across
+    # the three families at 201.6 GB.  The window is given up for the margin.
+    expect: '-1.166049795862'
+    expect_args: ['-x', '240', '-y', '240', '-z', '240', '-N', '100', '-n', '10', '-i', '24', '-j', '12', '-k', '12']
+    args: ['-x', '240', '-y', '240', '-z', '240', '-N', '100', '-n', '10', '-i', '24', '-j', '12', '-k', '12']
 
   CoMD_sdsc:
     binary: CoMD_sdsc
@@ -316,12 +326,20 @@ apps:
     scalar_kind: int
     # Fork-join recursion with no data: the tree IS the decomposition, so the
     # only dials are the size and how deep the spawn scatters before subtrees
-    # pin to the rank they landed on.  41 puts the anchor at 173.4s; scatter
-    # 11 gives 2048 distinct paths, ample for 32 nodes, and sits on the
-    # measured plateau (9-14 within 3% at 4 and 8 nodes).
-    expect: '165580141'
-    expect_args: ['41', '11']
-    args: ['41', '11']
+    # pin to the rank they landed on.  Scatter 11 gives 2048 distinct paths,
+    # ample for 32 nodes, and sits on the measured plateau (9-14 within 3% at 4
+    # and 8 nodes).
+    #
+    # The base tier anti-scales, so the size targets the 10-30 s window rather
+    # than the ~150 s a strong scaler gets, and both tiers run it: the hint
+    # layer is a no-op at one place, so the two share an anchor and the window
+    # belongs to the tier that has to survive the whole node sweep.  n=40 puts
+    # the anchor at 23.5 / 23.1 / 22.4 s across the three families and holds
+    # 103 GB; n moves the anchor by the golden ratio, so 39 is 13.8 s and 41 is
+    # 173 s -- there is no rung between them and 40 is the one in the window.
+    expect: '102334155'
+    expect_args: ['40', '11']
+    args: ['40', '11']
     hinted: true
 
   globalsum_cgNoShim:
@@ -493,6 +511,22 @@ apps:
     expect: '523'
     expect_args: ['1024', '512', '16']
     args: ['131072', '1024']
+    # The hint layer turns this row over.  It bands the block rows across the
+    # ranks -- band = (row / height) % nranks -- and re-encodes the labeled
+    # index as band + nranks*t so a block's home lands on its band's rank,
+    # steering the S tiles the same way so their readers are band-local.  Both
+    # tiers create the same 38,746 EDTs; only where they run differs.
+    #
+    #   nodes   1      2      4      8
+    #   base    17.7   33.1   35.0   33.4     anti: 0.53x its own one node
+    #   hinted  15.5   13.9   10.1   10.3     strong: 1.52x, and 2.4-3.5x base
+    #
+    # Judge it on multinode only: at one place nranks is 1, so the re-encoding
+    # is the identity and the two tiers are the same program -- they land
+    # within 5%, which is what a correct guard looks like.  And judge it on
+    # medians: the wavefront's average width is half the grid side, too narrow
+    # to fill a 108-worker node, so a single one-node pair swings 15-49 s and
+    # says nothing.
     hinted: true
     restructured_as: LCS_wavefront
 
@@ -564,9 +598,42 @@ apps:
     marker: 'Grand Total Checksum'
     scalar_re: 'Grand Total Checksum\s*==\s*([\-+0-9.eE]+)'
     tolerance: 1e-08
+    # The base tier anti-scales (17x worse from one node to two), so the anchor
+    # targets the short window, and the timestep count is what reaches it: this
+    # row had been raised to 18x the program's own default, and coming back
+    # down to 1.5x it puts the anchor at 21.2 / 19.1 / 22.1 s across the three
+    # families at 7.8 GB.  The default itself, 20, is 15.7 s -- inside the
+    # window but below the band the slowest arm should sit in.
+    #
+    # The CELLS PER BLOCK are deliberately not the knob, even though they look
+    # like the size.  Halo goes as the block face and compute as its volume, so
+    # shrinking the block raises the communication share of the run -- the
+    # direction that flatters a coherence measurement, and therefore the one it
+    # must not take.  It is not a width knob either, which is worth stating
+    # because it looks like one: EDT creations are identical -- 1,943,799 --
+    # at 16 and at 6 cells a block, so the block size buys and costs no
+    # parallelism at all.  The timestep count scales compute and communication
+    # together and leaves the decomposition alone.  Everything else is width
+    # and is held: the
+    # block grid, and num_vars/stages_per_ts (defaults, unstated) which with
+    # the 26-neighbour halo are what make ~2,082 EDTs per block-timestep --
+    # refinement turns 512 base blocks into millions of EDTs, so the machine is
+    # covered by the block count, never by the block size.
+    #
+    # The checksum is a property of the mesh rather than of how long it runs,
+    # so the pin survives the timestep change unaltered.
+    #
+    # No restructured version, by decision, on the same grounds as XSBench's
+    # pair.  Placement alone dissolves this row's anti-scaling -- the hinted
+    # tier turns 17x degradation into a 3.8x speed-up over the same node range
+    # -- so there is nothing left for a redesign to overcome.  And the SPMD
+    # re-decomposition of the same physics already exists as its own row
+    # (miniAMR_intel_chandra, a rank grid rather than a dataflow DAG), whose
+    # base carries a complete placement layer and scales as it stands; the two
+    # rows ARE the decomposition ablation.
     expect: '144913203200.000000'
-    expect_args: ['--nx', '16', '--ny', '16', '--nz', '16', '--npx', '8', '--npy', '8', '--npz', '8', '--num_tsteps', '360', '--num_objects', '1']
-    args: ['--nx', '16', '--ny', '16', '--nz', '16', '--npx', '8', '--npy', '8', '--npz', '8', '--num_tsteps', '360', '--num_objects', '1']
+    expect_args: ['--nx', '16', '--ny', '16', '--nz', '16', '--npx', '8', '--npy', '8', '--npz', '8', '--num_tsteps', '30', '--num_objects', '1']
+    args: ['--nx', '16', '--ny', '16', '--nz', '16', '--npx', '8', '--npy', '8', '--npz', '8', '--num_tsteps', '30', '--num_objects', '1']
     hinted: true
 
   # Reclassified 2026-08-23: same philosophy as miniAMR_intel (block-per-EDT
@@ -664,8 +731,11 @@ apps:
     # SPMD, so the rank lattice is 1x the persistent units the largest
     # geometry provides: 32 nodes x 108 workers = 3456 = 18*16*12, and the
     # lattice is held there for every node count.  (The lattice must be
-    # non-increasing -- the program rejects Rx<Ry or Ry<Rz.)  It anti-scales,
-    # so the size targets the ~150s window at one node: 138.8s there.
+    # non-increasing -- the program rejects Rx<Ry or Ry<Rz.)  The base tier
+    # anti-scales, so the size targets the 10-30 s window at one node rather
+    # than the ~150 s a strong scaler gets.  Both tiers run these arguments:
+    # the hint layer is a no-op at one place, so the two share an anchor, and
+    # the window belongs to the tier that has to survive the whole node sweep.
     #
     # Everything but the lattice comes from the program's own references.  The
     # polynomial DOF count is 8 -- what all five of the port's scaling scripts
@@ -673,12 +743,22 @@ apps:
     # 100, which the original hardcodes in its driver rather than reading from
     # input.  The one knob left is the element block per rank, which is
     # exactly what the original's input file varies (`iel0,ielN,ielD (per
-    # processor)`), so that is what carries the size: 6x6x4 = 144 elements,
+    # processor)`), so that is what carries the size: 3x3x3 = 27 elements,
     # against the 8 the port's scripts use and the ~512 of the reference
-    # inputs.
-    expect: '3.95222063651471E-06'
-    expect_args: ['18', '16', '12', '6', '6', '4', '8', '100']
-    args: ['18', '16', '12', '6', '6', '4', '8', '100']
+    # inputs.  Measured 24.5 / 23.5 / 24.0 s across the three families,
+    # 15.5 GB.
+    #
+    # The block is pure GRAIN and costs no width: EDT creations are identical
+    # -- 6,401,025 of them -- at 144, 27 and 24 elements a rank, so the task
+    # population is the rank lattice's and the block only sets how much work
+    # each task does.  What the block does change is the halo's share, since
+    # its surface falls more slowly than its volume, and that is why the shape
+    # is kept as cubic as the count allows: 3x3x3 and 4x4x2 both give a
+    # surface-to-volume of 2.0 where 4x3x2 gives 2.17, and of the two that fit
+    # the window this is the one with more elements per rank.
+    expect: '1.30069594398318E-06'
+    expect_args: ['18', '16', '12', '3', '3', '3', '8', '100']
+    args: ['18', '16', '12', '3', '3', '3', '8', '100']
     # The shipped rank-to-place map is rankID % places, which puts a rank's
     # halo neighbours on other places by construction; the hinted tier gives
     # each place a contiguous box of the lattice instead.  Every place still
@@ -767,10 +847,18 @@ apps:
     # 287.2s, so the campaign knowingly pays the 1.3% for 10x the headroom
     # (the band is under 0.1%: s7 saturates to the same run as s6 and read
     # 287.3).  scatter 6 is the smallest value meaning "everything" here --
-    # s5 leaves the sequential leaves local and costs 295.1.  Anchor ~289s.
-    expect: '39029188884'
-    expect_args: ['20', '16', '1', '6']
-    args: ['20', '16', '1', '6']
+    # s5 leaves the sequential leaves local and costs 295.1.
+    #
+    # Those two settle the WIDTH plane and are held; n carries the size, and
+    # the cutoff moves with it so max_set stays 4.  The base tier anti-scales,
+    # so n targets the 10-30 s window: 31.4 / 30.5 / 30.5 s across the three
+    # families.  DELIBERATE DEVIATION, and it is forced -- n is an integer and
+    # the enumeration grows by roughly a factor of seven per step, so 18 is
+    # 4.2 s and there is no rung in between.  Narrowing max_set instead would
+    # buy the seconds by giving up width, which the rule forbids.
+    expect: '4968057848'
+    expect_args: ['19', '15', '1', '6']
+    args: ['19', '15', '1', '6']
     hinted: true
 
   p2p:
@@ -951,19 +1039,31 @@ apps:
     # The pole-data checksum depends on -s/-p/-w/numL only (fixed rand()
     # sequence, no srand anywhere), so the pin survives -l changes.
     expect: '8991421287304279555'
-    expect_args: ['-s', 'large', '-l', '150000', '-b', '3456']
+    expect_args: ['-s', 'large', '-l', '1500000', '-b', '3456']
     # Same shape and rules as XSBench_intel: central serial production caps
     # the row (~98K lookups/s at 15 workers, LESS at 108 — spawn-limited),
     # multinode is wire-bound (~0.6-0.7K lookups/s at 2 nodes), init is
-    # negligible (the exploded plane is only ~3 DBs per nuclide).  -l is
-    # sized by the worst cell (hinted val_wb at 8 ferrari nodes ≈ 330 s
-    # against the 600 s ceiling); -b 3456 is the Master/Worker window rule
+    # negligible (the exploded plane is only ~3 DBs per nuclide).  Both tiers
+    # anti-scale, so -l is sized to the 10-30 s anchor window and both run it:
+    # 13.6 / 15.9 / 20.4 s across the three families, and the slowest of the
+    # three is what the window has to hold.  It is NOT sized from a reduced
+    # multi-rank cell -- that geometry reads shape only, and cutting the
+    # catalog to its ceiling would be sizing the program from the machine.
+    #
+    # DISCLOSED: the reference workload is 10,000,000 lookups, which this port
+    # keeps as its own default, and this row runs 15% of it.  The reason is the
+    # row's exhibit rather than a concession -- central serial production caps
+    # throughput, so the reference workload would put the anchor at about the
+    # time a strong scaler is given while this tier anti-scales.  The SPMD
+    # sibling on the same physics runs 3.2x the reference in aggregate
+    # (32 instances of 1,000,000), which is what the pair is for;
+    # -b 3456 is the Master/Worker window rule
     # (cover the largest machine); -s/-p/-w stay at the benchmark's
     # canonical defaults (H-M large, 1000 poles, 100 windows; this port has
     # no nprocs, so -p is the poles flag here — only sharedDB renamed it -a).
     # -s large IS the port's default — named explicitly so the selection is
     # self-documenting, unlike XSBench_intel whose default is small.
-    args: ['-s', 'large', '-l', '150000', '-b', '3456']
+    args: ['-s', 'large', '-l', '1500000', '-b', '3456']
     hinted: true
 
   RSBench_intel_sharedDB:
@@ -973,8 +1073,8 @@ apps:
     marker: 'Simulation complete\.'
     scalar_re: '(?m)^\s*(?:\[\d+\]\s*)?Lookups:\s*(?:\[\d+\]\s*)?([0-9]+)\s*$'
     scalar_kind: int
-    expect: '1000000'
-    expect_args: ['-s', 'large', '-l', '1000000', '-t', '108', '-p', '32']
+    expect: '2200000'
+    expect_args: ['-s', 'large', '-l', '2200000', '-t', '108', '-p', '32']
     # The scalar is the workload echo (completion-level), the same convention
     # as XSBench_intel_sharedDB: the app's computed answer (the slow-Faddeeva
     # counters) is delivered through its labeled-GUID reduction-tree library,
@@ -985,16 +1085,25 @@ apps:
     # Strict sweep invariant (same convention as XSBench_intel_sharedDB,
     # same fork-SPMD code family): every logical count is node-invariant —
     # 32 instances, 108 chains each (1x the campaign node's persistent
-    # workers), 1,000,000 lookups per instance = a constant 32M aggregate,
-    # sized to ~127 s at one 15-worker ferrari node (the multipole kernel
-    # runs ~250K lookups/s there — two orders below XSBench's).  The
-    # fork's block partition maps the 32 instances onto however many PDs
+    # workers), 2,200,000 lookups per instance = a constant 70.4M aggregate.
+    # The fork's block partition maps the 32 instances onto however many PDs
     # the run has.
-    args: ['-s', 'large', '-l', '1000000', '-t', '108', '-p', '32']
+    #
+    # This decomposition SCALES where the Master/Worker sibling does not --
+    # 16.2 -> 8.7 -> 5.3 -> 1.8 s over 1..8 reduced-geometry ranks -- so -l is
+    # sized to the strong scaler's ~150 s: 147.9 / 104.5 / 108.9 s across the
+    # three families at the one-node anchor, 5.5 GB.  The previous figure was
+    # taken at a 15-WORKER node, which is not the anchor geometry and left the
+    # row at 67.8 s where the anchor actually runs.
+    args: ['-s', 'large', '-l', '2200000', '-t', '108', '-p', '32']
 
   rwmix:
     binary: rwmix
     class: mw
+    # The engine behind the attack rows rather than a measurement of its own:
+    # a column of the suite is one of those rows, which owns the workload and
+    # names what it is built to prove.  This entry exists so the binary and its
+    # result line have a home.
     kind: microbench
     provenance: 'racy single-datablock reader/writer saturation probe, written for this repo'
     # One flat fan-out: N tasks (W of them RW) become ready at once against
@@ -1011,6 +1120,10 @@ apps:
   rwrounds:
     binary: rwrounds
     class: spmd
+    # The engine behind the attack rows rather than a measurement of its own:
+    # a column of the suite is one of those rows, which owns the workload and
+    # names what it is built to prove.  This entry exists so the binary and its
+    # result line have a home.
     kind: microbench
     provenance: 'round-structured reader/writer superadditivity probe, written for this repo'
     # Forced [1 writer -> (n-1) readers] rounds; modes 0/1/2 keep spin totals
@@ -1026,6 +1139,10 @@ apps:
   rwsteady:
     binary: rwsteady
     class: mw
+    # The engine behind the attack rows rather than a measurement of its own:
+    # a column of the suite is one of those rows, which owns the workload and
+    # names what it is built to prove.  This entry exists so the binary and its
+    # result line have a home.
     kind: microbench
     provenance: 'closed-loop steady-state reader/writer coherence probe, written for this repo'
     # Reader/writer EDT chains free-run against shared datablocks for a fixed
@@ -1066,8 +1183,8 @@ apps:
     default_enabled: false
     timeout: 120
     multinode_timeout: 120
-  wordcount:
-    binary: wordcount
+  mapreduce_wordcount:
+    binary: mapreduce_wordcount
     class: task
     kind: app
     provenance: 'canonical MapReduce word count (Dean & Ghemawat, OSDI 2004), native OCR implementation written for this repo'
@@ -1091,6 +1208,10 @@ apps:
   rwpriv:
     binary: rwpriv
     class: mw
+    # The engine behind the attack rows rather than a measurement of its own:
+    # a column of the suite is one of those rows, which owns the workload and
+    # names what it is built to prove.  This entry exists so the binary and its
+    # result line have a home.
     kind: microbench
     provenance: 'private-working-set release-axis probe, written for this repo'
     # Every chain re-touches its OWN block homed one PD away: required
@@ -1133,6 +1254,10 @@ apps:
   rwhandoff:
     binary: rwhandoff
     class: mw
+    # The engine behind the attack rows rather than a measurement of its own:
+    # a column of the suite is one of those rows, which owns the workload and
+    # names what it is built to prove.  This entry exists so the binary and its
+    # result line have a home.
     kind: microbench
     provenance: 'phase-alternating producer/consumer handoff probe, written for this repo'
     # Each generation's release wakes one consumer and one next producer on
@@ -1156,6 +1281,271 @@ apps:
     default_enabled: false
     timeout: 120
     multinode_timeout: 120
+
+  # A note on T_MS across these rows: it is a BUDGET GUARD, not the workload.
+  # Termination is the per-chain op count, and a chain that hits the deadline
+  # short of its count withholds the completion marker (CAP-HIT), failing the
+  # cell.  The Dane editions keep ferrari's ops per chain while the chain count
+  # rises with the node count, so the JOB is ~4.4x ferrari's while the guard was
+  # left at ferrari's 180 s.  Extrapolating the measured EXCL x PURGE graves
+  # puts the bomb near 355 s and the slow dial near 204 s, both past it.  The
+  # guard is raised rather than the op counts lowered: halving ops would make
+  # these a different job from the ferrari columns they are compared against,
+  # and the classes terminate independently, so cutting the writer's count
+  # turns a mixed column into a read mill.
+  # --- the adversarial suite ------------------------------------------------
+  # Twelve attacks, each a program plus ONE designed workload, so a column of
+  # the master table is a row here rather than a point buried in a sweep file.
+  # Every one names its target: the suite's claim is that each arm of the plane
+  # is somebody's optimum and somebody's disaster, so a column exists to crown
+  # one arm or bury another, and the ratios below are the measured verdicts.
+  # The arguments are the Dane geometry (rwpriv at 8 nodes, rwsteady at 32);
+  # `args_by_nodes` carries the reduced-geometry edition where one was run.
+  # Chains scale with the machine at ~15 a rank, which is what keeps a job the
+  # same job across geometries.
+  own_reread_64k:
+    binary: rwpriv
+    class: mw
+    kind: microbench
+    provenance: 'attack matrix C1: private-lane re-read (release-axis spectrometer)'
+    marker: 'RWPRIV OK '
+    scalar_kind: bool
+    # 96 chains re-reading the block they own, 22,000 ops each at 64 KB, so
+    # nothing is shared and the only cost left is what a protocol charges a
+    # holder for touching its own data again.
+    # TARGET: the two arms that cannot let a holder keep anything.
+    # Crowns: six arms tie at a 0.53 s floor -- they charge re-use nothing.
+    # Graves: EXCL x PURGE 27 s (51x; it hands the block back at every zero
+    # edge and re-fetches the bytes), VAL x WT x PURGE 8.8 s (17x; the
+    # validation certificate survives even with no sharer to validate against).
+    args: ['96', '0', '1', '1', '20', '65536', '120000', '0', '1', '0', '0', '1', '22000', '0']
+    default_enabled: false
+    timeout: 900
+    multinode_timeout: 900
+  own_reread_16m:
+    binary: rwpriv
+    class: mw
+    kind: microbench
+    provenance: 'attack matrix C1: private-lane re-read at size'
+    marker: 'RWPRIV OK '
+    scalar_kind: bool
+    # The same private re-read with the payload 256x larger, which converts a
+    # protocol's per-turn byte traffic into the dominant term.
+    # TARGET: purge-family arms, whose return-and-refetch now moves 16 MB.
+    # Crowns: the floor again -- size costs a retaining arm nothing.
+    # Grave: EXCL x PURGE 26.7 s (35x).
+    args: ['96', '0', '1', '1', '20', '16777216', '180000', '0', '1', '0', '0', '1', '250', '0']
+    default_enabled: false
+    timeout: 900
+    multinode_timeout: 900
+  own_rewrite_64k:
+    binary: rwpriv
+    class: mw
+    kind: microbench
+    provenance: 'attack matrix C1: private-lane re-write (turn amortization)'
+    marker: 'RWPRIV OK '
+    scalar_kind: bool
+    # 96 chains re-writing their OWN block, 15,000 ops each: consecutive write
+    # turns by one holder, which a sticky grant should make free.
+    # TARGET: every arm that re-arbitrates a write it already owns.
+    # Crowns: VAL x WB and EXCL x RETAIN at 0.37 s -- the grant outlives the
+    # writer, so the second turn costs nothing.
+    # Notable: INV x WB 5.9 s (16x) -- a flat invalidation round per release,
+    # 15,000 x 352 us, even with no sharer to invalidate.
+    # Graves: the WT family 16 s (43x, payload home at every release), the WT
+    # purge twins 25 s (68x), EXCL x PURGE 27 s (74x).
+    args: ['0', '96', '1', '1', '20', '65536', '120000', '0', '1', '0', '0', '1', '0', '15000']
+    default_enabled: false
+    timeout: 900
+    multinode_timeout: 900
+  own_rewrite_16m:
+    binary: rwpriv
+    class: mw
+    kind: microbench
+    provenance: 'attack matrix C1: private-lane re-write at size'
+    marker: 'RWPRIV OK '
+    scalar_kind: bool
+    # The re-write turn with a 16 MB payload: the same arbitration, but every
+    # write-through publish now carries the block.
+    # TARGET: write-through, whose per-release publish is size-proportional.
+    # Crowns: a 0.76-0.98 s trio (the retaining write-back arms).
+    # Graves: the same classes as the 64K lane at 21x / 31x / 36x.
+    args: ['0', '96', '1', '1', '20', '16777216', '180000', '0', '1', '0', '0', '1', '0', '160']
+    default_enabled: false
+    timeout: 900
+    multinode_timeout: 900
+  one_home_funnel_4m:
+    binary: rwsteady
+    class: mw
+    kind: microbench
+    provenance: 'attack matrix C2: many readers funnelled through one home'
+    marker: 'RWSTEADY OK '
+    scalar_kind: bool
+    # Every reader pulls from 16 blocks that all live on one rank (HSPREAD=1),
+    # 300 ops each at 4 MB: a read-only funnel with no writer at all.
+    # TARGET: arms that must ask the home again for a copy they already hold.
+    # Crowns: INV and EXCL x RETAIN at 0.23 s -- a durable copy answers locally.
+    # Grave: EXCL x PURGE 26.4 s (116x) -- it returns the copy at every zero
+    # edge, so the funnel is re-served from one rank for every op.
+    args: ['465', '0', '1', '1', '20', '4194304', '16', '600000', '0', '0', '0', '1', '1', '0', '0', '0', '300', '0', '0']
+    args_by_nodes:
+      8: ['105', '0', '1', '1', '20', '4194304', '16', '120000', '0', '0', '0', '1', '1', '0', '0', '0', '300', '0']
+    default_enabled: false
+    timeout: 900
+    multinode_timeout: 900
+  audienceless_publish_16m:
+    binary: rwsteady
+    class: mw
+    kind: microbench
+    provenance: 'attack matrix C8: writes nobody reads'
+    marker: 'RWSTEADY OK '
+    scalar_kind: bool
+    # 15 writers, 2,500 writes each at 16 MB, and NO readers: every byte a
+    # protocol moves here is waste, because the audience it moves them for does
+    # not exist.  The geometry is deliberate and narrow -- WSPREAD=1 confines
+    # every writer to ONE policy domain and D=1 gives them ONE block, so
+    # same-domain RW concurrency (legal by contract) carries the writes and no
+    # cross-node contention enters.
+    # TARGET: write-through, which publishes to the home whether or not anyone
+    # will read it.
+    # Crowns: VAL x WB and EXCL x RETAIN at 0.18 s, INV x WB 0.28 s -- the
+    # payload stays with the writer.
+    # Graves: the WT trio at 137-144x, EXCL x PURGE 79x.
+    # DO NOT widen the writer count: publishes coalesce per (block, rank) and
+    # the grant's zero edge grows rarer, so more writers means FEWER publishes
+    # per write -- the column would stop measuring a publish per write.
+    args: ['0', '15', '1', '1', '20', '16777216', '1', '600000', '0', '0', '1', '1', '1', '0', '0', '0', '0', '2500', '0']
+    args_by_nodes:
+      8: ['0', '15', '1', '1', '20', '16777216', '1', '90000', '0', '0', '1', '1', '1', '0', '0', '0', '0', '2500']
+    default_enabled: false
+    timeout: 900
+    multinode_timeout: 900
+  freerun_read_heavy_64k:
+    binary: rwsteady
+    class: mw
+    kind: microbench
+    provenance: 'attack matrix C9: uncoupled read-heavy mix'
+    marker: 'RWSTEADY OK '
+    scalar_kind: bool
+    # 406 readers x 40,000 and 59 writers x 5,000 on a shared 64 KB block, all
+    # free-running: the ordinary steady state a cache is designed for, with
+    # reuse high enough that keeping a copy should pay.
+    # TARGET: arms with no durable reader copy.
+    # Crowns: the INV trio at 7.7-8.4 s -- a covering read is a pure load.
+    # Graves: EXCL x PURGE 22 s (2.9x); VAL pays 13-14 s to re-validate.
+    args: ['406', '59', '1', '1', '20', '65536', '1', '600000', '0', '0', '0', '1', '1', '0', '0', '0', '40000', '5000', '0']
+    args_by_nodes:
+      8: ['92', '13', '1', '1', '20', '65536', '1', '120000', '0', '0', '0', '1', '1', '0', '0', '0', '40000', '5000']
+    default_enabled: false
+    timeout: 900
+    multinode_timeout: 900
+  pipeline_converge_1m:
+    binary: rwsteady
+    class: mw
+    kind: microbench
+    provenance: 'attack matrix C10: coupled producer-consumer pipeline'
+    marker: 'RWSTEADY OK '
+    scalar_kind: bool
+    # PIPE=1 couples the classes: 62 producers publish versions of 31 blocks
+    # and 403 consumers run until they have seen the final one, so a consumer
+    # cannot outrun its producer and every handoff is on the critical path.
+    # TARGET: arms whose handoff needs a round trip before the reader may look.
+    # Crown: VAL x WB 0.09 s -- a consumer validates and reads the producer's
+    # own copy.
+    # Graves: the INV x WT twins 19 s (224x -- an invalidation round stands
+    # between every version and its readers), WT and EXCL x PURGE 14-15 s
+    # (165-174x).
+    args: ['403', '62', '1', '1', '20', '1048576', '31', '600000', '0', '0', '0', '1', '1', '0', '0', '1', '4000', '2000', '0']
+    args_by_nodes:
+      8: ['91', '14', '1', '1', '20', '1048576', '7', '120000', '0', '0', '0', '1', '1', '0', '0', '1', '4000', '2000']
+    default_enabled: false
+    timeout: 900
+    multinode_timeout: 900
+  alternating_bomb_64k:
+    binary: rwsteady
+    class: mw
+    kind: microbench
+    provenance: 'attack matrix C11: two alternating writers against a wide sharer set'
+    marker: 'RWSTEADY OK '
+    scalar_kind: bool
+    # WSPREAD=2 makes the two writers alternate on the SAME block while 463
+    # readers hold copies of it: the pattern that defeats batching, because
+    # every write turn changes hands and every turn faces the full sharer set.
+    # TARGET: write-invalidate, which must run a round against 463 sharers per
+    # alternation -- and the arms that serialise readers behind the turn.
+    # Crown: the INV trio 13.4-14.5 s on the whole-job view (the anti-INV
+    # story is in the writer-tail receipts, not the aggregate).
+    # Graves: EXCL x PURGE 79 s (5.9x); EXCL x RETAIN and VAL 3-4x.
+    args: ['463', '2', '1', '1', '20', '65536', '1', '600000', '0', '0', '2', '1', '1', '0', '0', '0', '200000', '20000', '0']
+    args_by_nodes:
+      8: ['103', '2', '1', '1', '20', '65536', '1', '120000', '0', '0', '2', '1', '1', '0', '0', '0', '200000', '20000']
+    default_enabled: false
+    timeout: 900
+    multinode_timeout: 900
+  resident_mill_1m:
+    binary: rwsteady
+    class: mw
+    kind: microbench
+    provenance: 'attack matrix C5: one resident writer churning under a reader mill'
+    marker: 'RWSTEADY OK '
+    scalar_kind: bool
+    # 465 readers x 50,000 against ONE writer x 2,000 on a 1 MB block, with a
+    # 5 us think time so the copy's lifetime is short: readers grind while the
+    # data underneath them keeps moving.
+    # TARGET: arms that must re-establish a reader copy after every churn.
+    # Crown: INV x WB 1.23 s.
+    # Grave: EXCL x PURGE 17.9 s (14.5x).
+    # Caveat worth carrying: the writer's own receipts run 228x the OTHER way,
+    # so this column is a reader-side verdict and says so.
+    args: ['465', '1', '1', '1', '5', '1048576', '1', '600000', '0', '0', '1', '1', '1', '0', '0', '0', '50000', '2000', '0']
+    args_by_nodes:
+      8: ['105', '1', '1', '1', '5', '1048576', '1', '90000', '0', '0', '1', '1', '1', '0', '0', '0', '50000', '2000']
+    default_enabled: false
+    timeout: 900
+    multinode_timeout: 900
+  migration_gauntlet_64k:
+    binary: rwsteady
+    class: mw
+    kind: microbench
+    provenance: 'attack matrix A9/C7: write ownership dragged across ranks'
+    marker: 'RWSTEADY OK '
+    scalar_kind: bool
+    # 403 readers x 50,000 against 62 writers x 120 spread across ranks: the
+    # write right migrates constantly while a large reader set chases it.
+    # TARGET: arms that make readers follow a moving owner.
+    # Crown: EXCL x RETAIN 1.29 s -- turn amortisation survives spread writers.
+    # Notable: the INV trio at 1.4x.
+    # Graves: the VAL family 6.7-7.9x -- in e2e terms the migration pain
+    # reaches VAL's READERS (owner-chasing plus validation traffic), not only
+    # the writers a windowed view singles out; EXCL x PURGE 14.3x.
+    args: ['403', '62', '1', '1', '20', '65536', '1', '600000', '0', '0', '0', '1', '1', '0', '0', '0', '50000', '120', '0']
+    args_by_nodes:
+      8: ['91', '14', '1', '1', '20', '65536', '1', '120000', '0', '0', '0', '1', '1', '0', '0', '0', '50000', '120', '0']
+    default_enabled: false
+    timeout: 900
+    multinode_timeout: 900
+  slow_churn_dial_16m:
+    binary: rwsteady
+    class: mw
+    kind: microbench
+    provenance: 'attack matrix C6: the churn dial at its slow end'
+    marker: 'RWSTEADY OK '
+    scalar_kind: bool
+    # The mill's opposite end: 465 readers x 5,000 at 16 MB against one writer
+    # x 100 that THINKS for 20 ms between writes (ETHW), so a reader copy lives
+    # long enough to be worth keeping.
+    # TARGET: it is the control for the fast churn column -- the dial that
+    # shows how much of a protocol's verdict is churn rate rather than shape.
+    # Crown: INV x WB 2.40 s; VAL x WB only 1.4x behind, where the fast end of
+    # the same dial puts it 8x behind -- the version-floor dedup answers most
+    # redirects header-only once copies live 20 ms.
+    # Grave: EXCL x PURGE 19.2x (the read-side purge tax at 16 MB).
+    args: ['465', '1', '1', '1', '20', '16777216', '1', '600000', '0', '0', '1', '1', '1', '0', '0', '0', '5000', '100', '20000']
+    args_by_nodes:
+      8: ['105', '1', '1', '1', '20', '16777216', '1', '120000', '0', '0', '1', '1', '1', '0', '0', '0', '5000', '100', '20000']
+    default_enabled: false
+    timeout: 900
+    multinode_timeout: 900
   sar_pss:
     binary: sar_problem_size_scaling
     class: task
@@ -1406,9 +1796,22 @@ apps:
     marker: 'Computed L1 norm'
     scalar_re: 'Computed L1 norm\s*=\s*([\-+0-9.eE]+)'
     tolerance: 1e-06
+    # The three arguments are the global tile edge, the rank count and the
+    # timestep count.  The rank count is the width (13,824 = 4x the largest
+    # geometry's 3,456 workers, the dataflow-DAG rule's slack) and the timestep
+    # count is a repetition, so the EDGE carries the calibration -- and it has
+    # to stay a multiple of the rank grid's least common multiple or the tiles
+    # stop dividing evenly, which leaves rungs 3,456 apart.
+    #
+    # This row strong-scales (31.1 -> 21.4 -> 11.9 -> 8.9 s over 1..8
+    # reduced-geometry ranks, 3.51x), so the edge targets ~150 s: 31,104 runs
+    # 134.0 / 127.6 / 154.0 s across the three families at 48.5 GB.  The next
+    # rung up, 34,560, overshoots at 162.8 / 171.0 / 155.7 s.  The L1 norm is a
+    # property of the stencil rather than of the grid, so the pin does not move
+    # with the edge.
     expect: '802.000000000000'
-    expect_args: ['41472', '13824', '400']
-    args: ['41472', '13824', '400']
+    expect_args: ['31104', '13824', '400']
+    args: ['31104', '13824', '400']
 
   stream:
     binary: stream
@@ -1431,27 +1834,45 @@ apps:
     # persistent units the largest geometry provides -- 32 nodes x 108 workers
     # = 3456 chains.  The row carried 1728, chosen (its own comment said)
     # because a wider run measured worse, which is the one reason the
-    # invariance rule does not allow.  The sweep count is the port's own
-    # default and is a repetition, not a size, so the array carries the
-    # calibration: 836,352,000 elements puts the anchor at 157.0s, which is
-    # 242,000 per chain against the port's reference ratio of 281,250
-    # (STREAM_ARRAY_SIZE 9000000 over NUM_THREADS 32).
+    # invariance rule does not allow.  The base tier collapses on more than one
+    # node, so the window is the anti-scaler's and both tiers run it -- the
+    # hint layer is a no-op at one place, so the two share an anchor.
     #
+    # DELIBERATE DEVIATION: the SWEEP COUNT carries the calibration here, not
+    # the array, which is the reverse of the usual rule.  Two things force it.
+    #
+    # A CLIFF makes the array unusable as a dial.  Per chain, one array crosses
+    # 512 KiB between 65,000 and 66,000 elements, and the anchor goes 14.0 s ->
+    # 48.9 s across that single step (three further rungs above it stay at
+    # ~50 s), so no array size lands in the window at all -- the rung below the
+    # cliff is 14.0 s and the one above is 48.9 s.  Both a core's L2 and the
+    # allocator's large-object limit are 512 KiB, so which one it is cannot be
+    # told apart here; what is established is the boundary and that resident
+    # set FALLS across it, 14.7 GB -> 10.2 GB, which is what an allocation path
+    # change looks like rather than a cache effect.
+    #
+    # And shrinking the array would stop this being a memory benchmark.  Only
+    # the workers run at once, so the live set is workers x 3 arrays x the
+    # per-chain slice: at this size that clears the last-level cache, and at
+    # any size the window could otherwise have used it sits well inside it.
+    # The sweep count leaves the working set exactly where it is.
+    #
+    # 100 sweeps runs 19.7 / 19.9 / 20.3 s across the three families at 20 GB.
+    # The validation line counts ELEMENTS, so the pin is untouched by this.
     expect: '836352000'
-    expect_args: ['836352000', '3456', '1000']
-    args: ['836352000', '3456', '1000']
+    expect_args: ['836352000', '3456', '100']
+    args: ['836352000', '3456', '100']
     # The source carries a placement layer (OCR_APP_OPTIMIZED_PLACEMENT): the
     # four kernels and the loop driver that re-creates them are pinned to the
     # place their chain already runs on, so a re-created array at least stays
     # where the chain is.  It had never been built -- the CMake entry had no
     # HINTED_PLACEMENT and this row had no hinted flag.
     #
-    # Measured, that layer is the difference between running and not: at the
-    # trend size the base tier is 67x its own one-node time at two nodes and
-    # 64x the hinted tier at eight, and at this size its eight-node cell did
-    # not finish in 1800 s against the hinted tier's 102 s.  Budget the base
-    # tier's multinode cells accordingly or expect them to time out -- that is
-    # the tier doing its job of exhibiting the structure, not a defect to mask.
+    # Measured, that layer is the difference between running and not: at a
+    # reduced size the base tier is 67x its own one-node time at two nodes and
+    # 64x the hinted tier at eight.  Budget the base tier's multinode cells
+    # accordingly or expect them to time out -- that is the tier doing its job
+    # of exhibiting the structure, not a defect to mask.
     hinted: true
     restructured_as: stream_dist
 
@@ -1578,9 +1999,16 @@ apps:
     # puzzle; depth truncates its tree; rounds stays 1 — the graph is the
     # dial, not repetition).  The pin is the measured count at these exact
     # arguments, cross-checked by consensus like every non-analytic scalar.
-    expect: '325211332'
-    expect_args: ['9', '1', '8']
-    args: ['9', '1', '8']
+    #
+    # Both tiers anti-scale, so the size targets the 10-30 s window and both
+    # run it — the hint layer is a no-op at one place, so the two share an
+    # anchor (10.2 s against 9.9 s).  Depth is the size knob left once the
+    # board is fixed, and it moves the anchor by more than an order of
+    # magnitude a step: depth 8 is 10.2 / 18.9 / 13.9 s across the three
+    # families and depth 9 is 192 s, so there is no rung between them.
+    expect: '19979938'
+    expect_args: ['8', '1', '8']
+    args: ['8', '1', '8']
     hinted: true
 
   xeonNumaSize:
@@ -1605,14 +2033,23 @@ apps:
     scalar_re: 'XSBench grid checksum:\s+(\d+)'
     scalar_kind: int
     expect: '5538757267561331960'
-    expect_args: ['-s', 'large', '-g', '96', '-l', '300000', '-b', '3456']
+    expect_args: ['-s', 'large', '-g', '96', '-l', '2000000', '-b', '3456']
     # The compute plane is wire-bound and mildly anti-scaling in every arm
     # (each lookup is a spawned three-task chain whose aggregator fans in
     # one nuclide-grid DB per nuclide of the drawn material), so this is an
-    # exhibition row sized by the worst cell against the 600 s ferrari
-    # ceiling; a Dane-geometry single node runs it in seconds, the accepted
-    # shape for an anti-scaling row.  The grid checksum depends only on
-    # -s/-g, so the pin survives -l changes.
+    # exhibition row, and both tiers anti-scale — the hint layer is a no-op
+    # at one place, so the two share an anchor and -l is sized to the
+    # anti-scaler's 10-30 s window: 13.6 / 16.6 / 22.9 s across the three
+    # families, the slowest of which is what the window has to hold.  The
+    # grid checksum depends only on -s/-g, so the pin survives -l changes.
+    #
+    # DISCLOSED: the reference workload is 15,000,000 lookups and THIS PORT
+    # ships 15,000 -- three orders below it, the port author's own verdict on
+    # what a per-lookup task chain can carry.  This row runs 2,000,000, 13% of
+    # the reference and 133x what the port defaults to.  The SPMD sibling on
+    # the same physics runs 32 instances of 50,000,000, over a hundred times
+    # the reference in aggregate; that gap between two decompositions of one
+    # benchmark is what the pair exists to show.
     # -s large is the benchmark's canonical configuration (355 isotopes,
     # 321-nuclide fuel fan-in; small is its reduced fresh-fuel subset) and
     # changes no structure — one-node rate is identical (261K lookups/s).
@@ -1632,7 +2069,7 @@ apps:
     # throughput is insensitive to the width (within ~7% across
     # 1024..13824), which is itself evidence that production, not the
     # window, binds.
-    args: ['-s', 'large', '-g', '96', '-l', '300000', '-b', '3456']
+    args: ['-s', 'large', '-g', '96', '-l', '2000000', '-b', '3456']
     hinted: true
     # No restructured version, by decision: any distribution-friendly rebuild
     # of this program converges on the sibling XSBench_intel_sharedDB (its
@@ -1648,16 +2085,19 @@ apps:
     marker: 'Workload\s+\(unit\):'
     scalar_re: 'Workload\s+\(unit\):\s+(\d+)'
     scalar_kind: int
-    expect: '50000000'
-    expect_args: ['-s', 'large', '-g', '96', '-l', '50000000', '-t', '108', '-p', '32']
+    expect: '320000000'
+    expect_args: ['-s', 'large', '-g', '96', '-l', '320000000', '-t', '108', '-p', '32']
     # -s/-g match XSBench_intel (same physics table; the set convention is
     # that the table is identical and only the decomposition differs).
     # The sweep invariant is the TOTAL logical quantity, realized in its
     # strict form: every count is literally node-count-invariant — 32 SPMD
     # instances, 108 chains each (1x the campaign node's persistent
-    # workers, the SPMD width rule), 50M lookups per instance = a constant
-    # 1.6G aggregate.  The application never names the machine: the fork's
+    # workers, the SPMD width rule), 320M lookups per instance = a constant
+    # 10.2G aggregate.  This decomposition SCALES where the Master/Worker
+    # sibling does not (11.0 -> 6.2 -> 3.3 -> 2.2 s over 1..8 reduced-geometry
+    # ranks), so -l is sized to the strong scaler's ~150 s: 145.2 / 140.5 /
+    # 134.7 s across the three families at the one-node anchor, 7.5 GB.  The application never names the machine: the fork's
     # block partition maps the 32 instances onto however many PDs the run
     # has (every campaign node count divides 32, so the packing is exactly
     # even), one instance per node at the calibration geometry.
-    args: ['-s', 'large', '-g', '96', '-l', '50000000', '-t', '108', '-p', '32']
+    args: ['-s', 'large', '-g', '96', '-l', '320000000', '-t', '108', '-p', '32']

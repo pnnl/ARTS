@@ -1,0 +1,57 @@
+# The adversarial suite, as its own roster.
+#
+# Kept out of paper-main on purpose: that roster answers "what do real
+# applications cost on each arm", while this one answers "what is each arm's
+# best and worst case, by construction".  The two are different claims and are
+# run separately.
+#
+# Every row here is one program plus one designed workload, and the catalog
+# entry states which arm the column is built to crown and which to bury.  The
+# arguments are the Dane geometry; a reduced-geometry run picks up the smaller
+# edition through the catalog's args_by_nodes.
+
+name: attacks
+description: the twelve adversarial columns of the protocol suite
+
+apps:
+  # C1 — the release-axis spectrometer: a holder touching its own data, where
+  # the only cost that can appear is what the protocol charges for re-use.
+  own_reread_64k:
+    enabled: true
+    versions: [base]
+  own_reread_16m:
+    enabled: true
+    versions: [base]
+  own_rewrite_64k:
+    enabled: true
+    versions: [base]
+  own_rewrite_16m:
+    enabled: true
+    versions: [base]
+
+  # The shared-block columns: reuse, audience, coupling, alternation and
+  # migration, each isolated so one axis decides the ranking.
+  one_home_funnel_4m:
+    enabled: true
+    versions: [base]
+  audienceless_publish_16m:
+    enabled: true
+    versions: [base]
+  freerun_read_heavy_64k:
+    enabled: true
+    versions: [base]
+  pipeline_converge_1m:
+    enabled: true
+    versions: [base]
+  alternating_bomb_64k:
+    enabled: true
+    versions: [base]
+  resident_mill_1m:
+    enabled: true
+    versions: [base]
+  migration_gauntlet_64k:
+    enabled: true
+    versions: [base]
+  slow_churn_dial_16m:
+    enabled: true
+    versions: [base]

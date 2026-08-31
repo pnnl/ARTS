@@ -1,9 +1,9 @@
-# wordcount
+# mapreduce_wordcount
 
 *The canonical MapReduce application (Dean & Ghemawat, OSDI 2004) in
 native OCR, weak-scaling form — a synthesized corpus streamed through map
 tiles and a K-ary reduction tree whose lower levels stay node-local.*
-Source: `benchmarks/apps/wordcount.c` (in-repo).
+Source: `benchmarks/apps/mapreduce_wordcount.c` (in-repo).
 
 ## Overview
 
