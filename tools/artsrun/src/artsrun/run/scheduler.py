@@ -57,7 +57,8 @@ class WallCache:
             pass
 
 
-def order(cells: Iterable[Cell], cache: WallCache, *, capacity: int = 0) -> list[Cell]:
+def order(cells: Iterable[Cell], cache: WallCache, *, capacity: int = 0,
+          keep: bool = False) -> list[Cell]:
     """Widest first; by node-seconds where a prior run measured them.
 
     A backend that runs one cell at a time has nothing to pack, so ordering
@@ -73,6 +74,11 @@ def order(cells: Iterable[Cell], cache: WallCache, *, capacity: int = 0) -> list
     against.
     """
     cells = list(cells)
+    if keep:
+        # The caller's order IS the experiment: a sweep interleaves its arms
+        # round-robin inside each repeat block so slow machine drift averages
+        # over every arm instead of accruing to whichever sorts last.
+        return cells
     if capacity == 1:
         return sorted(cells, key=lambda c: (c.nodes, c.key))
 
@@ -96,6 +102,7 @@ class Scheduler:
         on_event: Callable[[str, CellResult], None] | None = None,
         poll_interval_s: float = 5.0,
         stop: "threading.Event | None" = None,
+        keep_order: bool = False,
     ):
         self.backend = backend
         # Asked to stop from another thread: nothing is torn down here, the
@@ -103,7 +110,8 @@ class Scheduler:
         self.stop = stop or threading.Event()
         self.cache = cache
         self.pending = order(cells, cache,
-                             capacity=getattr(backend, "capacity", 0))
+                             capacity=getattr(backend, "capacity", 0),
+                             keep=keep_order)
         self.in_flight: list[CellResult] = []
         self.done: list[CellResult] = []
         self.on_event = on_event or (lambda kind, result: None)

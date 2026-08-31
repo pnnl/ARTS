@@ -42,7 +42,7 @@ def test_every_application_row_has_a_document():
     """A result is claimed about an application; every application row the
     roster offers must open to a real structural document, not the fallback."""
     catalog = load_catalog()
-    missing = [a.name for a in catalog.rows_of(Kind.APPLICATION)
+    missing = [a.name for a in catalog.rows_of(Kind.APP)
                if load_doc(a.name) is None]
     assert not missing, f"application rows without a document: {missing}"
 

@@ -14,7 +14,23 @@ class Family(StrEnum):
     EXCL = "EXCL"
     INV = "INV"
     VAL = "VAL"
-    VAL_COMB = "VAL_COMB"
+
+
+# Selections recorded before the combining promotion name the comb-suffixed
+# entries; those keys now denote what is the VAL family's plain configuration.
+# Plain val keys recorded before the promotion meant the non-combining build
+# and are NOT remapped — silently rewriting them would claim a measurement
+# that was never made.  (The nocomb ablation twins are build variants, not
+# plane entries.)
+LEGACY_ENTRY_ALIASES = {
+    "arts_val_wt_comb": "arts_val_wt",
+    "arts_val_wb_comb": "arts_val_wb",
+    "arts_val_wt_purge_comb": "arts_val_wt_purge",
+}
+
+
+def modern_entry_key(key: str) -> str:
+    return LEGACY_ENTRY_ALIASES.get(key, key)
 
 
 class Release(StrEnum):
@@ -104,6 +120,7 @@ class Plane(BaseModel):
         raise KeyError(f"{family}/{release}/{write}")
 
     def entry(self, key: str) -> SelectionEntry:
+        key = modern_entry_key(key)
         for e in self.entries:
             if e.key == key:
                 return e

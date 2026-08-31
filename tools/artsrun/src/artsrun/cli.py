@@ -190,7 +190,12 @@ def show_apps(
     from artsrun.model.catalog import Kind
 
     first = True
-    for kind in (Kind.APPLICATION, Kind.MICROBENCH):
+    labels = {
+        Kind.APP: "app",
+        Kind.MICROBENCH: "[cyan]micro[/cyan]",
+        Kind.TOY: "[dim]toy[/dim]",
+    }
+    for kind in (Kind.APP, Kind.MICROBENCH, Kind.TOY):
         rows = [a for a in catalog.rows_of(kind)
                 if not enabled_only or bs.is_enabled(a)]
         if not rows:
@@ -206,10 +211,8 @@ def show_apps(
                 mark = lambda v: "[dim]✗[/dim]"  # noqa: E731
             name = entry.name if on else f"[dim]{entry.name}[/dim]"
             binary = entry.binary if entry.binary != entry.name else "[dim]·[/dim]"
-            label = ("app" if kind is Kind.APPLICATION
-                     else "[dim]micro[/dim]")
             table.add_row(
-                name, label, entry.cls.value, binary,
+                name, labels[kind], entry.cls.value, binary,
                 mark(Version.BASE), mark(Version.HINTED),
                 mark(Version.RESTRUCTURED),
                 " ".join(entry.args) or "[dim]none[/dim]",
@@ -223,8 +226,9 @@ def show_apps(
     )
     console.print(
         "[dim]app = a benchmark with a provenance, what a result is claimed "
-        "about · micro = one runtime mechanism, or a fixture with no workload"
-        "[/dim]"
+        "about · micro = a parameterized characterization probe, run by "
+        "sweeps · toy = one runtime mechanism or a fixture with no workload, "
+        "regression material[/dim]"
     )
 
 
@@ -442,6 +446,184 @@ def _detach(argv: list[str]) -> None:
     subprocess.run(["bash", "-c", cmd], check=False, cwd=repo_root())
     console.print(f"detached; log: {log}")
     console.print("[dim]watch it live with: artsrun watch[/dim]")
+
+
+@app.command("sweep")
+def sweep_cmd(
+    name: str = typer.Argument(None, help="sweep spec name "
+                               "(experiments/sweeps/<name>.yaml)"),
+    profile: str = typer.Option(None, "--profile", "-p"),
+    counters: str = typer.Option(None, "--counters", "-c",
+                                 help="counter set to compile in"),
+    arms: str = typer.Option(None, "--arms",
+                             help="comma-separated override of the spec's arms"),
+    repeats: int = typer.Option(None, "--repeats"),
+    build_dir: Path = typer.Option(None, "--build-dir"),
+    resume: str = typer.Option(None, "--resume", help="run id to continue"),
+    retry_failed: bool = typer.Option(True, "--retry-failed/--keep-failed"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    detach: bool = typer.Option(False, "--detach"),
+) -> None:
+    """Run a probe sweep: one microbenchmark, an argument matrix, every arm,
+    at one node count — arms interleaved round-robin inside each repeat."""
+    from artsrun.model.catalog import load_catalog as _lc
+    from artsrun.sweep import SweepCampaign, load_past_sweep
+
+    catalog = _lc()
+    run_dir = None
+    if resume:
+        try:
+            spec, run_dir = load_past_sweep(resume)
+        except (FileNotFoundError, ValueError) as exc:
+            _fail(str(exc))
+        saved = json.loads((run_dir / "selection.yaml").read_text())
+        profile = profile or saved.get("profile")
+    elif not name:
+        _fail("name a sweep spec, or --resume a run")
+    else:
+        try:
+            spec = store.load_sweep(name)
+        except store.NotFound as exc:
+            _fail(str(exc))
+    if not profile:
+        _fail("--profile is required")
+    try:
+        prof = store.load_profile(profile)
+    except store.NotFound as exc:
+        _fail(str(exc))
+    if arms:
+        spec = spec.model_copy(update={"arms": _split(arms)})
+    if repeats:
+        spec = spec.model_copy(update={"repeats": repeats})
+    try:
+        cset = store.load_counterset(counters) if counters else None
+    except store.NotFound as exc:
+        _fail(str(exc))
+    try:
+        campaign = SweepCampaign.prepare(
+            spec, catalog, prof, counterset=cset, build_dir=build_dir,
+            run_dir=run_dir)
+    except ValueError as exc:
+        _fail(str(exc))
+
+    if dry_run:
+        cells = campaign.cells()
+        console.print(
+            f"[bold]{len(cells)} cells[/bold] = {len(spec.points)} points "
+            f"x {len(spec.arms)} arms x {spec.repeats} repeats @ "
+            f"{spec.nodes}n")
+        try:
+            plan = campaign.build_plan()
+            console.print(f"build: {len(plan.targets)} targets in "
+                          f"{campaign.build_dir}")
+            if plan.missing:
+                console.print(
+                    f"[red]missing targets:[/red] {', '.join(plan.missing)}")
+        except Exception as exc:
+            console.print(f"[yellow]build check:[/yellow] {exc}")
+        table = Table(title="Submission order (first block)", expand=False)
+        for column in ("#", "point", "arm", "args"):
+            table.add_column(column)
+        block = len(spec.arms) * len(spec.points)
+        for i, cell in enumerate(cells[:block], 1):
+            table.add_row(str(i), cell.app.name, cell.entry.key,
+                          " ".join(cell.args))
+        console.print(table)
+        return
+
+    if detach:
+        _detach(sys.argv)
+        return
+
+    result = campaign.run(
+        on_line=lambda line: console.print(line, highlight=False,
+                                           markup=False),
+        resume=bool(resume), retry_failed=retry_failed)
+    console.print(result["summary"])
+    console.print(f"\nrun directory: {result['run_dir']}")
+
+
+@app.command("e2efig")
+def e2efig_cmd(
+    out: Path | None = typer.Option(None, help="output directory"),
+) -> None:
+    """Render the fixed-work e2e master table (CSV + pgfplots .dat + PNG)."""
+    from artsrun import sweepfig
+    from artsrun.paths import logs_root
+
+    root = logs_root()
+    written = sweepfig.e2e_master(root, out or (root / "e2e-master"))
+    for w in written:
+        typer.echo(str(w))
+
+
+@app.command("sweepfig")
+def sweepfig_cmd(
+    run: str = typer.Argument(None, help="run id (default: latest sweep)"),
+    out: Path = typer.Option(None, "--out", help="output directory "
+                             "(default: <run>/figures)"),
+) -> None:
+    """Digest a sweep run into sweep.csv and the figure panels."""
+    from artsrun import sweepfig
+
+    root = logs_root()
+    if run:
+        run_dir = root / run
+    else:
+        cands = sorted(p for p in root.glob("*")
+                       if (p / "sweep.json").is_file())
+        if not cands:
+            _fail(f"no sweep runs under {root}")
+        run_dir = cands[-1]
+    if not (run_dir / "sweep.json").is_file():
+        _fail(f"{run_dir} is not a sweep run (no sweep.json)")
+    written = sweepfig.digest(run_dir, out_dir=out)
+    for p in written:
+        console.print(f"wrote {p}")
+
+
+@app.command("atlas")
+def atlas_cmd(
+    runs: str = typer.Argument(..., help="comma-separated sweep run ids"),
+    out: Path = typer.Option(None, "--out", help="output dir "
+                             "(default: logs/exp/atlas)"),
+) -> None:
+    """Combine several sweep runs into the regime atlas figure."""
+    from artsrun import sweepfig
+
+    root = logs_root()
+    dirs = []
+    for rid in _split(runs):
+        rd = root / rid
+        if not (rd / "sweep.json").is_file():
+            _fail(f"{rd} is not a sweep run")
+        dirs.append(rd)
+    written = sweepfig.atlas(dirs, out or (root / "atlas"))
+    written += sweepfig.atlas_regions(dirs, out or (root / "atlas"))
+    written += sweepfig.atlas_index(dirs, out or (root / "atlas"))
+    written += sweepfig.ladder(dirs, out or (root / "atlas"))
+    written += sweepfig.scaling_fig(dirs, out or (root / "atlas"))
+    written += sweepfig.tail_ladder(dirs, out or (root / "atlas"))
+    for p in written:
+        console.print(f"wrote {p}")
+
+
+@app.command("sweeps")
+def sweeps_list() -> None:
+    """Saved sweep specs."""
+    names = store.list_sweeps()
+    if not names:
+        from artsrun.paths import sweeps_dir
+
+        console.print(f"[dim]no sweeps in {sweeps_dir()}[/dim]")
+        return
+    for n in names:
+        try:
+            s = store.load_sweep(n)
+            console.print(f"{n:20s} {s.app:10s} {len(s.points):3d} points x "
+                          f"{len(s.arms)} arms @ {s.nodes}n x{s.repeats}")
+        except Exception as exc:
+            console.print(f"{n:20s} [red]invalid[/red]: {exc}")
 
 
 @app.command("watch")

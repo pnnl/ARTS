@@ -31,9 +31,13 @@ def facts_markdown(entry: AppEntry) -> str:
     if entry.ocrvx_skip:
         lines.append("- **ocr-vx**: skipped — uses extensions it lacks")
     lines += ["", "_No structural document for this entry._"]
-    if entry.kind is Kind.MICROBENCH:
-        lines[-1] = ("_No structural document: a microbenchmark exercises one "
-                     "runtime mechanism; the mechanism is the story._")
+    if entry.kind is Kind.TOY:
+        lines[-1] = ("_No structural document: a toy exercises one runtime "
+                     "mechanism; the mechanism is the story._")
+    elif entry.kind is Kind.MICROBENCH:
+        lines[-1] = ("_No structural document: a microbenchmark is a "
+                     "characterization probe; its knobs and output line are "
+                     "the story._")
     return "\n".join(lines)
 
 

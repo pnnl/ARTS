@@ -217,12 +217,12 @@ hinted, e2e seconds.  The energy pin held in every cell:
 
 | arm | 1n | 2n | 4n | 8n |
 |---|---|---|---|---|
-| val_wb | 11.5 | 192.0 | 298.9 | 377.0 |
-| val_wb_comb | 11.5 | 139.2 | 191.7 | 250.3 |
+| val_wb_nocomb | 11.5 | 192.0 | 298.9 | 377.0 |
+| val_wb | 11.5 | 139.2 | 191.7 | 250.3 |
 | inv_wb | 11.9 | 150.2 | 222.1 | 267.2 |
 | excl_retain | 13.2 | 150.3 | 235.0 | 312.2 |
 
-base val_wb: 11.7 / 263.8 / >=590 (censored) / >=590 (censored) — the hint
+base val_wb_nocomb: 11.7 / 263.8 / >=590 (censored) / >=590 (censored) — the hint
 layer is worth 1.37x at 2n and >=2x at 4-8n.  Every arm anti-scales
 monotonically: the per-step wall is the wiring plane (the arm-invariant DAG
 re-wiring census established on the sibling cell-grain port), with VAL's

@@ -25,7 +25,7 @@ apps:
     binary: basicIO
     class: task
     provenance: 'OCR file-input fixture'
-    kind: microbench
+    kind: toy
     marker: 'BASICIO_CHK'
     scalar_re: 'BASICIO_CHK\s+(\d+)'
     scalar_kind: int
@@ -39,7 +39,7 @@ apps:
     binary: cache_offset
     class: task
     provenance: 'OCR datablock cache-offset probe'
-    kind: microbench
+    kind: toy
     marker: 'CACHE_OFFSET_CHK'
     scalar_re: 'CACHE_OFFSET_CHK\s+(\d+)'
     scalar_kind: int
@@ -103,7 +103,8 @@ apps:
     # runs faster and is not used: it would give 1.16x the workers instead of
     # 4x, and narrowing the width for a timing gain is what the rule forbids.
     #
-    # Anchor across the three families: 145.5 s / 89 GB (val_wb_comb),
+    # Anchor across the three families: 145.5 s / 89 GB (val_wb — measured on
+    # the combining build, pre-promotion name val_wb_comb),
     # 159.7 s / 83 GB (inv_wb), 151.8 s / 85 GB (excl_retain).  The tightest
     # decides, so the window figure is inv_wb's 160 s.  Memory does
     # not bound this row -- eight nodes hold 45 GB EACH, less than one node
@@ -200,7 +201,7 @@ apps:
     binary: curvefit
     class: task
     provenance: 'OCR adaptive piecewise-linear fit demo (reports no result)'
-    kind: microbench
+    kind: toy
     marker: 'SUCCESS'
     scalar_kind: bool
     args: ['48', '0.01', '0.5', '1000000']
@@ -210,7 +211,7 @@ apps:
     binary: dbcreate_matrix
     class: task
     provenance: 'Datablock-creation probe written for this driver'
-    kind: microbench
+    kind: toy
     marker: 'CELLS_OK='
     scalar_re: 'CELLS_OK=(\d+)/12'
     scalar_kind: int
@@ -221,7 +222,7 @@ apps:
     binary: dbctrl
     class: task
     provenance: 'OCR datablock lifecycle kernel'
-    kind: microbench
+    kind: toy
     marker: 'Total time'
     scalar_kind: bool
     args: ['6', '6', '1024']
@@ -327,7 +328,7 @@ apps:
     binary: globalsum_cgNoShim
     class: task
     provenance: 'OCR global-sum implementation, CG driver without shim'
-    kind: microbench
+    kind: toy
     marker: 'CG0 T\d+\s+0 value'
     scalar_re: 'CG0 T100\s+0 value\s+([0-9.]+)'
     tolerance: 1e-05
@@ -340,7 +341,7 @@ apps:
     binary: globalsum_cgShim
     class: task
     provenance: 'OCR global-sum implementation, CG driver with shim'
-    kind: microbench
+    kind: toy
     marker: 'CG0 T\d+\s+0 value'
     scalar_re: 'CG0 T\d+\s+0 value\s+([0-9.]+)'
     tolerance: 1e-05
@@ -353,7 +354,7 @@ apps:
     binary: globalsum_pcg
     class: task
     provenance: 'OCR global-sum implementation, preconditioned CG driver'
-    kind: microbench
+    kind: toy
     marker: 'CG0 T\d+\s+0 value'
     scalar_re: 'CG0 T\d+\s+0 value\s+([0-9.]+)'
     tolerance: 1e-05
@@ -396,7 +397,7 @@ apps:
     binary: highbw
     class: mw
     provenance: 'OCR high-bandwidth example'
-    kind: microbench
+    kind: toy
     marker: 'HIGHBW_WORK_SUM'
     scalar_re: 'HIGHBW_WORK_SUM\s*=\s*(\d+)'
     scalar_kind: int
@@ -548,7 +549,7 @@ apps:
   # result at all -- what it exercises is the refinement spawn storm.
   miniAMR_forkbomb:
     binary: miniAMR_forkbomb
-    kind: microbench
+    kind: toy
     class: task
     provenance: 'miniAMR (Mantevo); spawn-storm variant'
     marker: 'BLOCK 0 finished'
@@ -575,7 +576,7 @@ apps:
   # grand total to pin.  Kept as a microbench of the caller-pinned shape.
   miniAMR_intel_bryan:
     binary: miniAMR_intel_bryan
-    kind: microbench
+    kind: toy
     # Reclassified from application: the same physics as miniAMR_intel and
     # dominated by it, with every EDT pinned to the rank that created it, so
     # nothing distributes.  A microbenchmark is not campaign material.
@@ -621,7 +622,7 @@ apps:
     binary: multigen
     class: task
     provenance: 'OCR multi-generation EDT example'
-    kind: microbench
+    kind: toy
     marker: 'End leaf1, result'
     scalar_re: 'End leaf1, result\s*=\s*(-?\d+)'
     scalar_kind: int
@@ -634,7 +635,7 @@ apps:
     binary: multigen_2
     class: task
     provenance: 'OCR multi-generation EDT example, second form'
-    kind: microbench
+    kind: toy
     marker: 'End leaf1, result'
     scalar_re: 'End leaf1, result\s*=\s*(-?\d+)'
     scalar_kind: int
@@ -823,7 +824,7 @@ apps:
     binary: printf
     class: task
     provenance: 'OCR output fixture'
-    kind: microbench
+    kind: toy
     marker: 'Hello from mainEdt'
     scalar_kind: bool
     args: []
@@ -833,7 +834,7 @@ apps:
     binary: prodcon
     class: spmd
     provenance: 'OCR tagged-scheduler producer/consumer kernel'
-    kind: microbench
+    kind: toy
     marker: 'MB/s'
     scalar_kind: bool
     args: ['48', '8000000', '6000']
@@ -916,7 +917,7 @@ apps:
     binary: reduction_intel
     class: task
     provenance: 'Test driver for the OCR reduction library'
-    kind: microbench
+    kind: toy
     marker: 'T\d+ i1'
     scalar_re: 'T30 i1\s+([0-9.]+)'
     expect: '1025'
@@ -928,7 +929,7 @@ apps:
     binary: reduction_intel_chandra
     class: task
     provenance: 'Scalar-reduction example for the OCR reduction library'
-    kind: microbench
+    kind: toy
     marker: 'RESULT = '
     scalar_re: 'RESULT = ([0-9.]+)'
     tolerance: 1e-06
@@ -991,6 +992,170 @@ apps:
     # the run has.
     args: ['-s', 'large', '-l', '1000000', '-t', '108', '-p', '32']
 
+  rwmix:
+    binary: rwmix
+    class: mw
+    kind: microbench
+    provenance: 'racy single-datablock reader/writer saturation probe, written for this repo'
+    # One flat fan-out: N tasks (W of them RW) become ready at once against
+    # one shared DB and the makespan is the measurement.  No result value to
+    # vote — the output line doubles as the completion marker.
+    marker: 'RWMIX PDS=\d+ .*ELAPSED_US=\d+'
+    scalar_kind: bool
+    extra_scalars:
+      elapsed_us: 'ELAPSED_US=(\d+)'
+    args: ['2048', '256', '50', '65536']
+    default_enabled: false
+    timeout: 120
+    multinode_timeout: 180
+  rwrounds:
+    binary: rwrounds
+    class: spmd
+    kind: microbench
+    provenance: 'round-structured reader/writer superadditivity probe, written for this repo'
+    # Forced [1 writer -> (n-1) readers] rounds; modes 0/1/2 keep spin totals
+    # equal so T(mix) - [T(ro)+T(wo)] isolates the read/write interaction.
+    marker: 'RWROUNDS PDS=\d+ .*ELAPSED_US=\d+'
+    scalar_kind: bool
+    extra_scalars:
+      elapsed_us: 'ELAPSED_US=(\d+)'
+    args: ['2', '4', '50', '65536']
+    default_enabled: false
+    timeout: 120
+    multinode_timeout: 180
+  rwsteady:
+    binary: rwsteady
+    class: mw
+    kind: microbench
+    provenance: 'closed-loop steady-state reader/writer coherence probe, written for this repo'
+    # Reader/writer EDT chains free-run against shared datablocks for a fixed
+    # window with explicit per-op release; the completion marker is printed
+    # only when the exact-count and monotone-read oracles both pass, so the
+    # votable scalar is the verdict itself and the numbers ride as extras.
+    # args: R W E_HOLD_R E_HOLD_W E_THINK BYTES D T_MS WARM_MS RSPREAD
+    #       WSPREAD HSPREAD SEED CENSUS JITTER_PCT PIPE OPS_R OPS_W ETH_W
+    marker: 'RWSTEADY OK '
+    scalar_kind: bool
+    extra_scalars:
+      RHO: 'RHO=([-0-9.]+)'
+      ROPS: 'ROPS=([0-9]+)'
+      WOPS: 'WOPS=([0-9]+)'
+      RXPUT: 'RXPUT=([-0-9.]+)'
+      WXPUT: 'WXPUT=([-0-9.]+)'
+      RTOT_P50: 'RTOT_P50=([-0-9.]+)'
+      RTOT_P90: 'RTOT_P90=([-0-9.]+)'
+      RTOT_P99: 'RTOT_P99=([-0-9.]+)'
+      WTOT_P50: 'WTOT_P50=([-0-9.]+)'
+      WTOT_P90: 'WTOT_P90=([-0-9.]+)'
+      WTOT_P99: 'WTOT_P99=([-0-9.]+)'
+      RACQ_P99: 'RACQ_P99=([-0-9.]+)'
+      RREL_P99: 'RREL_P99=([-0-9.]+)'
+      WACQ_P99: 'WACQ_P99=([-0-9.]+)'
+      WREL_P99: 'WREL_P99=([-0-9.]+)'
+      RACQ_MEAN: 'RACQ_MEAN=([-0-9.]+)'
+      RREL_MEAN: 'RREL_MEAN=([-0-9.]+)'
+      RTOT_MEAN: 'RTOT_MEAN=([-0-9.]+)'
+      WACQ_MEAN: 'WACQ_MEAN=([-0-9.]+)'
+      WREL_MEAN: 'WREL_MEAN=([-0-9.]+)'
+      WTOT_MEAN: 'WTOT_MEAN=([-0-9.]+)'
+      RCV: 'RCV=([-0-9.]+)'
+      WCV: 'WCV=([-0-9.]+)'
+      RUSE: 'RUSE=([-0-9.]+)'
+      FINAL: 'FINAL=([0-9]+)'
+    args: ['54', '9', '1', '1', '20', '65536', '1', '8000', '2000', '0', '0', '1', '1', '0', '0', '0']
+    default_enabled: false
+    timeout: 120
+    multinode_timeout: 120
+  wordcount:
+    binary: wordcount
+    class: task
+    kind: app
+    provenance: 'canonical MapReduce word count (Dean & Ghemawat, OSDI 2004), native OCR implementation written for this repo'
+    # Weak-scaling map+reduce: each map tile synthesizes its text from its
+    # GLOBAL tile id (closed V-word vocabulary, Hadoop RandomTextWriter
+    # style), so there is no ingest I/O at any node count and the corpus
+    # for a given (nodes, seed) is identical across configurations.  A
+    # K-ary spawner-built reduction tree keeps its lower levels node-local
+    # (the map-side combiner); the verifier requires the total token count
+    # EXACTLY and prints the histogram checksum the consensus votes on.
+    # args: V WORDS TPN K ZIPF GRAIN ITER SEED
+    marker: 'WORDCOUNT OK '
+    scalar_re: 'CHECKSUM=([0-9]+)'
+    scalar_kind: int
+    extra_scalars:
+      TOKENS: 'TOKENS=([0-9]+)'
+    args: ['16384', '1000000', '128', '8', '100', '0', '4', '1']
+    default_enabled: false
+    timeout: 300
+    multinode_timeout: 600
+  rwpriv:
+    binary: rwpriv
+    class: mw
+    kind: microbench
+    provenance: 'private-working-set release-axis probe, written for this repo'
+    # Every chain re-touches its OWN block homed one PD away: required
+    # steady-state communication is zero, so per-op wire cost is purely the
+    # configuration's cost of forgetting or remembering local state across
+    # a release edge.  Writer blocks must advance by exactly 1 per op and
+    # reader blocks must stay 0; the marker prints only when both hold.
+    # args: R W E_HOLD_R E_HOLD_W E_THINK BYTES T_MS WARM_MS SEED CENSUS
+    #       JITTER_PCT WARMRW OPS_R OPS_W
+    marker: 'RWPRIV OK '
+    scalar_kind: bool
+    extra_scalars:
+      RHO: 'RHO=([-0-9.]+)'
+      ROPS: 'ROPS=([0-9]+)'
+      WOPS: 'WOPS=([0-9]+)'
+      RXPUT: 'RXPUT=([-0-9.]+)'
+      WXPUT: 'WXPUT=([-0-9.]+)'
+      RTOT_P50: 'RTOT_P50=([-0-9.]+)'
+      RTOT_P90: 'RTOT_P90=([-0-9.]+)'
+      RTOT_P99: 'RTOT_P99=([-0-9.]+)'
+      WTOT_P50: 'WTOT_P50=([-0-9.]+)'
+      WTOT_P90: 'WTOT_P90=([-0-9.]+)'
+      WTOT_P99: 'WTOT_P99=([-0-9.]+)'
+      RACQ_P99: 'RACQ_P99=([-0-9.]+)'
+      RREL_P99: 'RREL_P99=([-0-9.]+)'
+      WACQ_P99: 'WACQ_P99=([-0-9.]+)'
+      WREL_P99: 'WREL_P99=([-0-9.]+)'
+      RACQ_MEAN: 'RACQ_MEAN=([-0-9.]+)'
+      RREL_MEAN: 'RREL_MEAN=([-0-9.]+)'
+      RTOT_MEAN: 'RTOT_MEAN=([-0-9.]+)'
+      WACQ_MEAN: 'WACQ_MEAN=([-0-9.]+)'
+      WREL_MEAN: 'WREL_MEAN=([-0-9.]+)'
+      WTOT_MEAN: 'WTOT_MEAN=([-0-9.]+)'
+      RCV: 'RCV=([-0-9.]+)'
+      WCV: 'WCV=([-0-9.]+)'
+    args: ['24', '24', '1', '1', '20', '65536', '4000', '1500', '1', '0', '0', '0', '0', '0']
+    default_enabled: false
+    timeout: 120
+    multinode_timeout: 120
+  rwhandoff:
+    binary: rwhandoff
+    class: mw
+    kind: microbench
+    provenance: 'phase-alternating producer/consumer handoff probe, written for this repo'
+    # Each generation's release wakes one consumer and one next producer on
+    # rotating ranks touching byte-disjoint regions: race-free by event
+    # order, zero batching fodder for a block-granular protocol.  A failed
+    # consumer withholds its latch decrement, so the marker never prints.
+    # args: L NREG BYTES E_HOLD_W E_HOLD_R E_THINK T_MS WARM_MS CENSUS
+    #       CROSSCLOCK
+    marker: 'RWHANDOFF OK '
+    scalar_kind: bool
+    extra_scalars:
+      GENS: 'GENS=([0-9]+)'
+      GXPUT: 'GXPUT=([-0-9.]+)'
+      WREL_P50: 'WREL_P50=([-0-9.]+)'
+      WREL_P99: 'WREL_P99=([-0-9.]+)'
+      WREL_MEAN: 'WREL_MEAN=([-0-9.]+)'
+      GTOT_P50: 'GTOT_P50=([-0-9.]+)'
+      GTOT_P99: 'GTOT_P99=([-0-9.]+)'
+      GTOT_MEAN: 'GTOT_MEAN=([-0-9.]+)'
+    args: ['16', '8', '65536', '1', '1', '20', '4000', '1500', '0', '1']
+    default_enabled: false
+    timeout: 120
+    multinode_timeout: 120
   sar_pss:
     binary: sar_problem_size_scaling
     class: task
@@ -1146,7 +1311,7 @@ apps:
     binary: stencil1D_channel
     class: spmd
     provenance: '1-D stencil, channel-event idiom (Intel OCR app)'
-    kind: microbench
+    kind: toy
     marker: 'S3 i9 valu'
     scalar_re: 'S3 i9 valu\s+([0-9.]+)'
     args: ['48', '50', '340000']
@@ -1156,7 +1321,7 @@ apps:
     binary: stencil1D_guid
     class: spmd
     provenance: '1-D stencil, labeled-GUID idiom (Intel OCR app)'
-    kind: microbench
+    kind: toy
     marker: 'S3 i9 valu'
     scalar_re: 'S3 i9 valu\s+([0-9.]+)'
     args: ['48', '50', '340000']
@@ -1166,7 +1331,7 @@ apps:
     binary: stencil1D_guidPI
     class: spmd
     provenance: '1-D stencil, labeled-GUID idiom, parallel init (Intel OCR app)'
-    kind: microbench
+    kind: toy
     marker: '9 49\s'
     scalar_re: '9 49\s+([0-9.]+)'
     args: ['48', '50', '340000']
@@ -1185,7 +1350,7 @@ apps:
     binary: stencil1D_once
     class: spmd
     provenance: '1-D stencil, once-event idiom (Intel OCR app)'
-    kind: microbench
+    kind: toy
     marker: 'S3 i9 valu'
     scalar_re: 'S3 i9 valu\s+([0-9.]+)'
     args: ['48', '50', '340000']
@@ -1195,7 +1360,7 @@ apps:
     binary: stencil1D_oncePI
     class: spmd
     provenance: '1-D stencil, once-event idiom, parallel init (Intel OCR app)'
-    kind: microbench
+    kind: toy
     marker: '9 49\s'
     scalar_re: '9 49\s+([0-9.]+)'
     args: ['48', '50', '340000']
@@ -1205,7 +1370,7 @@ apps:
     binary: stencil1D_sticky
     class: spmd
     provenance: '1-D stencil, sticky-event idiom (Intel OCR app)'
-    kind: microbench
+    kind: toy
     marker: 'S3 i9 valu'
     scalar_re: 'S3 i9 valu\s+([0-9.]+)'
     expect: '1'
@@ -1217,7 +1382,7 @@ apps:
     binary: stencil1D_stickyLG
     class: spmd
     provenance: '1-D stencil, sticky labeled-GUID idiom (Intel OCR app)'
-    kind: microbench
+    kind: toy
     marker: '9 49\s'
     scalar_re: '9 49\s+([0-9.]+)'
     args: ['48', '50', '340000']
@@ -1314,7 +1479,7 @@ apps:
     binary: task_priorities
     class: task
     provenance: 'OCR priority-scheduler test program'
-    kind: microbench
+    kind: toy
     marker: 'Hello from 9'
     scalar_kind: bool
     args: []
@@ -1393,7 +1558,7 @@ apps:
     binary: testlibs
     class: task
     provenance: 'OCR C-library fixture'
-    kind: microbench
+    kind: toy
     marker: 'Testing strlen'
     scalar_re: 'Testing strlen of \w+ is (\d+)'
     scalar_kind: int
@@ -1422,7 +1587,7 @@ apps:
     binary: xeonNumaSize
     class: task
     provenance: 'OCR allocation-size test program'
-    kind: microbench
+    kind: toy
     marker: 'DONE!'
     scalar_kind: bool
     args: ['-dcpu']

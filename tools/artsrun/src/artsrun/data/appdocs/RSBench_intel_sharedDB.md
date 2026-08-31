@@ -219,14 +219,14 @@ the pin is the workload echo:
 
 | arm | 1n | 2n | 4n | 8n |
 |---|---|---|---|---|
-| val_wb | 121.6 | 76.1 | 46.2 | 22.2 |
-| val_wb_comb | 124.8 | 62.7 | 34.2 | 16.9 |
+| val_wb_nocomb | 121.6 | 76.1 | 46.2 | 22.2 |
+| val_wb | 124.8 | 62.7 | 34.2 | 16.9 |
 | inv_wb | 116.4 | 63.0 | 33.6 | 17.1 |
 | excl_retain | 116.2 | 65.8 | 33.5 | 16.3 |
 
 A Dane-geometry single node (108w+4p) runs it in 74.6 s. Unlike its
 `XSBench_intel_sharedDB` sibling (arm-indifferent to <1%), the arms separate
-mildly here at 2–4n (val_wb trails the pack by up to ~1.2×): the
+mildly here at 2–4n (val_wb_nocomb trails the pack by up to ~1.2×): the
 `SINGLE_RUN_ACROSS_PD` lane spread makes every instance's lanes
 remote-acquire its arrays machine-wide, so the read path is exercised
 cross-node even though the datasets are block-homed. All four arms scale

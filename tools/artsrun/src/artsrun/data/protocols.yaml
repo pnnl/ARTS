@@ -10,7 +10,10 @@
 # a second entry, which is what makes a configuration comparable across
 # engines at a fixed design point.
 
-families: [EXCL, INV, VAL, VAL_COMB]
+# Read combining is part of the VAL family's definition (every message class
+# suppresses duplicate concurrent requests; the *_nocomb build variants are the
+# off-plane ablation twins), so it is not a family here.
+families: [EXCL, INV, VAL]
 releases: [PURGE, RETAIN]
 writes: [WT, WB]
 
@@ -18,7 +21,6 @@ family_labels:
   EXCL: EXCL
   INV: INV
   VAL: VAL
-  VAL_COMB: VAL+comb
 
 # Spelled out: the abbreviations are easy to swap for each other at a glance.
 write_labels:
@@ -66,18 +68,6 @@ cells:
     release: PURGE
     write: WT
     variant: ocr_val_wt_purge
-  - family: VAL_COMB
-    release: RETAIN
-    write: WT
-    variant: ocr_val_wt_comb
-  - family: VAL_COMB
-    release: RETAIN
-    write: WB
-    variant: ocr_val_wb_comb
-  - family: VAL_COMB
-    release: PURGE
-    write: WT
-    variant: ocr_val_wt_purge_comb
 
 # Why a grid position carries no configuration.  Keyed by the rule that
 # excludes it; the model picks the rule that applies.

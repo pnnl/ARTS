@@ -20,10 +20,10 @@ from artsrun.model import (
 
 
 # --- plane ----------------------------------------------------------------
-def test_plane_has_sixteen_positions_and_eleven_configurations():
+def test_plane_has_twelve_positions_and_eight_configurations():
     plane = load_plane()
-    assert len(plane.cells) == 16
-    assert sum(c.buildable for c in plane.cells) == 11
+    assert len(plane.cells) == 12
+    assert sum(c.buildable for c in plane.cells) == 8
 
 
 def test_every_unbuildable_position_states_a_reason():
@@ -39,7 +39,7 @@ def test_every_unbuildable_position_states_a_reason():
 
 def test_two_configurations_offer_a_reference_and_the_rest_do_not():
     plane = load_plane()
-    assert len(plane.entries) == 13
+    assert len(plane.entries) == 10
     refs = [e for e in plane.entries if e.is_reference]
     assert {e.key for e in refs} == {"xsocr", "ocrvx"}
     assert plane.entry("xsocr").cell == "EXCL/PURGE/WB"
@@ -371,36 +371,44 @@ def test_the_policies_read_as_words_and_the_families_as_acronyms():
     assert plane.family_labels[Family.EXCL] == "EXCL"
 
 
-# --- application vs microbenchmark ---------------------------------------
-def test_the_catalog_separates_applications_from_microbenchmarks():
+# --- application vs microbenchmark vs toy ---------------------------------
+def test_the_catalog_separates_apps_probes_and_toys():
     catalog = load_catalog()
-    apps = catalog.rows_of(Kind.APPLICATION)
+    apps = catalog.rows_of(Kind.APP)
     micro = catalog.rows_of(Kind.MICROBENCH)
-    assert apps and micro
-    assert len(apps) + len(micro) == len(catalog.rows)
+    toys = catalog.rows_of(Kind.TOY)
+    assert apps and micro and toys
+    assert len(apps) + len(micro) + len(toys) == len(catalog.rows)
 
 
-def test_no_microbenchmark_is_enabled_by_default():
-    # A microbenchmark is a regression check, not something a comparison is
-    # claimed over, so a fresh campaign does not pick one up.
+def test_no_probe_or_toy_is_enabled_by_default():
+    # A toy is a regression check and a microbenchmark is sweep material;
+    # neither belongs in a fresh comparison campaign.
     catalog = load_catalog()
+    assert not [a for a in catalog.rows_of(Kind.TOY) if a.default_enabled]
     assert not [a for a in catalog.rows_of(Kind.MICROBENCH) if a.default_enabled]
+
+
+def test_characterization_probes_are_microbenchmarks():
+    catalog = load_catalog()
+    for name in ("rwmix", "rwrounds"):
+        assert catalog.apps[name].kind is Kind.MICROBENCH, name
 
 
 def test_the_suite_core_is_made_of_applications():
     catalog = load_catalog()
     for name in ("graph500", "hpcg_intel", "CoMD_sdsc2", "quicksort",
                  "nekbone", "hpgmg", "npb_cg", "cholesky_blas"):
-        assert catalog.apps[name].kind is Kind.APPLICATION, name
+        assert catalog.apps[name].kind is Kind.APP, name
 
 
-def test_fixtures_and_library_drivers_are_microbenchmarks():
+def test_fixtures_and_library_drivers_are_toys():
     # Upstream files these under kernels/ or examples/, or their own README
     # calls them a driver for one library.
     catalog = load_catalog()
     for name in ("printf", "testlibs", "basicIO", "highbw", "prodcon",
                  "dbctrl", "reduction_intel", "xeonNumaSize"):
-        assert catalog.apps[name].kind is Kind.MICROBENCH, name
+        assert catalog.apps[name].kind is Kind.TOY, name
 
 
 def test_an_idiom_study_series_is_a_mechanism_probe():
@@ -415,23 +423,23 @@ def test_an_idiom_study_series_is_a_mechanism_probe():
                  "stencil1D_stickyLG", "stencil1D_guid", "stencil1D_guidPI",
                  "stencil1D_channel"):
         entry = catalog.apps[name]
-        assert entry.kind is Kind.MICROBENCH, name
+        assert entry.kind is Kind.TOY, name
         assert not entry.default_enabled, name
 
 
-def test_operations_named_after_themselves_are_microbenchmarks():
+def test_operations_named_after_themselves_are_toys():
     # "globalsum" is the name of a sum, not of a benchmark anyone cites.
     catalog = load_catalog()
     for name in ("globalsum_cgShim", "globalsum_cgNoShim", "globalsum_pcg",
                  "curvefit", "dbcreate_matrix"):
-        assert catalog.apps[name].kind is Kind.MICROBENCH, name
+        assert catalog.apps[name].kind is Kind.TOY, name
 
 
 def test_cited_benchmarks_are_applications():
     catalog = load_catalog()
     for name in ("graph500", "hpcg_intel", "CoMD_sdsc2", "XSBench_intel",
                  "stream", "nekbone", "smithwaterman", "npb_cg"):
-        assert catalog.apps[name].kind is Kind.APPLICATION, name
+        assert catalog.apps[name].kind is Kind.APP, name
 
 
 def test_every_catalog_entry_states_where_it_came_from():

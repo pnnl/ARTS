@@ -206,7 +206,7 @@ Rejected while designing the layer: sending `macroxs` to its gridpoint DB's
 home (a remote EDT creation plus six remote dependence registrations costs
 more than the one 1.4 KB remote fetch it saves), and pinning the spawner
 chain (three acquires per batch — negligible).  Measured effect at 2 nodes
-(`-s large -g 192 -l 65536`): inv_wb compute 28.4→4.66 s (6.1×), val_wb
+(`-s large -g 192 -l 65536`): inv_wb compute 28.4→4.66 s (6.1×), val_wb_nocomb
 50.0→37.6 s (1.33×) — under VAL the spread homes still charge a
 re-validation round trip per acquire, which is the arm's structural cost,
 not the placement's.
@@ -247,12 +247,12 @@ every cell:
 
 | arm | 1n | 2n | 4n | 8n |
 |---|---|---|---|---|
-| val_wb | 3.0 (1.1) | 349.7 (186.0) | 360.2 (199.1) | 398.7 (238.4) |
-| val_wb_comb | 3.0 (1.1) | 172.6 (26.7) | 176.8 (33.1) | 205.5 (45.0) |
+| val_wb_nocomb | 3.0 (1.1) | 349.7 (186.0) | 360.2 (199.1) | 398.7 (238.4) |
+| val_wb | 3.0 (1.1) | 172.6 (26.7) | 176.8 (33.1) | 205.5 (45.0) |
 | inv_wb | 4.0 (1.3) | 87.2 (18.8) | 132.5 (26.0) | 169.3 (32.9) |
 | excl_retain | 5.8 (1.8) | 103.4 (26.9) | 136.8 (31.6) | 171.5 (39.0) |
 
-base val_wb: 376.7 (229.7) / 390.0 (241.4) / 420.7 (274.6) at 2/4/8n —
+base val_wb_nocomb: 376.7 (229.7) / 390.0 (241.4) / 420.7 (274.6) at 2/4/8n —
 the hinted layer wins 1.15-1.24× on val here (and 6.1× on inv, probed).
 A Dane-geometry single node (108w+4p) runs the instance in 3.9 s (compute
 1.9 s). The arm separations are the row's point: on write-once data at 8

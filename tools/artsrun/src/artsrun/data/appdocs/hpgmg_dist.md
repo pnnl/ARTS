@@ -145,17 +145,17 @@ Trend sweep (ferrari, 15w+1p, at the trend size `['5','4096']`, E2E / solve):
 
 | arm | 1 n | 2 n | 4 n | 8 n |
 |-----|-----|-----|-----|-----|
-| val_wb | 22.3 / 6.1 | 21.3 / 12.1 | 17.3 / 11.7 | 17.5 / 13.8 |
-| val_wb_comb | 22.2 / 6.1 | 12.9 / 4.3 | 7.5 / 2.9 | **5.1 / 2.5** |
+| val_wb_nocomb | 22.3 / 6.1 | 21.3 / 12.1 | 17.3 / 11.7 | 17.5 / 13.8 |
+| val_wb | 22.2 / 6.1 | 12.9 / 4.3 | 7.5 / 2.9 | **5.1 / 2.5** |
 | inv_wb | 21.9 / 6.2 | 12.7 / 4.6 | 7.7 / 3.2 | **5.1 / 2.5** |
 | excl_retain | 22.4 / 6.3 | 12.5 / 4.6 | 7.7 / 3.2 | 5.3 / 2.8 |
 
 The application's first positive scaling: 4.3× from 1 n to 8 n on the
-comb/INV arms, against a hinted base that *degrades* 112 → 184 s over the
+VAL/INV arms, against a hinted base that *degrades* 112 → 184 s over the
 same geometries — a ~36× gap at 8 n.  The decomposition splits as:
 initialization 106 s serial → ~16 s at 1 n → ~2 s at 8 n (rank-parallel
 creation, zeroing and fill), and the 1 n solve, 6.1 s, matches the hinted
-base's — the slicing costs nothing single-node.  Bare val_wb is the
+base's — the slicing costs nothing single-node.  Bare val_wb_nocomb is the
 outlier (12.1 s solve at 2 n): without request combining the slice
 fan-outs' per-task RO acquires of the level datablock and slabs each pay
 a validation round, so combining is this decomposition's natural partner;

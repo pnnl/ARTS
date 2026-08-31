@@ -184,7 +184,7 @@ and narrowing the width for a timing gain is the one move the width rule
 forbids.  The experiment's subject is what the decomposition costs.
 
 **At the anchor** (one node, 108 workers + 4 progress, catalog arguments) the
-row runs 145.5 s / 89 GB under `val_wb_comb`, **159.7 s / 83 GB** under
+row runs 145.5 s / 89 GB under `val_wb`, **159.7 s / 83 GB** under
 `inv_wb` and 151.8 s / 85 GB under `excl_retain`.  The tightest family decides
 and that is `inv_wb` at 160 s, the window a strong scaler asks for; the largest
 residency any family holds is 89 GB, a third of what a node has.  The catalog

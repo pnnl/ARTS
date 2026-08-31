@@ -211,8 +211,8 @@ instances, so no coherence arm has anything to do):
 
 | arm | 1n | 2n | 4n | 8n |
 |---|---|---|---|---|
-| val_wb | 119.5 | 66.2 | 35.2 | 17.5 |
-| val_wb_comb | 119.7 | 66.5 | 35.2 | 17.5 |
+| val_wb_nocomb | 119.5 | 66.2 | 35.2 | 17.5 |
+| val_wb | 119.7 | 66.5 | 35.2 | 17.5 |
 | inv_wb | 119.9 | 66.2 | 35.4 | 17.6 |
 | excl_retain | 119.4 | 66.2* | 35.2 | 17.6 |
 

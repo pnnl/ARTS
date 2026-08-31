@@ -9,11 +9,11 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from artsrun.model.benchset import Benchset
 from artsrun.model.catalog import Catalog, Version
-from artsrun.model.plane import Plane
+from artsrun.model.plane import Plane, modern_entry_key
 from artsrun.model.profile import Launcher, Profile
 
 
@@ -49,6 +49,18 @@ class Selection(BaseModel):
     benchset: str
     entries: list[str] = Field(min_length=1)
     apps: dict[str, list[Version]] = Field(min_length=1)
+
+    @field_validator("entries")
+    @classmethod
+    def _modern_entries(cls, entries: list[str]) -> list[str]:
+        """Replayed selections may carry pre-promotion comb-suffixed keys;
+        map them to today's names.  Deduplicated in order, because an old
+        selection could name a val entry under both spellings."""
+        out: list[str] = []
+        for key in (modern_entry_key(k) for k in entries):
+            if key not in out:
+                out.append(key)
+        return out
     node_counts: list[int] = Field(min_length=1)
     repeats: int = 1
     build_dir: str | None = None

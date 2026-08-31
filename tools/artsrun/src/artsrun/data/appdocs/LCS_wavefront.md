@@ -78,8 +78,8 @@ tiled original was capped by wiring at every node count:
 
 | arm | 1n | 2n | 4n | 8n |
 |---|---|---|---|---|
-| val_wb | 3.24 | 2.31 | 1.51 | 1.11 |
-| val_wb_comb | 3.27 | 2.32 | 1.51 | 1.12 |
+| val_wb_nocomb | 3.24 | 2.31 | 1.51 | 1.11 |
+| val_wb | 3.27 | 2.32 | 1.51 | 1.12 |
 | inv_wb | 3.26 | 2.01 | 1.42 | 0.74 |
 | excl_retain | 3.24 | 1.92 | 1.36 | 1.10 |
 
@@ -94,7 +94,7 @@ the wiring, not the machine, was the original's limit.
 `N` sets total work (`N²` cells) and `base` dices it: `L = N/base` is the
 wavefront width, so `base` trades per-leaf grain against parallel width at
 fixed work.  Fixed-work granularity on the Dane-mirror geometry (1 node,
-108w+4p, Release, val_wb): `2097152/512` = 122.6 s vs `2097152/256` =
+108w+4p, Release, val_wb_nocomb): `2097152/512` = 122.6 s vs `2097152/256` =
 202.1 s — finer tiles cost runtime object churn, so pick the coarsest
 `base` whose `L` still spans the largest geometry.  Measured lattice:
 1048576/256 = 45.3 s, 1572864/256 = 104.6 s, 2097152/256 = 202.1 s,

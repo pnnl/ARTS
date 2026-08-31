@@ -433,12 +433,14 @@ class BenchsetPanel(VerticalScroll):
                 yield Label(column, classes="bench-col-head")
             yield Label("arguments", classes="bench-args-head")
 
-        # Two groups, applications first: a result is claimed about an
-        # application, while a microbenchmark exercises one mechanism and
-        # belongs in a regression suite rather than in a comparison.
+        # Three groups, applications first: a result is claimed about an
+        # application; a microbenchmark is a characterization probe that
+        # sweeps run; a toy exercises one mechanism and belongs in a
+        # regression suite rather than in any measurement.
         for kind, title in (
-            (Kind.APPLICATION, "Applications"),
-            (Kind.MICROBENCH, "Microbenchmarks and fixtures"),
+            (Kind.APP, "Applications"),
+            (Kind.MICROBENCH, "Microbenchmarks (characterization probes)"),
+            (Kind.TOY, "Toys and fixtures"),
         ):
             rows = self.catalog.rows_of(kind)
             if not rows:

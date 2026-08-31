@@ -18,6 +18,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# Figure generation (artsrun sweepfig); the runner itself never needs it, so
+# a scheduler-only host can skip the plotting stack.
+fig = ["matplotlib>=3.8"]
 
 [project.scripts]
 artsrun = "artsrun.cli:main"

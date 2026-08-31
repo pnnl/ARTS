@@ -33,20 +33,20 @@ def test_everything_is_selected_by_default():
         )
 
     entries, nodes, apps = drive(check)
-    assert len(entries) == 13
+    assert len(entries) == 10
     assert nodes == [1, 2, 4, 8]
     assert apps > 0
 
 
-def test_the_plane_draws_every_position_but_only_offers_eleven():
+def test_the_plane_draws_every_position_but_only_offers_eight():
     async def check(app, pilot):
         plane = app.query_one("#plane", PlanePanel)
         blanks = plane.query(".plane-cell.blank")
         return len(plane.toggles), len(blanks)
 
     toggles, blanks = drive(check)
-    assert toggles == 13
-    assert blanks == 5
+    assert toggles == 10
+    assert blanks == 4
 
 
 def test_one_control_clears_then_restores_the_whole_plane():
@@ -60,9 +60,9 @@ def test_one_control_clears_then_restores_the_whole_plane():
         return first, cleared, restored
 
     first, cleared, restored = drive(check)
-    assert first == 13
+    assert first == 10
     assert cleared == 0
-    assert restored == 13
+    assert restored == 10
 
 
 def test_the_control_acts_on_the_surface_that_is_showing():
@@ -79,7 +79,7 @@ def test_the_control_acts_on_the_surface_that_is_showing():
 
     apps, entries = drive(check)
     assert apps == 0        # the visible surface cleared
-    assert entries == 13    # the others did not
+    assert entries == 10    # the others did not
 
 
 def test_a_version_the_application_lacks_is_absent_not_unchecked():
@@ -108,7 +108,7 @@ def test_the_selection_becomes_a_campaign_of_the_expected_size():
 
     cells, entries, nodes = drive(check)
     assert cells == len(entries) * 4 * (cells // (len(entries) * 4))
-    assert len(entries) == 13
+    assert len(entries) == 10
     assert nodes == [1, 2, 4, 8]
 
 
@@ -807,11 +807,15 @@ def test_the_application_screen_groups_applications_before_microbenchmarks():
         from textual.widgets import Static
 
         bench = app.query_one("#bench", BenchsetPanel)
-        headings = [g for g in bench.query(".bench-group").results(Static)]
         # every row belongs to the group above it, so order is the claim
-        return len(headings)
+        return [str(g.render())
+                for g in bench.query(".bench-group").results(Static)]
 
-    assert drive(check) == 2
+    headings = drive(check)
+    assert len(headings) == 3
+    assert headings[0].startswith("Applications")
+    assert headings[1].startswith("Microbenchmarks")
+    assert headings[2].startswith("Toys")
 
 
 # --- counters -------------------------------------------------------------

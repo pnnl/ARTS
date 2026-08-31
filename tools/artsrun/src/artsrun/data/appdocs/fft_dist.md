@@ -118,7 +118,7 @@ transpose redistributes it rather than growing it. Live across the machine that
 is `N * 16` bytes of column-tile blocks -- 68.7 GB at the catalog's `power` 32 --
 and about twice that during a wave, while the column form the wave still holds
 and the row-major blocks it has emitted are both alive. Measured peak resident
-set at the anchor is 161 GB under `val_wb_comb`, 176 under `inv_wb` and 164
+set at the anchor is 161 GB under `val_wb`, 176 under `inv_wb` and 164
 under `excl_retain` -- a 1.09x spread, which is the resident set following the
 protocol only weakly because every transfer block has one writer and one
 reader. `power` 33 is excluded on memory alone.
@@ -139,7 +139,7 @@ measured on memory and on one node, and one node is exactly where its cost
 cannot appear: every block is local there, so only the allocation shows.
 
 At the anchor (one node, 108 workers + 4 progress) `power` 32 runs in 22.78 s
-holding 161 GB under `val_wb_comb`, 23.17 s and 176 GB under `inv_wb`, 22.89 s
+holding 161 GB under `val_wb`, 23.17 s and 176 GB under `inv_wb`, 22.89 s
 and 164 GB under `excl_retain`. The tightest family decides, and 176 GB is what
 the row is admissible at against a 256 GB node. The time is well inside the
 window a strong scaler asks for; **memory is what fixes the size here**, since a

@@ -25,21 +25,37 @@ class AppClass(StrEnum):
 class Kind(StrEnum):
     """What the program is, as opposed to whether a campaign runs it.
 
-    The test is whether the thing is cited by name: an application is one a
-    field refers to as such — graph500, HPCG, CoMD, XSBench, STREAM — so a
-    result about it means something to a reader who never saw this catalog.
-    A microbenchmark is named after the operation it performs (a global sum, a
-    reduction driver, a data-block create loop) or after nothing at all; it
-    exercises one runtime mechanism and belongs in a regression suite rather
-    than in a comparison.
-
-    A variant of a cited application stays an application even when it
-    duplicates a sibling — that is a reason to leave it off a campaign, which
+    APP: cited by name — graph500, HPCG, CoMD, XSBench, STREAM — so a result
+    about it means something to a reader who never saw this catalog.  A
+    variant of a cited application stays an app even when it duplicates a
+    sibling — that is a reason to leave it off a campaign, which
     `default_enabled` says, not a reason to reclassify it.
+
+    TOY: a fixture, library driver, or idiom study — named after the
+    operation it performs (a global sum, a reduction driver, a data-block
+    create loop) or after nothing at all; it exercises one runtime mechanism
+    and belongs in a regression suite rather than in any measurement.
+
+    MICROBENCH: a parameterized characterization probe, written FOR
+    measurement — its knobs move a controlled workload across the coherence
+    design space (read/write mix, sharers, sizes) and its output is the
+    figure axis itself.  Toys check that a mechanism works; microbenches
+    measure what a mechanism costs.
     """
 
-    APPLICATION = "application"
+    APP = "app"
+    TOY = "toy"
     MICROBENCH = "microbench"
+
+    @classmethod
+    def _missing_(cls, value):
+        # Pre-split spelling: "application" named today's APP.  The old
+        # "microbench" VALUE is deliberately NOT aliased to TOY — the name
+        # was reassigned to the probes, and the catalog rows were rewritten
+        # in the same change, so an unknown value should fail loudly.
+        if value == "application":
+            return cls.APP
+        return None
 
 
 class Version(StrEnum):
@@ -78,7 +94,7 @@ class AppEntry(BaseModel):
     name: str
     binary: str
     cls: AppClass = Field(alias="class")
-    kind: Kind = Kind.APPLICATION
+    kind: Kind = Kind.APP
     # Where the program came from, in one line: the suite that cites it,
     # or what it was written to exercise.
     provenance: str | None = None

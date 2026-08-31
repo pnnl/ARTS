@@ -216,12 +216,12 @@ The pole-checksum pin held in all 21 cells:
 
 | arm | 1n | 2n | 4n | 8n |
 |---|---|---|---|---|
-| val_wb | 1.6 | 218.8 | 247.7 | 318.7 |
-| val_wb_comb | 1.5 | 30.1 | 22.4 | 44.3 |
+| val_wb_nocomb | 1.6 | 218.8 | 247.7 | 318.7 |
+| val_wb | 1.5 | 30.1 | 22.4 | 44.3 |
 | inv_wb | 1.8 | 10.5 | 15.1 | 19.1 |
 | excl_retain | 1.8 | 17.6 | 19.6 | 36.4 |
 
-base val_wb: 234.3 / 302.6 / 342.2 at 2/4/8n — the hinted layer wins
+base val_wb_nocomb: 234.3 / 302.6 / 342.2 at 2/4/8n — the hinted layer wins
 1.07-1.22× on val. A Dane-geometry single node (108w+4p) runs it in 1.5 s.
 The arm separations dwarf the hint deltas: on this write-once,
 read-fine-grained dataset at 8 nodes, VAL's re-validate-per-acquire costs

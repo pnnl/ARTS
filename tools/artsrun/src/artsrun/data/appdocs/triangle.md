@@ -136,12 +136,12 @@ are structurally immune (covering read / retained copy):
 
 | arm | 1n | 2n | 4n | 8n |
 |---|---|---|---|---|
-| val_wb | 0.4 | 4.9 | 6.7 | 9.4 |
-| val_wb_comb | 0.4 | 0.5 | 0.3 | 0.1 |
+| val_wb_nocomb | 0.4 | 4.9 | 6.7 | 9.4 |
+| val_wb | 0.4 | 0.5 | 0.3 | 0.1 |
 | inv_wb | 0.5 | 0.3 | 0.2 | 0.1 |
 | excl_retain | 0.6 | 0.3 | 0.2 | 0.1 |
 
-base anti-scales on EVERY arm (2n: val 24.5 / comb 30.3 / inv 73.4 /
+base anti-scales on EVERY arm (2n: val_nocomb 24.5 / val 30.3 / inv 73.4 /
 excl 39.1) — each tree node's board is a fresh remote datablock, a cold-read
 storm no coherence family can serve locally, and INV pays its directory on
 top.  At the calibrated size the base multinode cells are therefore

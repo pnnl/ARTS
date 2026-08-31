@@ -24,42 +24,66 @@ RESULT_COLUMNS = [
 
 # Display metadata for runtime series, carried into the report so a later
 # figure tool inherits one naming and colour convention instead of inventing
-# its own.
+# its own.  Keyed by the SELECTION-ENTRY form (what every live caller passes);
+# rt_key() below folds build suffixes and pre-promotion comb keys onto it.
+# Every label spells all three axes {family} x {write policy} x {release
+# policy} — an elided axis reads as "no such axis" to anyone outside the
+# build system (EXCL's WB and INV/VAL's RETAIN are requirements, but the
+# NAME still carries them).
 RT_LABEL = {
-    "ocr_excl_purge": "EXCL/PURGE",
-    "ocr_excl_retain": "EXCL/RETAIN",
-    "ocr_inv_wt": "INV/WT",
-    "ocr_inv_wb": "INV/WB",
-    "ocr_inv_wt_purge": "INV/WT+PURGE",
-    "ocr_val_wt": "VAL/WT",
-    "ocr_val_wb": "VAL/WB",
-    "ocr_val_wt_purge": "VAL/WT+PURGE",
-    "ocr_val_wt_comb": "VAL+comb/WT",
-    "ocr_val_wb_comb": "VAL+comb/WB",
-    "ocr_val_wt_purge_comb": "VAL+comb/WT+PURGE",
+    "arts_excl_purge": "EXCL·WB·PURGE",
+    "arts_excl_retain": "EXCL·WB·RETAIN",
+    "arts_inv_wt": "INV·WT·RETAIN",
+    "arts_inv_wb": "INV·WB·RETAIN",
+    "arts_inv_wt_purge": "INV·WT·PURGE",
+    "arts_val_wt": "VAL·WT·RETAIN",
+    "arts_val_wb": "VAL·WB·RETAIN",
+    "arts_val_wt_purge": "VAL·WT·PURGE",
+    # The non-combining ablation twins are build variants, not plane entries;
+    # they surface only in sweeps and ablation figures.
+    "arts_val_wt_nocomb": "VAL·WT·RETAIN nocomb",
+    "arts_val_wb_nocomb": "VAL·WB·RETAIN nocomb",
+    "arts_val_wt_purge_nocomb": "VAL·WT·PURGE nocomb",
     "xsocr": "XSOCR",
     # OCR-vx ships three runtime families; the one built here is the
     # distributed-memory one, which is what the label should name.
     "ocrvx": "OCR-Vdm",
 }
 RT_COLOR = {
-    "ocr_excl_purge": "#4C72B0",
-    "ocr_excl_retain": "#7BA3D8",
-    "ocr_inv_wt": "#DD8452",
-    "ocr_inv_wb": "#F0B08A",
+    "arts_excl_purge": "#4C72B0",
+    "arts_excl_retain": "#7BA3D8",
+    "arts_inv_wt": "#DD8452",
+    "arts_inv_wb": "#F0B08A",
     # A third, deeper tone of the family's own hue — WT+PURGE is a third
     # point in this family, not a fourth family, so it stays on the same
     # hue as WT/WB rather than drawing a new one.
-    "ocr_inv_wt_purge": "#B65924",
-    "ocr_val_wt": "#55A868",
-    "ocr_val_wb": "#8CCB9B",
-    "ocr_val_wt_purge": "#3D794B",
-    "ocr_val_wt_comb": "#C44E52",
-    "ocr_val_wb_comb": "#E08A8D",
-    "ocr_val_wt_purge_comb": "#943135",
+    "arts_inv_wt_purge": "#B65924",
+    "arts_val_wt": "#55A868",
+    "arts_val_wb": "#8CCB9B",
+    "arts_val_wt_purge": "#3D794B",
+    # Ablation twins stay on the VAL hue, desaturated: same family, with the
+    # combining window compiled out.
+    "arts_val_wt_nocomb": "#7E9E87",
+    "arts_val_wb_nocomb": "#A9C4B0",
+    "arts_val_wt_purge_nocomb": "#5C7A64",
     "xsocr": "#8172B3",
     "ocrvx": "#937860",
 }
+
+
+def rt_key(key: str) -> str:
+    """Fold any spelling of a runtime series onto the display key.
+
+    Callers hold either a selection-entry key (arts_*/xsocr/ocrvx — possibly a
+    pre-promotion comb spelling from an old run) or a raw build suffix
+    (ocr_val_wt, from a sweep that addresses arms directly).
+    """
+    from artsrun.model.plane import modern_entry_key
+
+    if key.startswith("ocr_"):
+        alt = "arts_" + key.removeprefix("ocr_")
+        return alt if alt in RT_LABEL else key
+    return modern_entry_key(key)
 
 
 def _row(r: CellResult) -> dict:
@@ -100,7 +124,8 @@ def write_report_json(
     payload = {
         "selection": selection.model_dump(mode="json"),
         "runtimes": {
-            key: {"label": RT_LABEL.get(key, key), "color": RT_COLOR.get(key)}
+            key: {"label": RT_LABEL.get(rt_key(key), key),
+                  "color": RT_COLOR.get(rt_key(key))}
             for key in selection.entries
         },
         "cells": [_row(r) for r in results],
@@ -126,7 +151,7 @@ def consensus_table(groups: list[Group], plane: Plane, entries: list[str]) -> Ta
     table.add_column("n", justify="right")
     table.add_column("value")
     for key in entries:
-        table.add_column(RT_LABEL.get(key, key), justify="center")
+        table.add_column(RT_LABEL.get(rt_key(key), key), justify="center")
 
     style = {
         Verdict.OK: "[green]OK[/green]",
@@ -176,7 +201,7 @@ def scaling_table(results: list[CellResult], entries: list[str]) -> Table:
     for (app_key, entry_key) in sorted(by_key):
         walls = by_key[(app_key, entry_key)]
         row = [f"{walls[n]:.2f}" if n in walls else "-" for n in node_counts]
-        table.add_row(app_key, RT_LABEL.get(entry_key, entry_key), *row)
+        table.add_row(app_key, RT_LABEL.get(rt_key(entry_key), entry_key), *row)
     return table
 
 

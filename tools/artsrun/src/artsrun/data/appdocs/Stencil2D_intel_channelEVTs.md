@@ -193,8 +193,8 @@ placement), e2e seconds, counters all off:
 
 | arm | 1n | 2n | 4n | 8n |
 |---|---|---|---|---|
-| val_wb | 7.33 | 3.94 | 2.05 | 1.14 |
-| val_wb_comb | 7.29 | 3.90 | 1.98 | 1.13 |
+| val_wb_nocomb | 7.33 | 3.94 | 2.05 | 1.14 |
+| val_wb | 7.29 | 3.90 | 1.98 | 1.13 |
 | inv_wb | 7.33 | 3.97 | 2.06 | 1.27 |
 | excl_retain | 7.31 | 3.97 | 2.03 | 1.24 |
 
@@ -216,7 +216,7 @@ it spans 32 nodes × 108 workers at 4 tiles per worker, and the calibrated
 as `NP²/NR`); `NT` is the real timestep count — rounds are usage, not
 repetition padding.
 
-Measured on the Dane-mirror geometry (1 node, 108w+4p, Release, val_wb,
+Measured on the Dane-mirror geometry (1 node, 108w+4p, Release, val_wb_nocomb,
 counters all off, `NR=13824`):
 
 | NP | NT | e2e |

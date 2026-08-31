@@ -225,10 +225,10 @@ spatial box-home design adopted in the 2026-08-07 anti-scale verdicts; the
 residual granularity amplification (~460x per remote face read) is structural
 and out of a hint's reach.
 
-Measured (ferrari trend sweep, 15w+1p, `['5','4096']`, val_wb / best-of-arm
+Measured (ferrari trend sweep, 15w+1p, `['5','4096']`, val_wb_nocomb / best-of-arm
 range): base 111 s → 348 / 330 / 350 s at 2/4/8 n — the whole-box exchange
 saturates immediately and flattens; hinted 112 s → 160 / 175 / 184 s
-(range across the four arms ≤ 8%, `val_wb_comb` consistently best) — the
+(range across the four arms ≤ 8%, `val_wb` consistently best) — the
 layer halves the multinode cost and turns the cliff into a decelerating
 creep, but the program still anti-scales.  The Dane anchor cell (108w+4p)
 runs 114.5 s.  Two facts locate the residual: the E2E is 94% *serial

@@ -98,6 +98,31 @@ def default_benchset() -> Benchset:
     return Benchset(name="catalog-default", description="catalog defaults")
 
 
+# --- sweeps ---------------------------------------------------------------
+def list_sweeps() -> list[str]:
+    from artsrun.paths import sweeps_dir
+
+    return _list(sweeps_dir())
+
+
+def sweep_path(name: str) -> Path:
+    from artsrun.paths import sweeps_dir
+
+    return sweeps_dir() / f"{name}.yaml"
+
+
+def load_sweep(name: str):
+    from artsrun.model.sweep import SweepSpec
+
+    path = sweep_path(name)
+    if not path.is_file():
+        known = ", ".join(list_sweeps()) or "none"
+        raise NotFound(f"no sweep '{name}' in {path.parent} (have: {known})")
+    data = _read(path)
+    data.setdefault("name", name)
+    return SweepSpec.model_validate(data)
+
+
 # --- counter sets ---------------------------------------------------------
 def list_countersets() -> list[str]:
     return _list(countersets_dir())
