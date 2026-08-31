@@ -236,12 +236,16 @@ cache holds, credited by serves, by write-back installs, and by the
 releaser/shipper itself under WB): a request from a rank whose ledger
 already matches the master version receives a header-only, no-data reply.
 
-An optional build-time mitigation, ``ARTS_RO_REQUEST_COMBINING``, layers
-request coalescing on top of this dedup: while one snapshot request for a DB
-is in flight, later same-rank read acquires for that DB park and share its
-response instead of issuing their own. It is orthogonal to write and release
-policy — every position this family builds, ``WT``×``PURGE`` included, can
-turn it on.
+Request coalescing layers on top of this dedup, by default: while one
+snapshot request for a DB is in flight, later same-rank read acquires for
+that DB park and share its response instead of issuing their own. This is
+part of the family's definition — every other message class suppresses
+duplicate concurrent requests structurally (parked acquires under EXCL/INV,
+batched invalidation rounds, publish flights), and the validation pull path
+does the same. It is orthogonal to write and release policy. The build-time
+knob ``ARTS_NO_RO_COMBINING`` compiles the window out — an ablation build
+(the ``*_nocomb`` benchmark variants) for measuring what the window buys,
+not a configuration of the family.
 
 INV — write-invalidate, durable reader copies
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

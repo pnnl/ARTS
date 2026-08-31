@@ -279,8 +279,23 @@ set_property(CACHE ARTS_WRITE_POLICY PROPERTY STRINGS WT WB)
 set(ARTS_RELEASE_POLICY "RETAIN" CACHE STRING
     "Who initiates the grant's return: PURGE (the holder, unasked, at its own idle edge) or RETAIN (the home, on demand; default). Live in EXCL and in WT x {VAL, INV}; INV/VAL x WB require RETAIN")
 set_property(CACHE ARTS_RELEASE_POLICY PROPERTY STRINGS PURGE RETAIN)
-option(ARTS_RO_REQUEST_COMBINING
-    "Combine concurrent same-DB remote read acquires into a single in-flight snapshot request per DB (VAL pull path; no effect under EXCL)" OFF)
+# Read combining is the VAL family's DEFAULT: every other message class already
+# suppresses duplicates structurally (EXCL/INV acquire paths park behind one
+# in-flight request, invalidation rounds batch at the home, WT publishes ride
+# one flight per rank), so the combining window is part of the family's
+# definition, not an optimization layered on it.  The knob that remains is the
+# ablation: compiling the read path WITHOUT the window, for measuring what the
+# window buys.
+if(ARTS_RO_REQUEST_COMBINING)
+    message(FATAL_ERROR
+        "ARTS_RO_REQUEST_COMBINING is gone: read combining is now the VAL "
+        "family's default. To build the non-combining ablation, pass "
+        "-DARTS_NO_RO_COMBINING=ON (benchmark builds get it per target as the "
+        "*_nocomb variants).")
+endif()
+unset(ARTS_RO_REQUEST_COMBINING CACHE)
+option(ARTS_NO_RO_COMBINING
+    "Compile the VAL-family remote read path WITHOUT requester-side combining (ablation; no effect under EXCL/INV, whose caches have no combining window)" OFF)
 set(ARTS_MALLOC "mimalloc" CACHE STRING
     "General allocator: mimalloc (default, vendored static) or system (libc malloc)")
 set_property(CACHE ARTS_MALLOC PROPERTY STRINGS mimalloc system)
@@ -509,16 +524,17 @@ else()
   set(ARTS_COHERENCE_ARM "VAL")
   message(STATUS "ARTS: model OCR, family VAL, write policy ${ARTS_WRITE_POLICY}")
 endif()
-if(ARTS_RO_REQUEST_COMBINING)
-  # Requester-side combining of the MVCC-family remote read path: while one
-  # snapshot request per DB is in flight, later same-rank read acquires park
-  # and share its response instead of issuing their own round trips.  Pure
-  # pull — no reader state at the home, no writer-side invalidation.
-  #
-  # The macro is applied per target by arts_apply_protocol, not directory-wide:
-  # a build can hold several configurations at once, and each must be able to
-  # differ on this axis without the others seeing it.
-  message(STATUS "ARTS RO request combining: ON (one in-flight snapshot request per DB)")
+# Requester-side combining of the MVCC-family remote read path: while one
+# snapshot request per DB is in flight, later same-rank read acquires park
+# and share its response instead of issuing their own round trips.  Pure
+# pull — no reader state at the home, no writer-side invalidation.  On by
+# default; the disable macro is applied per target by arts_apply_protocol,
+# not directory-wide: a build can hold several configurations at once, and
+# each must be able to differ on this axis without the others seeing it.
+if(ARTS_NO_RO_COMBINING)
+  message(STATUS "ARTS RO request combining: DISABLED (ablation build — concurrent same-DB read acquires each issue their own request)")
+else()
+  message(STATUS "ARTS RO request combining: on (one in-flight snapshot request per DB)")
 endif()
 if(ARTS_MALLOC STREQUAL "mimalloc")
   add_compile_definitions(ARTS_MALLOC_MIMALLOC=1)

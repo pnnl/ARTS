@@ -107,17 +107,19 @@ function(arts_apply_protocol target arm write_policy release_policy)
     # pointer or a bool return.  Compilers that still default this to a warning
     # let it accumulate unseen; the ones that do not simply refuse to build.
     target_compile_options(${target} PRIVATE -Werror=implicit-function-declaration)
-    # An optional 5th argument pins read combining for this target; without it
-    # the target follows the directory-wide option.  Targets that name it are
-    # self-describing: nothing outside their own definition decides what they
-    # compile, which is what lets several configurations coexist in one build.
+    # An optional 5th argument pins read combining OFF for this target (the
+    # ablation twins); without it the target follows the directory-wide
+    # disable option (default off, so combining is compiled in).  Targets that
+    # name it are self-describing: nothing outside their own definition
+    # decides what they compile, which is what lets several configurations
+    # coexist in one build.
     if(ARGC GREATER 4)
-        set(combining "${ARGV4}")
+        set(nocomb "${ARGV4}")
     else()
-        set(combining "${ARTS_RO_REQUEST_COMBINING}")
+        set(nocomb "${ARTS_NO_RO_COMBINING}")
     endif()
-    if(combining)
-        target_compile_definitions(${target} PRIVATE ARTS_RO_REQUEST_COMBINING=1)
+    if(nocomb)
+        target_compile_definitions(${target} PRIVATE ARTS_NO_RO_COMBINING=1)
     endif()
     target_compile_definitions(${target} PRIVATE ARTS_PROTOCOL_${arm}=1)
     if(arm STREQUAL "WRF_VAL")
@@ -538,7 +540,7 @@ if(ARTS_BUILD_BENCHMARKS)
         arts_compute arts_memory arts_sync arts_ooo arts_regpool arts_scheduler
         arts_transport arts_gas arts_system arts_utils arts_counter arts_graph)
 
-    function(arts_variant suffix arm write_policy release_policy combining)
+    function(arts_variant suffix arm write_policy release_policy nocomb)
         # Gather all protocol-independent sources (absolute paths) from the
         # object libs, dropping any coherence MODEL TU (path contains
         # /coherence/<model>/), which is variant-specific.
@@ -587,22 +589,23 @@ if(ARTS_BUILD_BENCHMARKS)
         # the static lib resolves fi_* symbols from libfabric.
         target_link_libraries(arts_static_${suffix} PRIVATE arts::libfabric)
         arts_apply_protocol(arts_static_${suffix} "${arm}" "${write_policy}"
-                            "${release_policy}" "${combining}")
+                            "${release_policy}" "${nocomb}")
     endfunction()
 
     # Suffix = <memory model>_<family>_<live second axis>; the second argument
     # is the protocol ARM (the TU family): VAL/INV/EXCL live under the OCR
     # model, WRF_VAL is the VAL family under the DB-WRF model.  The dead axis
     # sits at its required value (WB for EXCL, RETAIN for INV/VAL).  The last
-    # argument is read combining, off for a family's base configuration and on
-    # only where the suffix says so — it is a serving optimization layered on
-    # the validation family, not part of any family's definition.
+    # argument DISABLES read combining: OFF for every plane configuration
+    # (combining is part of the validation family's definition — every other
+    # message class already suppresses duplicates structurally), ON only for
+    # the *_nocomb ablation twins that measure what the combining window buys.
     arts_variant(ocr_val_wt        VAL     WT RETAIN OFF)
     arts_variant(ocr_val_wb        VAL     WB RETAIN OFF)
     arts_variant(ocr_val_wt_purge  VAL     WT PURGE  OFF)
-    arts_variant(ocr_val_wt_comb   VAL     WT RETAIN ON)
-    arts_variant(ocr_val_wb_comb   VAL     WB RETAIN ON)
-    arts_variant(ocr_val_wt_purge_comb VAL WT PURGE  ON)
+    arts_variant(ocr_val_wt_nocomb VAL     WT RETAIN ON)
+    arts_variant(ocr_val_wb_nocomb VAL     WB RETAIN ON)
+    arts_variant(ocr_val_wt_purge_nocomb VAL WT PURGE ON)
     arts_variant(ocr_excl_purge    EXCL    WB PURGE  OFF)
     arts_variant(ocr_excl_retain   EXCL    WB RETAIN OFF)
     arts_variant(wrf_val_wt        WRF_VAL WT RETAIN OFF)

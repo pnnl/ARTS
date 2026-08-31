@@ -126,11 +126,14 @@ All options are set with ``-D<NAME>=<VALUE>`` on the cmake line.
        (copy and permission return to the home when the last local user
        finishes) or ``RETAIN`` (keep both until another node asks; the home
        recalls on demand). ``WB`` requires ``RETAIN``.
-   * - ``ARTS_RO_REQUEST_COMBINING``
+   * - ``ARTS_NO_RO_COMBINING``
      - OFF
-     - Combine concurrent same-DB remote RO acquires into a single
-       in-flight snapshot request per DB (VAL pull path; no effect under
-       EXCL).
+     - Ablation knob: compile the VAL-family read path WITHOUT
+       requester-side combining. By default concurrent same-DB remote RO
+       acquires share a single in-flight snapshot request per DB — part
+       of the family's definition, matching the duplicate suppression
+       every other message class has structurally (no effect under
+       EXCL/INV, whose caches carry no combining window).
    * - ``ARTS_MALLOC``
      - mimalloc
      - General allocator — ``mimalloc`` (default; vendored static, the

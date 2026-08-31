@@ -79,10 +79,10 @@ struct arts_db_cache_s {
    * a stack-local sem_t created per release_rw, matched by pointer identity
    * (the &sem address rides the PUBLISH packet and is echoed in the ACK) —
    * no per-cache seq state. */
-  /* Kept at the tail so compiling the option in cannot shift the offsets
-   * of the fields (and the inlined home directory beyond them) that every
-   * acquire path touches. */
-#ifdef ARTS_RO_REQUEST_COMBINING
+  /* The combining knob changes this struct's layout for the fields that
+   * follow; every TU of a build sees one setting (compile-time option), so
+   * only cross-build ABI differs — never two views inside one build. */
+#ifndef ARTS_NO_RO_COMBINING
   /* Remote-read request-combining window (see coherence/coherence.c).
    * snapshot_req_in_flight admits ONE outstanding snapshot request per cache
    * (0->1 CAS claims the window).  ro_combine accumulates waiters that arrive

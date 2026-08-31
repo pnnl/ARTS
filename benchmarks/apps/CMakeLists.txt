@@ -8,8 +8,8 @@
 # list, referenced everywhere: a per-app copy of it silently omits new
 # configurations from whichever apps forgot to grow.
 set(ARTS_VARIANT_SUFFIXES
-    ocr_val_wt ocr_val_wb ocr_val_wt_purge ocr_val_wt_comb ocr_val_wb_comb
-    ocr_val_wt_purge_comb
+    ocr_val_wt ocr_val_wb ocr_val_wt_purge ocr_val_wt_nocomb ocr_val_wb_nocomb
+    ocr_val_wt_purge_nocomb
     ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb ocr_inv_wt_purge)
 
 set(OCR_APPS_ROOT "${CMAKE_SOURCE_DIR}/third_party/ocr-apps/apps")
@@ -1446,3 +1446,146 @@ if(TARGET ocr_vdm_mpi)
         "-include" "${OCRVX_COMPAT_H}")
 endif()
 
+
+# ==========================================================================
+# rwsteady  (bespoke: source lives in this repo, not in ocr-apps)
+# Closed-loop steady-state reader/writer coherence probe: reader and writer
+# EDT chains free-run against shared data blocks for a fixed window with
+# explicit per-op release; per-class acquire/release/total latency
+# histograms and an exact-count + monotone-read oracle ride along.
+# ==========================================================================
+set(RWSTEADY_SRC "${CMAKE_CURRENT_SOURCE_DIR}/rwsteady.c")
+
+if(TARGET ocr_xsocr_static)
+    add_executable(rwsteady_xsocr ${RWSTEADY_SRC})
+    target_include_directories(rwsteady_xsocr PRIVATE
+        ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR})
+    target_compile_definitions(rwsteady_xsocr PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
+    target_link_libraries(rwsteady_xsocr PRIVATE ocr_xsocr_static pthread)
+    target_link_options(rwsteady_xsocr PRIVATE -no-pie -fno-pie)
+    set_target_properties(rwsteady_xsocr PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_options(rwsteady_xsocr PRIVATE ${BENCH_C_OPT})
+endif()
+
+foreach(sfx ${ARTS_VARIANT_SUFFIXES})
+    add_executable(rwsteady_arts_${sfx} ${RWSTEADY_SRC}
+                   $<TARGET_OBJECTS:ocr_arts_objects>)
+    target_include_directories(rwsteady_arts_${sfx} PRIVATE
+        ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR} ${OCR_INC_DIR})
+    target_compile_definitions(rwsteady_arts_${sfx} PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
+    target_link_libraries(rwsteady_arts_${sfx} PRIVATE arts_static_${sfx} pthread)
+    target_link_options(rwsteady_arts_${sfx} PRIVATE -no-pie -fno-pie)
+    set_target_properties(rwsteady_arts_${sfx} PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_options(rwsteady_arts_${sfx} PRIVATE ${BENCH_C_OPT})
+endforeach()
+
+if(TARGET ocr_vdm_mpi)
+    add_executable(rwsteady_ocrvx ${RWSTEADY_SRC})
+    target_include_directories(rwsteady_ocrvx PRIVATE
+        ${OCR_LIBS_ROOT}/macros/macros ${OCRVX_OCR_INC})
+    target_compile_definitions(rwsteady_ocrvx PRIVATE
+        ${OCR_EXT_DEFINES} "OCR_TYPE_H=vdm.h" OCR_ENABLE_EDT_NAMING)
+    target_link_libraries(rwsteady_ocrvx PRIVATE ocr_vdm_mpi)
+    target_link_options(rwsteady_ocrvx PRIVATE -no-pie -fno-pie)
+    set_target_properties(rwsteady_ocrvx PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_options(rwsteady_ocrvx PRIVATE ${BENCH_C_OPT}
+        "-include" "${OCRVX_COMPAT_H}")
+endif()
+
+# ==========================================================================
+# rwpriv  (bespoke: source lives in this repo, not in ocr-apps)
+# Private-working-set release-axis probe: every chain re-touches its own
+# remote-homed block, so required steady-state communication is zero and
+# the per-op wire cost is exactly the configuration's cost of forgetting
+# or remembering local state across a release edge.  ARTS variants only:
+# the probe exists to separate the plane's arms.
+# ==========================================================================
+set(RWPRIV_SRC "${CMAKE_CURRENT_SOURCE_DIR}/rwpriv.c")
+
+foreach(sfx ${ARTS_VARIANT_SUFFIXES})
+    add_executable(rwpriv_arts_${sfx} ${RWPRIV_SRC}
+                   $<TARGET_OBJECTS:ocr_arts_objects>)
+    target_include_directories(rwpriv_arts_${sfx} PRIVATE
+        ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR} ${OCR_INC_DIR})
+    target_compile_definitions(rwpriv_arts_${sfx} PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
+    target_link_libraries(rwpriv_arts_${sfx} PRIVATE arts_static_${sfx} pthread)
+    target_link_options(rwpriv_arts_${sfx} PRIVATE -no-pie -fno-pie)
+    set_target_properties(rwpriv_arts_${sfx} PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_options(rwpriv_arts_${sfx} PRIVATE ${BENCH_C_OPT})
+endforeach()
+
+# ==========================================================================
+# rwhandoff  (bespoke: source lives in this repo, not in ocr-apps)
+# Phase-alternating producer/consumer handoff probe: every generation's
+# release wakes one consumer and one next producer on rotating ranks,
+# byte-disjoint regions, so the program is race-free by event order while
+# offering a block-granular protocol zero batching fodder.  ARTS variants
+# only, as above.
+# ==========================================================================
+set(RWHANDOFF_SRC "${CMAKE_CURRENT_SOURCE_DIR}/rwhandoff.c")
+
+foreach(sfx ${ARTS_VARIANT_SUFFIXES})
+    add_executable(rwhandoff_arts_${sfx} ${RWHANDOFF_SRC}
+                   $<TARGET_OBJECTS:ocr_arts_objects>)
+    target_include_directories(rwhandoff_arts_${sfx} PRIVATE
+        ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR} ${OCR_INC_DIR})
+    target_compile_definitions(rwhandoff_arts_${sfx} PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
+    target_link_libraries(rwhandoff_arts_${sfx} PRIVATE arts_static_${sfx} pthread)
+    target_link_options(rwhandoff_arts_${sfx} PRIVATE -no-pie -fno-pie)
+    set_target_properties(rwhandoff_arts_${sfx} PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_options(rwhandoff_arts_${sfx} PRIVATE ${BENCH_C_OPT})
+endforeach()
+
+# ==========================================================================
+# wordcount  (bespoke: source lives in this repo, not in ocr-apps)
+# Canonical MapReduce word count in native OCR, weak-scaling form: the
+# corpus is synthesized per map tile from its global id (closed
+# vocabulary, no ingest I/O), reduced over a K-ary spawner-built tree
+# whose lower levels stay node-local.  Portable OCR API only, so all
+# three runtimes build it.
+# ==========================================================================
+set(WORDCOUNT_SRC "${CMAKE_CURRENT_SOURCE_DIR}/wordcount.c")
+
+if(TARGET ocr_xsocr_static)
+    add_executable(wordcount_xsocr ${WORDCOUNT_SRC})
+    target_include_directories(wordcount_xsocr PRIVATE
+        ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR})
+    target_compile_definitions(wordcount_xsocr PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
+    target_link_libraries(wordcount_xsocr PRIVATE ocr_xsocr_static pthread m)
+    target_link_options(wordcount_xsocr PRIVATE -no-pie -fno-pie)
+    set_target_properties(wordcount_xsocr PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_options(wordcount_xsocr PRIVATE ${BENCH_C_OPT})
+endif()
+
+foreach(sfx ${ARTS_VARIANT_SUFFIXES})
+    add_executable(wordcount_arts_${sfx} ${WORDCOUNT_SRC}
+                   $<TARGET_OBJECTS:ocr_arts_objects>)
+    target_include_directories(wordcount_arts_${sfx} PRIVATE
+        ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR} ${OCR_INC_DIR})
+    target_compile_definitions(wordcount_arts_${sfx} PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
+    target_link_libraries(wordcount_arts_${sfx} PRIVATE arts_static_${sfx} pthread m)
+    target_link_options(wordcount_arts_${sfx} PRIVATE -no-pie -fno-pie)
+    set_target_properties(wordcount_arts_${sfx} PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_options(wordcount_arts_${sfx} PRIVATE ${BENCH_C_OPT})
+endforeach()
+
+if(TARGET ocr_vdm_mpi)
+    add_executable(wordcount_ocrvx ${WORDCOUNT_SRC})
+    target_include_directories(wordcount_ocrvx PRIVATE
+        ${OCR_LIBS_ROOT}/macros/macros ${OCRVX_OCR_INC})
+    target_compile_definitions(wordcount_ocrvx PRIVATE
+        ${OCR_EXT_DEFINES} "OCR_TYPE_H=vdm.h" OCR_ENABLE_EDT_NAMING)
+    target_link_libraries(wordcount_ocrvx PRIVATE ocr_vdm_mpi m)
+    target_link_options(wordcount_ocrvx PRIVATE -no-pie -fno-pie)
+    set_target_properties(wordcount_ocrvx PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_options(wordcount_ocrvx PRIVATE ${BENCH_C_OPT}
+        "-include" "${OCRVX_COMPAT_H}")
+endif()
