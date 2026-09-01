@@ -40,7 +40,7 @@ static void record_slab(const arts_regpool_mr_t *mr) {
 }
 
 int main(void) {
-  bool ok = arts_regpool_init(NULL, SLAB_BYTES, 1);
+  bool ok = arts_regpool_init(NULL, NULL, SLAB_BYTES, 1);
   assert(ok && "regpool_init must succeed");
 
   /* Part 1: exceed one slab through the arena path and force grows. */

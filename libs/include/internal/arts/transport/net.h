@@ -50,13 +50,20 @@
  * Lifecycle (all on the main thread, before any worker/sender/receiver thread
  * is spawned):
  *   arts_net_init()              — fi_getinfo, fabric/domain/av/cq/ep (no RX yet)
- *   arts_net_exchange_addresses()— fi_getname blob swap over the TCP mesh + av_insert
- *   arts_regpool_init(domain)    — (caller) registers slabs against arts_net_domain()
+ *   arts_regpool_init(domain,ep) — (caller) registers slabs against
+ *                                  arts_net_domain(); arts_net_mr_endpoint()
+ *                                  is non-NULL when the negotiated mr_mode
+ *                                  demands endpoint-bound registrations
  *   arts_net_rx_arm()            — landing buffers from the pool, post multi-recv
+ *   arts_net_exchange_addresses()— fi_getname blob swap over the TCP mesh + av_insert
+ *   arts_net_selfcheck()         — providers with a configurable one-sided
+ *                                  immediate path prove it live (no-op elsewhere)
  *   ... runtime runs ...
- *   arts_net_quiesce()           — refuse new sends, discard/reap in-flight TX,
+ *   arts_net_quiesce()           — refuse new sends, discard/reap in-flight TX;
+ *                                  under endpoint-bound registration, close the
+ *                                  slab MRs FIRST (they hold endpoint refs);
  *                                  close ep/cq/av, return recv buffers to the pool
- *   arts_regpool_cleanup()       — (caller) closes slab MRs
+ *   arts_regpool_cleanup()       — (caller) closes slab MRs (those still open)
  *   arts_net_teardown()          — closes domain/fabric
  *
  * The RX landing buffers are drawn from the registered pool (hence arming them
@@ -193,6 +200,7 @@ static inline bool arts_net_addr_frame_ok(uint32_t rank, uint32_t len,
 }
 
 struct fid_domain;
+struct fid_ep;
 
 /* Bring up the fabric: fi_getinfo(FI_EP_RDM, FI_MSG|FI_RMA, FI_THREAD_SAFE),
  * one fabric/domain/av (FI_AV_TABLE)/cq (FI_CQ_FORMAT_DATA)/ep per rank.  Stores
@@ -226,6 +234,19 @@ void arts_net_init(const char *provider, const char *fabric_domain,
 /* The domain created by arts_net_init, for arts_regpool_init to register slabs
  * against.  NULL before init / after teardown. */
 struct fid_domain *arts_net_domain(void);
+
+/* The endpoint, iff the negotiated mr_mode carries FI_MR_ENDPOINT (else
+ * NULL): the pool then binds and enables every slab MR against it.  Pass to
+ * arts_regpool_init alongside the domain. */
+struct fid_ep *arts_net_mr_endpoint(void);
+
+/* Prove the one-sided write-with-immediate path against this rank's own
+ * registered memory, on providers where that path can be configured out at
+ * runtime (currently the cxi core); a no-op on every other provider.  Runs
+ * one self-addressed rendezvous PUT and fails loudly, naming the gate, if
+ * the immediate never arrives or outruns the payload bytes.  Must run after
+ * arts_net_exchange_addresses and before any runtime thread spawns. */
+void arts_net_selfcheck(void);
 
 /* Allocate the multi-recv landing buffers from the registered pool and post
  * them.  Must run AFTER arts_regpool_init (the buffers, and their local

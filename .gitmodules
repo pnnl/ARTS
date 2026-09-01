@@ -25,3 +25,23 @@
 	path = third_party/hpx
 	url = https://github.com/TheHPXProject/hpx.git
 	shallow = true
+[submodule "third_party/cassini-headers"]
+	path = third_party/cassini-headers
+	url = https://github.com/HewlettPackard/shs-cassini-headers.git
+	shallow = true
+[submodule "third_party/cxi-driver"]
+	path = third_party/cxi-driver
+	url = https://github.com/HewlettPackard/shs-cxi-driver.git
+	shallow = true
+[submodule "third_party/libcxi"]
+	path = third_party/libcxi
+	url = https://github.com/HewlettPackard/shs-libcxi.git
+	shallow = true
+[submodule "third_party/curl"]
+	path = third_party/curl
+	url = https://github.com/curl/curl.git
+	shallow = true
+[submodule "third_party/json-c"]
+	path = third_party/json-c
+	url = https://github.com/json-c/json-c.git
+	shallow = true

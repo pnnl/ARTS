@@ -104,7 +104,7 @@ int main(void) {
   arts_net_init(NULL, NULL, NULL); /* auto -- FI_PROVIDER above still applies */
   /* Registered pool for the bounce/send path AND the recv landing buffers
    * (needs net_init's domain). */
-  if (!arts_regpool_init(arts_net_domain(), (size_t)32 * 1024 * 1024, 0)) {
+  if (!arts_regpool_init(arts_net_domain(), arts_net_mr_endpoint(), (size_t)32 * 1024 * 1024, 0)) {
     fprintf(stderr, "FAIL net_selfsend: regpool init failed\n");
     return 1;
   }

@@ -141,6 +141,9 @@ set(TEST_PROGRAMS
     stdio_forward_scale_test
     regpool_basic
     regpool_guard
+    regpool_node_avail
+    regpool_node_fallover
+    regpool_direct_oversize
     # --- New unit tests (Tasks 6-12) ---
     counter_smoke
     edt_dep_variants
@@ -530,7 +533,21 @@ register_pure_unit_test(stdio_forward_scale_test)
 if(ARTS_MALLOC STREQUAL "mimalloc")
     register_pure_unit_test(regpool_basic TIMEOUT 60)
     register_pure_unit_test(regpool_guard TIMEOUT 60)
+    # Fallover needs the arena/slab machinery (a refused node, a fallback
+    # arena, and the confinement lookup) — meaningless on the pass-through
+    # allocator for the same reason as the two above.  The explicit
+    # PASS/SKIP markers keep a skipped environment (one NUMA node) from
+    # reading as an exercised pass.
+    register_pure_unit_test(regpool_node_fallover TIMEOUT 60)
+    set_tests_properties(regpool_node_fallover PROPERTIES
+        PASS_REGULAR_EXPRESSION
+        "PASS regpool_node_fallover|SKIP regpool_node_fallover")
+    register_pure_unit_test(regpool_direct_oversize TIMEOUT 60)
+    set_tests_properties(regpool_direct_oversize PROPERTIES
+        PASS_REGULAR_EXPRESSION "PASS regpool_direct_oversize")
 endif()
+# The availability parser is allocator-independent (pure over a stream).
+register_pure_unit_test(regpool_node_avail TIMEOUT 30)
 
 # net_selfsend — whitebox self-send exercise for the libfabric transport core
 # (transport/net.c).  It #includes net.c directly (statics under test) with a

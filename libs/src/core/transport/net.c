@@ -154,6 +154,7 @@ static struct {
   size_t inject_size;   /* fi_inject ceiling                                   */
   size_t max_msg;       /* provider max message size                          */
   uint64_t tx_order;    /* negotiated tx_attr->msg_order (FI_ORDER_* bits)     */
+  bool is_cxi;          /* negotiated provider is the cxi core (selfcheck)     */
 
   fi_addr_t *peers;     /* rank-indexed AV handles (fi_addr_t rank == rank)    */
   unsigned peer_count;
@@ -219,6 +220,29 @@ static inline bool net_is_ack_class(unsigned int msg_type) {
     return true;
   default:
     return false;
+  }
+}
+
+/* True when a provider request names the cxi core provider as a list element
+ * ("cxi", "cxi,tcp" — FI_PROVIDER accepts a comma list).  A negated filter
+ * list ("^shm") never counts: the pre-getinfo adaptations cxi needs (its
+ * write-with-immediate environment gate, the FI_MR_ENDPOINT offer) must be
+ * committed before matching runs, so selecting cxi requires naming it. */
+static bool net_provider_names_cxi(const char *s) {
+  if (s == NULL || s[0] == '^') {
+    return false;
+  }
+  const char *p = s;
+  for (;;) {
+    const char *e = strchr(p, ',');
+    size_t n = (e != NULL) ? (size_t)(e - p) : strlen(p);
+    if (n == 3 && strncmp(p, "cxi", 3) == 0) {
+      return true;
+    }
+    if (e == NULL) {
+      return false;
+    }
+    p = e + 1;
   }
 }
 
@@ -998,6 +1022,104 @@ bool arts_net_progress(void) {
 }
 
 /* ------------------------------------------------------------------------- */
+/* Init-time one-sided selfcheck                                               */
+/* ------------------------------------------------------------------------- */
+
+/* Remove and free THIS txid's rendezvous-data node from the pending list, if
+ * present.  Token-guarded like every pending-list mutation; any other node
+ * (none should exist this early) is left for the progress loop. */
+static bool net_pending_take_rdzv(uint64_t txid) {
+  if (!net_cq_trylock()) {
+    return false;
+  }
+  bool found = false;
+  struct net_pending_s *prev = NULL;
+  for (struct net_pending_s *n = g_pending_head; n != NULL;
+       prev = n, n = n->next) {
+    if (n->rdzv_txid == txid) {
+      if (prev != NULL) {
+        prev->next = n->next;
+      } else {
+        g_pending_head = n->next;
+      }
+      if (g_pending_tail == n) {
+        g_pending_tail = prev;
+      }
+      free(n);
+      found = true;
+      break;
+    }
+  }
+  net_cq_unlock();
+  return found;
+}
+
+static void net_selfcheck_arrived(void *arg) {
+  atomic_store_explicit((_Atomic bool *)arg, true, memory_order_release);
+}
+
+void arts_net_selfcheck(void) {
+  if (!g_net.is_cxi) {
+    return;
+  }
+  /* A provider can advertise an immediate-data size and still have its
+   * write-with-immediate op configured out at runtime (an environment gate),
+   * which nothing before the first real transfer would surface.  One
+   * self-addressed PUT through the ordinary rendezvous plane proves both op
+   * availability and the plane's one ordering axiom ("imm seen => landing
+   * valid") at init, where the failure carries a name instead of killing the
+   * first payload mid-application.  Runs single-threaded, after the address
+   * exchange and before any runtime thread exists, so it reaps the CQ
+   * without dispatching (a dispatch would run peer handlers against a
+   * runtime not yet built) and consumes its own rendezvous node directly. */
+  enum { SELFCHECK_LEN = 64 };
+  uint8_t *dst = (uint8_t *)arts_regpool_alloc_aligned(SELFCHECK_LEN, 64);
+  uint8_t *src = (uint8_t *)arts_regpool_alloc_aligned(SELFCHECK_LEN, 64);
+  if (dst == NULL || src == NULL) {
+    ARTS_ERROR("arts_net: selfcheck buffer allocation failed");
+  }
+  memset(src, 0x5A, SELFCHECK_LEN);
+  memset(dst, 0, SELFCHECK_LEN);
+  uint64_t raddr = 0;
+  uint64_t rkey = 0;
+  if (!arts_net_rdzv_local(dst, SELFCHECK_LEN, &raddr, &rkey)) {
+    ARTS_ERROR("arts_net: selfcheck landing is not fabric-registered");
+  }
+  uint64_t txid = arts_net_rdzv_txid_next();
+  _Atomic bool done = false;
+  arts_net_rdzv_expect(txid, net_selfcheck_arrived, &done);
+  arts_net_put_payload((int)arts_global_rank_id, raddr, rkey, txid, src,
+                       SELFCHECK_LEN, NULL, NULL);
+  struct timespec start;
+  (void)clock_gettime(CLOCK_MONOTONIC, &start);
+  while (!atomic_load_explicit(&done, memory_order_acquire)) {
+    net_reap_no_dispatch();
+    if (net_pending_take_rdzv(txid)) {
+      net_rdzv_data_arrived(txid); /* fires the expectation on this stack */
+    }
+    struct timespec now;
+    (void)clock_gettime(CLOCK_MONOTONIC, &now);
+    if (now.tv_sec - start.tv_sec >= 5) {
+      ARTS_ERROR("arts_net: one-sided write-with-immediate against this "
+                 "rank's own memory did not complete in 5s — the provider's "
+                 "immediate path is unavailable or unpaired (on cxi: the "
+                 "FI_CXI_ENABLE_WRITEDATA gate, or no FI_MR_PROV_KEY "
+                 "instance)");
+    }
+  }
+  for (unsigned i = 0; i < SELFCHECK_LEN; i++) {
+    if (dst[i] != 0x5A) {
+      ARTS_ERROR("arts_net: selfcheck landing byte %u is %02x, not the "
+                 "written pattern — the immediate outran the write's bytes",
+                 i, dst[i]);
+    }
+  }
+  arts_regpool_free(dst);
+  arts_regpool_free(src);
+  ARTS_INFO("arts_net: one-sided immediate selfcheck passed");
+}
+
+/* ------------------------------------------------------------------------- */
 /* Bootstrap glue                                                              */
 /* ------------------------------------------------------------------------- */
 
@@ -1104,6 +1226,22 @@ void arts_net_init(const char *provider, const char *fabric_domain,
       !provider_pinned && env_provider != NULL && env_provider[0] != '\0';
   bool tcp_first = !provider_pinned && !env_pinned;
 
+  /* The provider the request names — needed BEFORE the first libfabric call:
+   * cxi requires two adaptations committed ahead of matching (an environment
+   * gate read when the provider library initializes, and an mr_mode offer),
+   * and the interface-bind decision below keys on the same string. */
+  const char *effective_provider =
+      provider_pinned ? provider : (env_pinned ? env_provider : NULL);
+  bool cxi_effective = net_provider_names_cxi(effective_provider);
+  if (cxi_effective) {
+    /* The data plane is one-sided fi_writedata; the cxi provider compiles
+     * that op out of its RMA ops unless this variable is set when the
+     * provider library initializes (first fi_getinfo).  An ambient 0 is
+     * always wrong for this runtime, so overwrite deliberately. */
+    setenv("FI_CXI_ENABLE_WRITEDATA", "1", 1);
+    ARTS_INFO("arts_net: cxi requested — FI_CXI_ENABLE_WRITEDATA=1");
+  }
+
   struct fi_info *hints = fi_allocinfo();
   if (hints == NULL) {
     ARTS_ERROR("arts_net: fi_allocinfo failed");
@@ -1125,9 +1263,14 @@ void arts_net_init(const char *provider, const char *fabric_domain,
   hints->tx_attr->msg_order = FI_ORDER_SAS;
   hints->rx_attr->msg_order = FI_ORDER_SAS;
   /* Offer the common mr_mode bits and accept whatever subset the provider
-   * requires (the tcp provider requires none). */
+   * requires (the tcp provider requires none).  FI_MR_ENDPOINT is offered
+   * only when the request names a provider that requires it: a layering
+   * provider (rxm) propagates the offered set into what it asks its core
+   * for, so an unconditional offer would perturb stacks this change has no
+   * way to regression-test. */
   hints->domain_attr->mr_mode =
-      FI_MR_LOCAL | FI_MR_ALLOCATED | FI_MR_PROV_KEY | FI_MR_VIRT_ADDR;
+      FI_MR_LOCAL | FI_MR_ALLOCATED | FI_MR_PROV_KEY | FI_MR_VIRT_ADDR |
+      (cxi_effective ? FI_MR_ENDPOINT : 0);
   if (provider_pinned) {
     /* fi_freeinfo() below frees fabric_attr->prov_name itself, so it must be
      * a heap string fi_getinfo/fi_freeinfo owns from here on, not the cfg's
@@ -1143,10 +1286,8 @@ void arts_net_init(const char *provider, const char *fabric_domain,
 
   /* Source-interface bind, IP providers only.  The effective provider is an
    * IP one when it was explicitly named tcp/sockets, or when the tcp-first
-   * default is in play.  For anything else (verbs, shm, ...) an interface
+   * default is in play.  For anything else (verbs, cxi, ...) an interface
    * name is meaningless — addressing there is by fabric domain. */
-  const char *effective_provider =
-      provider_pinned ? provider : (env_pinned ? env_provider : NULL);
   bool ip_provider =
       tcp_first ||
       (effective_provider != NULL && (strcmp(effective_provider, "tcp") == 0 ||
@@ -1200,27 +1341,78 @@ void arts_net_init(const char *provider, const char *fabric_domain,
                provider_pinned ? provider : "", fi_strerror(-rc));
   }
 
-  g_net.mr_mode = (uint32_t)g_net.info->domain_attr->mr_mode;
+  if (tcp_first) {
+    /* Auto-selection can never reach a provider that needs pre-getinfo
+     * adaptations (the cxi_effective gates above), so on a host that HAS
+     * such a fabric an unpinned run would silently measure tcp over it.
+     * One extra probe makes that loud. */
+    struct fi_info *cxi_hints = fi_allocinfo();
+    if (cxi_hints != NULL) {
+      cxi_hints->ep_attr->type = FI_EP_RDM;
+      cxi_hints->fabric_attr->prov_name = strdup("cxi");
+      cxi_hints->domain_attr->mr_mode =
+          FI_MR_LOCAL | FI_MR_ALLOCATED | FI_MR_PROV_KEY | FI_MR_VIRT_ADDR |
+          FI_MR_ENDPOINT;
+      struct fi_info *cxi_avail = NULL;
+      if (fi_getinfo(FI_VERSION(FI_MAJOR_VERSION, FI_MINOR_VERSION), NULL,
+                     NULL, 0, cxi_hints, &cxi_avail) == 0 &&
+          cxi_avail != NULL) {
+        ARTS_WARN("arts_net: a cxi fabric is present but tcp was "
+                  "auto-selected — set provider=cxi to use it");
+        fi_freeinfo(cxi_avail);
+      }
+      fi_freeinfo(cxi_hints);
+    }
+  }
+
+  /* Instance selection.  fi_getinfo returns instances in the provider's own
+   * order, and a provider may expose both provider-assigned-key and
+   * client-key instances that each satisfy the offered mr_mode superset.
+   * The one-sided immediate path needs provider-assigned keys where the
+   * provider ties its immediate support to them (cxi does), so on that path
+   * take the first FI_MR_PROV_KEY instance rather than trusting the head's
+   * ordering. */
+  struct fi_info *use = g_net.info;
+  if (cxi_effective) {
+    while (use != NULL &&
+           !(use->domain_attr->mr_mode & FI_MR_PROV_KEY)) {
+      use = use->next;
+    }
+    if (use == NULL) {
+      ARTS_ERROR("arts_net: provider %s matched only client-key MR "
+                 "instances — one-sided immediates need FI_MR_PROV_KEY "
+                 "(check FI_CXI_ODP / provider defaults)",
+                 effective_provider);
+    }
+  }
+  {
+    const char *pn = use->fabric_attr->prov_name;
+    /* Exact core name, tolerating a hook suffix ("cxi;ofi_hook_perf"). */
+    g_net.is_cxi = pn != NULL && strncmp(pn, "cxi", 3) == 0 &&
+                   (pn[3] == '\0' || pn[3] == ';');
+  }
+
+  g_net.mr_mode = (uint32_t)use->domain_attr->mr_mode;
   g_net.mr_local = (g_net.mr_mode & FI_MR_LOCAL) != 0;
-  g_net.inject_size = g_net.info->tx_attr->inject_size;
-  g_net.max_msg = g_net.info->ep_attr->max_msg_size;
-  g_net.tx_order = g_net.info->tx_attr->msg_order;
+  g_net.inject_size = use->tx_attr->inject_size;
+  g_net.max_msg = use->ep_attr->max_msg_size;
+  g_net.tx_order = use->tx_attr->msg_order;
 
   /* The rendezvous txid is receiver-allocated and 32-bit by design, sized to
    * the narrowest immediate a real fabric grants (InfiniBand write-with-imm
    * carries 4 bytes; tcp grants 8).  A provider below even that would
    * silently truncate the immediate and pair the wrong transfers. */
-  if (g_net.info->domain_attr->cq_data_size < sizeof(uint32_t)) {
+  if (use->domain_attr->cq_data_size < sizeof(uint32_t)) {
     ARTS_ERROR("arts_net: provider cq_data_size %zu < 4 — rendezvous txids "
                "need at least a 32-bit immediate",
-               g_net.info->domain_attr->cq_data_size);
+               use->domain_attr->cq_data_size);
   }
 
-  rc = fi_fabric(g_net.info->fabric_attr, &g_net.fabric, NULL);
+  rc = fi_fabric(use->fabric_attr, &g_net.fabric, NULL);
   if (rc != 0) {
     ARTS_ERROR("arts_net: fi_fabric failed: %s", fi_strerror(-rc));
   }
-  rc = fi_domain(g_net.fabric, g_net.info, &g_net.domain, NULL);
+  rc = fi_domain(g_net.fabric, use, &g_net.domain, NULL);
   if (rc != 0) {
     ARTS_ERROR("arts_net: fi_domain failed: %s", fi_strerror(-rc));
   }
@@ -1242,7 +1434,7 @@ void arts_net_init(const char *provider, const char *fabric_domain,
     ARTS_ERROR("arts_net: fi_cq_open failed: %s", fi_strerror(-rc));
   }
 
-  rc = fi_endpoint(g_net.domain, g_net.info, &g_net.ep, NULL);
+  rc = fi_endpoint(g_net.domain, use, &g_net.ep, NULL);
   if (rc != 0) {
     ARTS_ERROR("arts_net: fi_endpoint failed: %s", fi_strerror(-rc));
   }
@@ -1268,12 +1460,20 @@ void arts_net_init(const char *provider, const char *fabric_domain,
   }
 
   ARTS_INFO("arts_net: fabric up provider=%s inject_size=%zu mr_mode=0x%x "
-            "mr_local=%d multi_recv=%uMiB max_msg=%zu msg_order=0x%llx sas=%d",
-            g_net.info->fabric_attr->prov_name, g_net.inject_size, g_net.mr_mode,
+            "mr_local=%d multi_recv=%uMiB max_msg=%zu msg_order=0x%llx sas=%d "
+            "mr_cnt=%zu",
+            use->fabric_attr->prov_name, g_net.inject_size, g_net.mr_mode,
             g_net.mr_local,
             (unsigned)(ARTS_NET_RECV_BUF_SIZE / (1024 * 1024)), g_net.max_msg,
             (unsigned long long)g_net.tx_order,
-            (g_net.tx_order & FI_ORDER_SAS) == FI_ORDER_SAS);
+            (g_net.tx_order & FI_ORDER_SAS) == FI_ORDER_SAS,
+            use->domain_attr->mr_cnt);
+}
+
+struct fid_ep *arts_net_mr_endpoint(void) {
+  /* Endpoint-bound registration is a negotiated property, not a request:
+   * non-NULL exactly when the matched instance demands FI_MR_ENDPOINT. */
+  return (g_net.mr_mode & FI_MR_ENDPOINT) != 0 ? g_net.ep : NULL;
 }
 
 void arts_net_rx_arm(void) {
@@ -1369,17 +1569,41 @@ void arts_net_quiesce(void) {
     net_reap_tx_only();
   }
 
-  /* Close the endpoint (cancels the posted recvs), then the CQ and AV. */
+  /* Endpoint-bound registrations hold references the endpoint cannot close
+   * under (fi_close would return -FI_EBUSY and the endpoint would leak, then
+   * the domain behind it).  The pool's MRs serve remote access only — no
+   * local descriptor references them on such a provider (no FI_MR_LOCAL) —
+   * so closing them first at this single-threaded point only makes a peer's
+   * still-in-flight PUT fail at the NIC, the same exposure the endpoint
+   * close below already creates.  Providers WITH FI_MR_LOCAL keep today's
+   * order: their posted recvs hold MR descriptors until the endpoint close
+   * cancels them, so their MRs must outlive the endpoint. */
+  if ((g_net.mr_mode & FI_MR_ENDPOINT) != 0) {
+    arts_regpool_unregister();
+  }
+
+  /* Close the endpoint (cancels the posted recvs), then the CQ and AV.  The
+   * returns are checked: a -FI_EBUSY here means a close-ordering invariant
+   * broke and the object (and everything behind it) leaks. */
   if (g_net.ep != NULL) {
-    fi_close(&g_net.ep->fid);
+    int crc = fi_close(&g_net.ep->fid);
+    if (crc != 0) {
+      ARTS_WARN("arts_net: fi_close(ep) failed: %s", fi_strerror(-crc));
+    }
     g_net.ep = NULL;
   }
   if (g_net.cq != NULL) {
-    fi_close(&g_net.cq->fid);
+    int crc = fi_close(&g_net.cq->fid);
+    if (crc != 0) {
+      ARTS_WARN("arts_net: fi_close(cq) failed: %s", fi_strerror(-crc));
+    }
     g_net.cq = NULL;
   }
   if (g_net.av != NULL) {
-    fi_close(&g_net.av->fid);
+    int crc = fi_close(&g_net.av->fid);
+    if (crc != 0) {
+      ARTS_WARN("arts_net: fi_close(av) failed: %s", fi_strerror(-crc));
+    }
     g_net.av = NULL;
   }
 
@@ -1399,11 +1623,17 @@ void arts_net_teardown(void) {
    * every slab MR (which backed both sends and the recv buffers), so nothing
    * registered outlives its domain — close the domain, then the fabric. */
   if (g_net.domain != NULL) {
-    fi_close(&g_net.domain->fid);
+    int crc = fi_close(&g_net.domain->fid);
+    if (crc != 0) {
+      ARTS_WARN("arts_net: fi_close(domain) failed: %s", fi_strerror(-crc));
+    }
     g_net.domain = NULL;
   }
   if (g_net.fabric != NULL) {
-    fi_close(&g_net.fabric->fid);
+    int crc = fi_close(&g_net.fabric->fid);
+    if (crc != 0) {
+      ARTS_WARN("arts_net: fi_close(fabric) failed: %s", fi_strerror(-crc));
+    }
     g_net.fabric = NULL;
   }
   if (g_net.info != NULL) {

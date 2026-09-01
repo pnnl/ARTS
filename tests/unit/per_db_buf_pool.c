@@ -22,7 +22,7 @@ int main(void) {
    * from the registered pool, so this standalone test must init it itself,
    * the same precondition arts_runtime_node_init establishes before any
    * real worker/receiver thread runs. */
-  assert(arts_regpool_init(NULL, (size_t)64 * 1024 * 1024, 1));
+  assert(arts_regpool_init(NULL, NULL, (size_t)64 * 1024 * 1024, 1));
 
   struct arts_db_cache_s c;
   const uint64_t sz = 128;

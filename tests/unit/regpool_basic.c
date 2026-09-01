@@ -37,7 +37,7 @@ static void touch(void *p, size_t size) {
 }
 
 int main(void) {
-  bool ok = arts_regpool_init(NULL, SLAB_BYTES, 1);
+  bool ok = arts_regpool_init(NULL, NULL, SLAB_BYTES, 1);
   assert(ok && "regpool_init(NULL domain, 64 MiB, 1 node) must succeed");
 
   static void *ptrs[N_ALLOC];

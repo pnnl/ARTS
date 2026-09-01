@@ -43,21 +43,26 @@ PROFILE_FIELDS: list[FieldSpec] = [
     FieldSpec("provider", "provider", "choice",
               "data plane: tcp anywhere, verbs;ofi_rxm on InfiniBand (one "
               "unit — the runtime needs RDM endpoints, which verbs offers "
-              "only through the rxm layer, so bare verbs never matches). "
-              "auto lets the runtime pick, which prefers tcp",
-              choices=("auto", "tcp", "verbs;ofi_rxm"), none_choice="auto",
+              "only through the rxm layer, so bare verbs never matches), "
+              "cxi on HPE Slingshot (native RDM, named bare — the runtime "
+              "commits its cxi adaptations only when asked, so auto never "
+              "picks it). auto lets the runtime pick, which prefers tcp",
+              choices=("auto", "tcp", "verbs;ofi_rxm", "cxi"),
+              none_choice="auto",
               optional=True, section="transport"),
     FieldSpec("net_interface", "interface", "text",
               "IP providers only (tcp): binds the source address to this "
               "interface, e.g. ib0 to run tcp over IPoIB when the default "
               "route points at the management network. Naming one with no "
               "usable address is fatal rather than a silent fallback. Empty "
-              "leaves the source unconstrained; verbs ignores it entirely",
+              "leaves the source unconstrained; verbs and cxi ignore it "
+              "entirely",
               optional=True, section="transport"),
     FieldSpec("fabric_domain", "fabric domain", "text",
-              "verbs only: pins one HCA on a multi-rail host, named after the "
-              "device rather than an interface, e.g. mlx5_0. Empty takes the "
-              "provider's first domain",
+              "RDMA providers: pins one NIC on a multi-rail host, named "
+              "after the device rather than an interface — mlx5_0 on verbs, "
+              "cxi0..cxiN on Slingshot. Empty takes the provider's first "
+              "domain",
               optional=True, section="transport"),
     FieldSpec("route_table_size", "route table (2^N)", "int",
               "route table size as a power-of-two exponent: 16 = 65536 entries",

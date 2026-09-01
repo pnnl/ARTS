@@ -1461,7 +1461,7 @@ if(TARGET ocr_xsocr_static)
     target_include_directories(rwsteady_xsocr PRIVATE
         ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR})
     target_compile_definitions(rwsteady_xsocr PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
-    target_link_libraries(rwsteady_xsocr PRIVATE ocr_xsocr_static pthread)
+    target_link_libraries(rwsteady_xsocr PRIVATE ocr_xsocr_static pthread m)
     target_link_options(rwsteady_xsocr PRIVATE -no-pie -fno-pie)
     set_target_properties(rwsteady_xsocr PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
@@ -1474,7 +1474,7 @@ foreach(sfx ${ARTS_VARIANT_SUFFIXES})
     target_include_directories(rwsteady_arts_${sfx} PRIVATE
         ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR} ${OCR_INC_DIR})
     target_compile_definitions(rwsteady_arts_${sfx} PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
-    target_link_libraries(rwsteady_arts_${sfx} PRIVATE arts_static_${sfx} pthread)
+    target_link_libraries(rwsteady_arts_${sfx} PRIVATE arts_static_${sfx} pthread m)
     target_link_options(rwsteady_arts_${sfx} PRIVATE -no-pie -fno-pie)
     set_target_properties(rwsteady_arts_${sfx} PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
@@ -1487,7 +1487,7 @@ if(TARGET ocr_vdm_mpi)
         ${OCR_LIBS_ROOT}/macros/macros ${OCRVX_OCR_INC})
     target_compile_definitions(rwsteady_ocrvx PRIVATE
         ${OCR_EXT_DEFINES} "OCR_TYPE_H=vdm.h" OCR_ENABLE_EDT_NAMING)
-    target_link_libraries(rwsteady_ocrvx PRIVATE ocr_vdm_mpi)
+    target_link_libraries(rwsteady_ocrvx PRIVATE ocr_vdm_mpi m)
     target_link_options(rwsteady_ocrvx PRIVATE -no-pie -fno-pie)
     set_target_properties(rwsteady_ocrvx PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
@@ -1511,7 +1511,7 @@ foreach(sfx ${ARTS_VARIANT_SUFFIXES})
     target_include_directories(rwpriv_arts_${sfx} PRIVATE
         ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR} ${OCR_INC_DIR})
     target_compile_definitions(rwpriv_arts_${sfx} PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
-    target_link_libraries(rwpriv_arts_${sfx} PRIVATE arts_static_${sfx} pthread)
+    target_link_libraries(rwpriv_arts_${sfx} PRIVATE arts_static_${sfx} pthread m)
     target_link_options(rwpriv_arts_${sfx} PRIVATE -no-pie -fno-pie)
     set_target_properties(rwpriv_arts_${sfx} PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
@@ -1534,7 +1534,7 @@ foreach(sfx ${ARTS_VARIANT_SUFFIXES})
     target_include_directories(rwhandoff_arts_${sfx} PRIVATE
         ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR} ${OCR_INC_DIR})
     target_compile_definitions(rwhandoff_arts_${sfx} PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
-    target_link_libraries(rwhandoff_arts_${sfx} PRIVATE arts_static_${sfx} pthread)
+    target_link_libraries(rwhandoff_arts_${sfx} PRIVATE arts_static_${sfx} pthread m)
     target_link_options(rwhandoff_arts_${sfx} PRIVATE -no-pie -fno-pie)
     set_target_properties(rwhandoff_arts_${sfx} PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")

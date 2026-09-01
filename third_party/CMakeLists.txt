@@ -212,6 +212,10 @@ set(OFI_DIST_VERSION "2.6.0")
 set(OFI_DIST_URL "https://github.com/ofiwg/libfabric/releases/download/v${OFI_DIST_VERSION}/libfabric-${OFI_DIST_VERSION}.tar.bz2")
 set(OFI_DIST_SHA256 "1ee2ab6eb16462c0fe7a836f9df52b8f12309dfee3f3774aa93a86f521a8e8b1")
 
+set(LIBNL_DIST_VERSION "3.11.0")
+set(LIBNL_DIST_URL "https://github.com/thom311/libnl/releases/download/libnl3_11_0/libnl-${LIBNL_DIST_VERSION}.tar.gz")
+set(LIBNL_DIST_SHA256 "2a56e1edefa3e68a7c00879496736fdbf62fc94ed3232c0baba127ecfa76874d")
+
 # Build one hwloc from a pinned dist tarball into its own prefix.  More than
 # one consumer embeds hwloc statically, each at the release its own project
 # validates against, so version and prefix belong to the caller.
@@ -712,6 +716,255 @@ endforeach()
 string(STRIP "${RDMA_VERBS_LIBTOOL_LIBS}" RDMA_VERBS_LIBTOOL_LIBS)
 list(REMOVE_DUPLICATES RDMA_VERBS_ARCHIVES)
 
+# ---------------------------------------------------------------------------
+# cxi provider input stack (HPE Slingshot / Cassini).
+#
+# The cxi provider hard-requires: the Cassini hardware headers and the cxi
+# kernel UAPI headers (header-only), libcxi (the userspace device library),
+# libcurl and json-c (FI_CHECK_PACKAGE link checks — the provider's
+# collectives/REST path), and libnl-3 (libcxi's netlink transport).  All of
+# it is vendored so the provider compiles identically on every build host
+# and simply reports no fabrics where there is no Cassini NIC — the same
+# posture as the verbs provider above.  Everything is built static at
+# configure time into private prefixes, so the libfabric configure below
+# consumes plain absolute archive paths (single-pass linking, libtool-safe),
+# and the archives join the runtime bundle like the rdma-core set.
+#
+# libcxi is compiled directly rather than through its autotools build: its
+# upstream configure hard-demands daemon-and-utility-only dependencies
+# (libconfig/libuv/fuse/yaml) that the library proper never uses.  The
+# library is three translation units plus a one-line config.h; its only
+# library-side link dependency is libnl-3 core.
+if(ARTS_OFI_CXI)
+  # libnl's dist tarball ships grammar sources (.l/.y) without their
+  # generated scanners, so flex and bison are genuine build-host
+  # prerequisites for this stack.  A repo-local ./install/bin provisioning
+  # is honored ahead of the host toolchain.
+  find_program(ARTS_FLEX flex HINTS "${CMAKE_SOURCE_DIR}/install/bin")
+  find_program(ARTS_BISON bison HINTS "${CMAKE_SOURCE_DIR}/install/bin")
+  if(NOT ARTS_FLEX OR NOT ARTS_BISON)
+    message(FATAL_ERROR
+        "ARTS_OFI_CXI=ON requires flex and bison to build the vendored "
+        "libnl (its dist tarball ships no generated scanners).  Provision "
+        "them (e.g. under ${CMAKE_SOURCE_DIR}/install/bin) or configure "
+        "with -DARTS_OFI_CXI=OFF.")
+  endif()
+
+  set(LIBNL_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/libnl_install")
+  set(LIBNL_LIB_A "${LIBNL_INSTALL_DIR}/lib/libnl-3.a")
+  if(NOT EXISTS "${LIBNL_LIB_A}")
+    arts_fetch_dist_tarball(LIBNL_TARBALL
+        "libnl-${LIBNL_DIST_VERSION}.tar.gz"
+        "${LIBNL_DIST_URL}" "${LIBNL_DIST_SHA256}")
+    set(LIBNL_SRC_DIR "${CMAKE_BINARY_DIR}/third_party/libnl-${LIBNL_DIST_VERSION}")
+    if(NOT EXISTS "${LIBNL_SRC_DIR}/configure")
+      message(STATUS "Extracting libnl ${LIBNL_DIST_VERSION}")
+      file(ARCHIVE_EXTRACT INPUT "${LIBNL_TARBALL}"
+           DESTINATION "${CMAKE_BINARY_DIR}/third_party")
+    endif()
+    set(LIBNL_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/libnl")
+    file(MAKE_DIRECTORY "${LIBNL_BUILD_DIR}")
+    if(NOT CMAKE_BUILD_PARALLEL_LEVEL)
+      set(CMAKE_BUILD_PARALLEL_LEVEL 4)
+    endif()
+    message(STATUS "Configuring libnl ${LIBNL_DIST_VERSION}")
+    # Static only: libtool hoists a shared object's absolute path ahead of
+    # --as-needed on consumer link lines, where it is then discarded;
+    # archives keep their position.  LEX/YACC are pinned to the resolved
+    # tools so configure cannot silently pick a different host pair.
+    execute_process(
+      # libnl's configure resolves the tools through FLEX/YACC (its own
+      # prerequisite check tests $FLEX, not $LEX); LEX rides along for the
+      # generated automake rules.
+      COMMAND ${CMAKE_COMMAND} -E env CFLAGS=-fPIC
+          "FLEX=${ARTS_FLEX}" "LEX=${ARTS_FLEX}" "YACC=${ARTS_BISON} -y"
+          ${LIBNL_SRC_DIR}/configure
+          --prefix=${LIBNL_INSTALL_DIR}
+          --enable-static --disable-shared --disable-cli
+      WORKING_DIRECTORY ${LIBNL_BUILD_DIR}
+      RESULT_VARIABLE _rc)
+    if(NOT _rc EQUAL 0)
+      message(FATAL_ERROR "Failed to configure libnl")
+    endif()
+    execute_process(COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
+      WORKING_DIRECTORY ${LIBNL_BUILD_DIR} RESULT_VARIABLE _rc)
+    if(NOT _rc EQUAL 0)
+      message(FATAL_ERROR "Failed to build libnl")
+    endif()
+    execute_process(COMMAND make install
+      WORKING_DIRECTORY ${LIBNL_BUILD_DIR} RESULT_VARIABLE _rc)
+    if(NOT _rc EQUAL 0)
+      message(FATAL_ERROR "Failed to install libnl")
+    endif()
+  endif()
+
+  arts_init_submodule(third_party/cassini-headers include/cxi_prov_hw.h)
+  arts_init_submodule(third_party/cxi-driver include/uapi/misc/cxi.h)
+  arts_init_submodule(third_party/libcxi src/libcxi.c)
+  set(CASSINI_HEADERS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/cassini-headers")
+  set(CXI_DRIVER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/cxi-driver")
+
+  set(LIBCXI_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/libcxi_install")
+  set(LIBCXI_LIB_A "${LIBCXI_INSTALL_DIR}/lib/libcxi.a")
+  if(NOT EXISTS "${LIBCXI_LIB_A}")
+    set(LIBCXI_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/libcxi")
+    set(LIBCXI_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/libcxi_build")
+    file(MAKE_DIRECTORY "${LIBCXI_BUILD_DIR}")
+    # The one config.h fact the sources consult: the vendored rdma-core's
+    # rdma_netlink.h does declare RDMA_NLDEV_SYS_ATTR_COPY_ON_FORK.
+    file(WRITE "${LIBCXI_BUILD_DIR}/config.h"
+        "#define HAVE_DECL_RDMA_NLDEV_SYS_ATTR_COPY_ON_FORK 1\n")
+    set(_libcxi_objs "")
+    foreach(_src libcxi devinfo memory)
+      message(STATUS "Compiling libcxi: ${_src}.c")
+      execute_process(
+        COMMAND ${CMAKE_C_COMPILER} -O2 -fPIC
+            -I${LIBCXI_BUILD_DIR}
+            -I${LIBCXI_SRC_DIR}/include
+            -I${LIBCXI_SRC_DIR}/src
+            -I${CASSINI_HEADERS_DIR}/include
+            -I${CXI_DRIVER_DIR}/include
+            -I${CMAKE_CURRENT_SOURCE_DIR}/rdma-core/kernel-headers
+            -I${LIBNL_INSTALL_DIR}/include/libnl3
+            -c ${LIBCXI_SRC_DIR}/src/${_src}.c
+            -o ${LIBCXI_BUILD_DIR}/${_src}.o
+        RESULT_VARIABLE _rc)
+      if(NOT _rc EQUAL 0)
+        message(FATAL_ERROR "Failed to compile libcxi ${_src}.c")
+      endif()
+      list(APPEND _libcxi_objs "${LIBCXI_BUILD_DIR}/${_src}.o")
+    endforeach()
+    file(MAKE_DIRECTORY "${LIBCXI_INSTALL_DIR}/lib")
+    file(MAKE_DIRECTORY "${LIBCXI_INSTALL_DIR}/include/libcxi")
+    execute_process(
+      COMMAND ${CMAKE_AR} rcs "${LIBCXI_LIB_A}" ${_libcxi_objs}
+      RESULT_VARIABLE _rc)
+    if(NOT _rc EQUAL 0)
+      message(FATAL_ERROR "Failed to archive libcxi.a")
+    endif()
+    # Staged as <prefix>/include/libcxi/libcxi.h — the path the provider's
+    # FI_CHECK_PACKAGE probes (libcxi/libcxi.h).
+    file(COPY_FILE "${LIBCXI_SRC_DIR}/include/libcxi.h"
+         "${LIBCXI_INSTALL_DIR}/include/libcxi/libcxi.h")
+  endif()
+
+  set(THIRD_PARTY_EMPTY_PKGCONFIG "${CMAKE_BINARY_DIR}/third_party/pkgconfig_empty")
+  file(MAKE_DIRECTORY "${THIRD_PARTY_EMPTY_PKGCONFIG}")
+
+  # Minimal static curl: an HTTP client for the provider's REST path and
+  # nothing else — every TLS/compression/protocol backend is pinned off so
+  # the archive's external references cannot depend on what the build host
+  # ships.  PKG_CONFIG_LIBDIR points at an empty directory for the same
+  # reason.  Unknown -D options are warnings, so this flag set stays valid
+  # across curl's own option renames.
+  set(CURL_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/curl_install")
+  set(CURL_LIB_A "${CURL_INSTALL_DIR}/lib/libcurl.a")
+  if(NOT EXISTS "${CURL_LIB_A}")
+    arts_init_submodule(third_party/curl CMakeLists.txt)
+    set(CURL_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/curl-build")
+    message(STATUS "Configuring vendored curl")
+    execute_process(
+      COMMAND ${CMAKE_COMMAND} -E env
+          PKG_CONFIG_LIBDIR=${THIRD_PARTY_EMPTY_PKGCONFIG}
+          ${CMAKE_COMMAND} -S ${CMAKE_CURRENT_SOURCE_DIR}/curl -B ${CURL_BUILD_DIR}
+          -GNinja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+          -DCMAKE_INSTALL_PREFIX=${CURL_INSTALL_DIR}
+          -DCMAKE_INSTALL_LIBDIR=lib
+          -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+          -DBUILD_SHARED_LIBS=OFF
+          -DBUILD_STATIC_LIBS=ON
+          -DBUILD_CURL_EXE=OFF
+          -DBUILD_EXAMPLES=OFF
+          -DBUILD_TESTING=OFF
+          -DBUILD_LIBCURL_DOCS=OFF
+          -DBUILD_MISC_DOCS=OFF
+          -DENABLE_CURL_MANUAL=OFF
+          -DCURL_ENABLE_SSL=OFF
+          -DCURL_USE_LIBPSL=OFF
+          -DCURL_USE_LIBSSH2=OFF
+          -DCURL_ZLIB=OFF
+          -DCURL_BROTLI=OFF
+          -DCURL_ZSTD=OFF
+          -DUSE_NGHTTP2=OFF
+          -DUSE_LIBIDN2=OFF
+          -DCURL_DISABLE_LDAP=ON
+          -DHTTP_ONLY=ON
+      RESULT_VARIABLE _rc)
+    if(NOT _rc EQUAL 0)
+      message(FATAL_ERROR "Failed to configure vendored curl")
+    endif()
+    execute_process(COMMAND ${CMAKE_COMMAND} --build ${CURL_BUILD_DIR}
+        -j${CMAKE_BUILD_PARALLEL_LEVEL} RESULT_VARIABLE _rc)
+    if(NOT _rc EQUAL 0)
+      message(FATAL_ERROR "Failed to build vendored curl")
+    endif()
+    execute_process(COMMAND ${CMAKE_COMMAND} --install ${CURL_BUILD_DIR}
+        RESULT_VARIABLE _rc)
+    if(NOT _rc EQUAL 0)
+      message(FATAL_ERROR "Failed to install vendored curl")
+    endif()
+  endif()
+
+  set(JSONC_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/json-c_install")
+  set(JSONC_LIB_A "${JSONC_INSTALL_DIR}/lib/libjson-c.a")
+  if(NOT EXISTS "${JSONC_LIB_A}")
+    arts_init_submodule(third_party/json-c CMakeLists.txt)
+    set(JSONC_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/json-c-build")
+    message(STATUS "Configuring vendored json-c")
+    execute_process(
+      COMMAND ${CMAKE_COMMAND} -E env
+          PKG_CONFIG_LIBDIR=${THIRD_PARTY_EMPTY_PKGCONFIG}
+          ${CMAKE_COMMAND} -S ${CMAKE_CURRENT_SOURCE_DIR}/json-c -B ${JSONC_BUILD_DIR}
+          -GNinja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+          -DCMAKE_INSTALL_PREFIX=${JSONC_INSTALL_DIR}
+          -DCMAKE_INSTALL_LIBDIR=lib
+          -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+          -DBUILD_SHARED_LIBS=OFF
+          -DBUILD_STATIC_LIBS=ON
+          -DBUILD_TESTING=OFF
+          -DBUILD_APPS=OFF
+          -DDISABLE_WERROR=ON
+      RESULT_VARIABLE _rc)
+    if(NOT _rc EQUAL 0)
+      message(FATAL_ERROR "Failed to configure vendored json-c")
+    endif()
+    execute_process(COMMAND ${CMAKE_COMMAND} --build ${JSONC_BUILD_DIR}
+        -j${CMAKE_BUILD_PARALLEL_LEVEL} RESULT_VARIABLE _rc)
+    if(NOT _rc EQUAL 0)
+      message(FATAL_ERROR "Failed to build vendored json-c")
+    endif()
+    execute_process(COMMAND ${CMAKE_COMMAND} --install ${JSONC_BUILD_DIR}
+        RESULT_VARIABLE _rc)
+    if(NOT _rc EQUAL 0)
+      message(FATAL_ERROR "Failed to install vendored json-c")
+    endif()
+  endif()
+
+  # What the libfabric configure below consumes.  The provider prefix flags
+  # pin every probe to the vendored trees; the archives ride the global LIBS
+  # (absolute paths — libtool-safe) so the cxi probe's link test, which
+  # names no dependent libraries of its own, back-resolves libcxi's libnl
+  # references and the provider's curl/json-c references in one pass.
+  set(OFI_CXI_CONFIGURE_ARGS
+      --enable-cxi=${LIBCXI_INSTALL_DIR}
+      --with-cassini-headers=${CASSINI_HEADERS_DIR}
+      --with-cxi-uapi-headers=${CXI_DRIVER_DIR}
+      --with-curl=${CURL_INSTALL_DIR}
+      --with-json-c=${JSONC_INSTALL_DIR})
+  set(OFI_CXI_LIBTOOL_LIBS
+      " ${LIBCXI_LIB_A} ${LIBNL_LIB_A} ${CURL_LIB_A} ${JSONC_LIB_A}")
+  set(OFI_CXI_ARCHIVES
+      "${LIBCXI_LIB_A}" "${LIBNL_LIB_A}" "${CURL_LIB_A}" "${JSONC_LIB_A}")
+else()
+  set(OFI_CXI_CONFIGURE_ARGS "")
+  set(OFI_CXI_LIBTOOL_LIBS "")
+  set(OFI_CXI_ARCHIVES "")
+endif()
+
 message(STATUS "Building libfabric ${OFI_DIST_VERSION} from vendored dist tarball")
 
 arts_fetch_dist_tarball(OFI_TARBALL
@@ -776,21 +1029,24 @@ ExternalProject_Add(libfabric_ep
   CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env CFLAGS=-fPIC
       CPPFLAGS=-DRDMA_STATIC_PROVIDERS=all
       "LDFLAGS=-L${RDMA_CORE_INSTALL_DIR}/lib"
-      "LIBS=${RDMA_VERBS_LIBTOOL_LIBS} -lpthread -lm"
+      "LIBS=${RDMA_VERBS_LIBTOOL_LIBS}${OFI_CXI_LIBTOOL_LIBS} -lpthread -lm"
       HWLOC_DIR=${HWLOC_INSTALL_DIR}
       ${OFI_SRC_DIR}/configure
       --prefix=${OFI_PREFIX} --enable-static --disable-shared
       # Provider allowlist.  With a STATIC libfabric.a every enabled
       # provider's external libraries become link-time dependencies of every
-      # consuming binary, so providers auto-enabled by configure probing the
-      # build host (cxi, psm, ...) break the final link on any
-      # cluster that ships their headers.  --enable-only inverts the
+      # consuming binary, so a provider auto-enabled by configure probing
+      # the build host (psm, ...) breaks the final link on any
+      # cluster that ships its headers.  --enable-only inverts the
       # default: nothing builds unless named here, which makes the build
       # deterministic on every host.  verbs exposes RDM endpoints only as
       # the verbs;ofi_rxm stack, so rxm must stay enabled or every
-      # InfiniBand host silently downgrades to tcp.
+      # InfiniBand host silently downgrades to tcp.  cxi joins the
+      # allowlist when ARTS_OFI_CXI is ON, built strictly from the vendored
+      # Cassini/libcxi/curl/json-c/libnl stack above (empty args when OFF).
       --enable-only --enable-tcp --enable-rxm
       --enable-verbs=${RDMA_CORE_INSTALL_DIR}
+      ${OFI_CXI_CONFIGURE_ARGS}
       # --enable-only governs providers (FI_PROVIDER_SETUP entries) only.
       # xpmem and io_uring are standalone feature toggles whose default-on
       # host probes append to the global LIBS, so each must be pinned off
@@ -813,8 +1069,12 @@ file(MAKE_DIRECTORY ${OFI_PREFIX}/include)
 # bare name libfabric's pkgconfig records: a host whose libatomic ships only
 # as the runtime SONAME offers the linker no `-latomic` to resolve, and an
 # unresolvable name breaks every consumer that inherits this interface.
+# m is load-bearing at the end: the cxi provider's collectives reference the
+# C99 floating-point environment (fegetround) and json-c does too, and
+# single-pass static links resolve those only from a libm placed after the
+# archives.
 set(OFI_LINK_INTERFACE rt ${ARTS_ATOMIC_LINK} pthread ${CMAKE_DL_LIBS}
-    ${RDMA_VERBS_LINK_SET} ${HWLOC_LIB_A})
+    ${RDMA_VERBS_LINK_SET} ${OFI_CXI_ARCHIVES} ${HWLOC_LIB_A} m)
 
 add_library(arts::libfabric STATIC IMPORTED GLOBAL)
 set_target_properties(arts::libfabric PROPERTIES
@@ -833,7 +1093,8 @@ set_target_properties(arts::libfabric PROPERTIES
 add_dependencies(arts::libfabric libfabric_ep)
 
 list(APPEND ARTS_VENDORED_ARCHIVES
-     "${OFI_PREFIX}/lib/libfabric.a" ${RDMA_VERBS_ARCHIVES})
+     "${OFI_PREFIX}/lib/libfabric.a" ${RDMA_VERBS_ARCHIVES}
+     ${OFI_CXI_ARCHIVES})
 
 # Bundling these into a library makes their symbols part of it; naming each
 # archive here keeps them out of its dynamic exports, so nothing outside can

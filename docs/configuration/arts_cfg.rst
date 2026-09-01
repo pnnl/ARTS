@@ -132,7 +132,12 @@ Networking
    * - ``provider``
      - auto
      - libfabric provider name passed to ``fi_getinfo``'s ``prov_name`` hint
-       (``tcp``, ``verbs``, ``cxi``, etc.). Unset/empty auto-selects. When
+       (``tcp``, ``verbs;ofi_rxm``, ``cxi``). Unset/empty auto-selects.
+       InfiniBand must be spelled as the layered set ``verbs;ofi_rxm`` (the
+       verbs core is MSG-only, so a bare ``verbs`` can never match the
+       runtime's RDM request); ``cxi`` (HPE Slingshot) is native RDM and is
+       named bare — naming it is also what commits the runtime's cxi
+       adaptations before matching, so auto-selection never reaches it. When
        set, this overrides the ambient ``FI_PROVIDER`` environment variable
        for the process — the config is the deliberate, versioned artifact;
        the environment variable is ambient and host-specific.

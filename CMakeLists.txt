@@ -210,6 +210,7 @@ option(ARTS_BUILD_BASELINES  "Build native OpenMP/MPI baseline implementations" 
 option(ARTS_BUILD_XSOCR      "Build the XSOCR reference runtime" ON)
 option(ARTS_BUILD_OCRVX      "Build the ocr-vx reference runtime" ON)
 option(ARTS_BUILD_HPX        "Build HPX and the HPX benchmark apps" ON)
+option(ARTS_OFI_CXI          "Compile the libfabric cxi provider (HPE Slingshot) from the vendored Cassini/libcxi stack" ON)
 option(ARTS_BUILD_DOCS       "Build documentation (requires Doxygen + Sphinx)" OFF)
 
 # ── GPU / CUDA ─────────────────────────────────────────────────────────────

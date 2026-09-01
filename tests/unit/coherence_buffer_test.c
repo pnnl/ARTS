@@ -259,7 +259,7 @@ int main(void) {
    * draws its buffers from the registered pool, so this standalone test
    * must init it itself, the same precondition arts_runtime_node_init
    * establishes before any real worker/receiver thread runs. */
-  if (!arts_regpool_init(NULL, (size_t)64 * 1024 * 1024, 1)) {
+  if (!arts_regpool_init(NULL, NULL, (size_t)64 * 1024 * 1024, 1)) {
     (void)fprintf(stderr, "regpool_init failed\n");
     return 1;
   }

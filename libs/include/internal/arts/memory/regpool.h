@@ -46,6 +46,7 @@ extern "C" {
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h> /* FILE — the node-availability parser is stream-pure */
 
 /* Registered slab pool.
  *
@@ -66,6 +67,7 @@ extern "C" {
  * transport, or the pool is initialized with a NULL domain, these stay opaque
  * and unused: `mr` is NULL and `rkey` is 0. */
 struct fid_domain;
+struct fid_ep;
 struct fid_mr;
 
 /* One registered slab.  A slab backs either an allocator arena (many
@@ -82,18 +84,36 @@ typedef struct arts_regpool_mr_s {
 } arts_regpool_mr_t;
 
 /* Initialize the pool: detect NUMA topology (numa_nodes==0 auto-detects),
- * carve one slab per node, bind it, register it against `domain_or_null`, and
- * hand it to a per-node allocator arena.  A NULL domain skips registration
- * (single-node runs / unit tests) while carving arenas identically, so
- * allocation behavior is unchanged.  `slab_bytes` is rounded up to the
+ * carve one slab per node (best-effort: a node without room is refused with
+ * a warning and left without an arena — its threads are then served from a
+ * fallback node's arena and the node joins the pool when a later demand-time
+ * grow succeeds; only ZERO carved nodes fails the init), bind each slab,
+ * register it against `domain_or_null`, and hand it to a per-node allocator
+ * arena.  A NULL domain skips registration (single-node runs / unit tests)
+ * while carving arenas identically, so allocation behavior is unchanged.  A non-NULL `ep_or_null` selects the
+ * endpoint-bound registration discipline some providers require
+ * (FI_MR_ENDPOINT): each slab MR is bound to that endpoint and enabled after
+ * registration, and its remote key is read only after the enable — the
+ * endpoint must already be enabled, and it must outlive every registered
+ * slab (see arts_regpool_unregister).  `slab_bytes` is rounded up to the
  * allocator's minimum arena granularity.  Returns false if already
  * initialized or a slab could not be mapped/registered. */
-bool arts_regpool_init(struct fid_domain *domain_or_null, size_t slab_bytes,
+bool arts_regpool_init(struct fid_domain *domain_or_null,
+                       struct fid_ep *ep_or_null, size_t slab_bytes,
                        unsigned int numa_nodes);
 
 /* Release pool bookkeeping and unregister every slab.  Must be called only at
  * teardown with no thread still allocating from the pool. */
 void arts_regpool_cleanup(void);
+
+/* Close every live slab registration and detach the pool from the fabric
+ * (domain and endpoint references cleared): later allocations still succeed
+ * but are no longer fabric-registered, and later cleanup skips the closed
+ * handles.  Exists for endpoint-bound registrations, whose MRs hold
+ * references the endpoint cannot close under — the transport calls this
+ * before closing its endpoint.  Single-threaded teardown only, like
+ * arts_regpool_cleanup. */
+void arts_regpool_unregister(void);
 
 /* Allocate `size` bytes aligned to at least `align` (floored to the payload
  * alignment invariant) from the calling thread's NUMA-local arena, growing the
@@ -121,6 +141,15 @@ const arts_regpool_mr_t *arts_regpool_lookup(const void *p);
  * Called automatically when an arena is exhausted; exposed so callers can
  * pre-grow.  Returns false if the slab could not be created. */
 bool arts_regpool_grow(int numa_node);
+
+/* Availability estimate over one NUMA node's meminfo stream: free pages
+ * plus reclaimable file cache (the file LRU lists minus writeback-bound
+ * pages, discounted by half — the kernel's own MemAvailable haircut), so a
+ * cache-heavy node is not misjudged as full while an anon-full node still
+ * reports ~MemFree.  SIZE_MAX when MemFree cannot be read (unknown must
+ * not veto growth); MemFree alone when the LRU fields are absent.  Pure
+ * over the stream — exposed for hermetic testing. */
+size_t arts_regpool_parse_node_avail(FILE *f);
 
 #ifdef __cplusplus
 }

@@ -125,11 +125,16 @@ void arts_runtime_node_init(struct arts_config_s *config) {
   if (arts_global_rank_count > 1) {
     arts_net_init(config->provider, config->fabric_domain,
                   config->net_interface);
-    if (!arts_regpool_init(arts_net_domain(), regpool_slab_bytes, 0)) {
+    if (!arts_regpool_init(arts_net_domain(), arts_net_mr_endpoint(),
+                           regpool_slab_bytes, 0)) {
       ARTS_ERROR("arts_runtime_node_init: registered pool init failed");
     }
     arts_net_rx_arm();
     arts_net_exchange_addresses();
+    /* Providers whose one-sided immediate path can be configured out prove
+     * it now, against this rank's own memory, so a misconfiguration fails
+     * here by name instead of at the first DB payload (no-op elsewhere). */
+    arts_net_selfcheck();
     /* Bootstrap is complete: the fi-address exchange was the last payload to
      * ride the TCP mesh.  All live traffic now flows over the fabric; the mesh
      * connections stay open as zero-traffic liveness sentinels (a peer's death
@@ -137,7 +142,7 @@ void arts_runtime_node_init(struct arts_config_s *config) {
      * close. */
     arts_socket_sentinel_arm();
   } else {
-    if (!arts_regpool_init(NULL, regpool_slab_bytes, 0)) {
+    if (!arts_regpool_init(NULL, NULL, regpool_slab_bytes, 0)) {
       ARTS_ERROR("arts_runtime_node_init: registered pool init failed");
     }
   }

@@ -632,8 +632,8 @@ def test_switching_the_launcher_switches_the_sections():
 
 
 def test_the_provider_offers_only_what_the_transport_builds():
-    # The vendored libfabric enables tcp and verbs; auto leaves the choice to
-    # the runtime, which is stored as no provider at all.
+    # The vendored libfabric enables tcp, verbs and cxi; auto leaves the
+    # choice to the runtime, which is stored as no provider at all.
     async def check(app, pilot):
         from textual.widgets import Select
 
@@ -650,8 +650,9 @@ def test_the_provider_offers_only_what_the_transport_builds():
     if options is not None:
         # verbs;ofi_rxm is ONE unit: the runtime needs RDM endpoints, which
         # the MSG-only verbs core provider offers only through the rxm layer,
-        # so a bare "verbs" can never match and is not offered.
-        assert options == ["auto", "tcp", "verbs;ofi_rxm"]
+        # so a bare "verbs" can never match and is not offered.  cxi is the
+        # opposite: native RDM, so the bare core name is the only spelling.
+        assert options == ["auto", "tcp", "verbs;ofi_rxm", "cxi"]
 
 
 def test_optional_fields_show_an_example_without_setting_it():

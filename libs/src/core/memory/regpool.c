@@ -90,6 +90,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h> /* posix_memalign / free — non-mimalloc fallback path */
 #include <string.h>
 
@@ -97,6 +98,69 @@
 
 #include <rdma/fabric.h>
 #include <rdma/fi_domain.h>
+#include <rdma/fi_endpoint.h> /* struct fid_ep for endpoint-bound MRs */
+
+/* Per-node availability estimate over one node's meminfo stream.
+ *
+ * MemFree alone misjudges a node whose RAM is file cache: those pages are
+ * reclaimed on demand by the very fault path that populates a bound
+ * mapping, so a cache-heavy node is healthy, not full.  Count the file LRU
+ * lists — which exclude unevictable/mlocked pages by construction — minus
+ * the pages whose reclaim must first complete writeback, discounted by
+ * half: the same haircut the kernel's own MemAvailable applies to page
+ * cache.  An anon-heavy node keeps avail ~= MemFree and is still refused
+ * by the callers' clamps, which is the guard against faulting a strictly
+ * bound range on a node with nothing left to reclaim.
+ *
+ * Contract: SIZE_MAX when MemFree cannot be read (unknown must not veto
+ * growth); MemFree alone when the LRU fields are absent.  Allocator-
+ * independent and pure over the stream, so it is testable in isolation. */
+size_t arts_regpool_parse_node_avail(FILE *f) {
+  unsigned long memfree_kb = 0;
+  unsigned long act_kb = 0;
+  unsigned long inact_kb = 0;
+  unsigned long dirty_kb = 0;
+  unsigned long wb_kb = 0;
+  unsigned long nfs_kb = 0;
+  unsigned long wbtmp_kb = 0;
+  bool have_free = false;
+  bool have_act = false;
+  bool have_inact = false;
+  char line[192];
+  while (fgets(line, sizeof(line), f) != NULL) {
+    unsigned long v;
+    if (sscanf(line, "Node %*d MemFree: %lu", &v) == 1) {
+      memfree_kb = v;
+      have_free = true;
+    } else if (sscanf(line, "Node %*d Active(file): %lu", &v) == 1) {
+      act_kb = v;
+      have_act = true;
+    } else if (sscanf(line, "Node %*d Inactive(file): %lu", &v) == 1) {
+      inact_kb = v;
+      have_inact = true;
+    } else if (sscanf(line, "Node %*d Dirty: %lu", &v) == 1) {
+      dirty_kb = v;
+    } else if (sscanf(line, "Node %*d Writeback: %lu", &v) == 1) {
+      wb_kb = v;
+    } else if (sscanf(line, "Node %*d NFS_Unstable: %lu", &v) == 1) {
+      nfs_kb = v;
+    } else if (sscanf(line, "Node %*d WritebackTmp: %lu", &v) == 1) {
+      wbtmp_kb = v;
+    }
+  }
+  if (!have_free) {
+    return SIZE_MAX;
+  }
+  size_t avail_kb = memfree_kb;
+  if (have_act && have_inact) {
+    unsigned long file_kb = act_kb + inact_kb;
+    unsigned long inflight_kb = dirty_kb + wb_kb + nfs_kb + wbtmp_kb;
+    if (file_kb > inflight_kb) {
+      avail_kb += (size_t)(file_kb - inflight_kb) / 2;
+    }
+  }
+  return avail_kb * 1024;
+}
 
 /* ------------------------------------------------------------------------- */
 /* The pool is meaningful only with an arena-capable allocator.  Without one   */
@@ -146,6 +210,10 @@
 #define REGPOOL_SLAB_CAP ((size_t)16 * 1024 * 1024 * 1024)
 /* Payload alignment floor (matches the DB/CXL 64-byte payload invariant). */
 #define REGPOOL_ALIGN_FLOOR ((size_t)64)
+/* Held back from a node's availability estimate before any bound mapping is
+ * sized against it — room for the kernel and concurrent consumers, so a
+ * strict-bind populate never races the node to its last page. */
+#define REGPOOL_NODE_HEADROOM ((size_t)2 * 1024 * 1024 * 1024)
 
 /* One slab record.  The embedded public view is what lookups return; the extra
  * fields drive free() and growth. */
@@ -166,6 +234,12 @@ typedef struct regpool_slab_s {
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static bool g_inited;
 static struct fid_domain *g_domain;
+/* Non-NULL selects the endpoint-bound registration discipline
+ * (FI_MR_ENDPOINT): every MR is bound to this endpoint and enabled after
+ * registration, and the remote key is read only after the enable.  The
+ * endpoint must outlive every registration — arts_regpool_unregister exists
+ * so the transport can close all MRs before closing it. */
+static struct fid_ep *g_ep;
 static size_t g_slab_bytes;
 static unsigned g_numa_nodes;
 
@@ -195,6 +269,27 @@ static unsigned g_node_grow_count[REGPOOL_MAX_NODES];
  * re-tried by every allocation that prefers it, and each retry would print.
  * Guarded by g_lock (set and cleared only inside a grow). */
 static bool g_node_full_warned[REGPOOL_MAX_NODES];
+
+/* Memoized serving node for a node with no arena of its own (refused at
+ * init, not yet recovered): -1 = none chosen yet.  Placement is a
+ * preference, never a reason to refuse memory that exists, so such a
+ * node's threads are served from the fallback's arena on the fast path;
+ * the node's own arena is re-checked on every allocation, so a later
+ * successful grow reclaims its threads automatically and the memo goes
+ * stale unused. */
+static _Atomic int g_node_fallback[REGPOOL_MAX_NODES];
+
+/* Diagnostic override: nodes listed (comma-separated) in
+ * ARTS_REGPOOL_FORCE_FULL_NODES report zero available bytes, so the
+ * refusal and fallover paths are exercisable deterministically without
+ * starving a machine.  Parsed once at init, under g_lock. */
+static uint64_t g_forced_full;
+
+/* Kernels predating the populate advice report EINVAL; there demand
+ * faulting is the only behavior available and the pre-populate guard
+ * degrades to the availability clamp alone — as it always was on such
+ * kernels.  Latched on first sight (map_slab always runs under g_lock). */
+static bool g_populate_unsupported;
 
 /* Per-thread allocator heap, bound to one exclusive arena at a time.  The
  * binding moves on exhaustion (see regpool_thread_bind); the superseded heap
@@ -268,27 +363,23 @@ static void regpool_bind_numa(void *base, size_t len, int node) {
                 (unsigned long)(sizeof(mask) * 8), 0UL);
 }
 
-/* Free bytes on one NUMA node, or SIZE_MAX when the kernel does not expose
- * it (no sysfs, single-node) — unknown must not veto growth. */
-static size_t regpool_node_free_bytes(int node) {
+/* Bytes one NUMA node can still give a bound mapping (see
+ * arts_regpool_parse_node_avail for the estimate), or SIZE_MAX when the
+ * kernel does not expose it (no sysfs, single-node) — unknown must not
+ * veto growth. */
+static size_t regpool_node_avail_bytes(int node) {
+  if (node >= 0 && node < (int)REGPOOL_MAX_NODES &&
+      (g_forced_full & (1ULL << (unsigned)node)) != 0) {
+    return 0;
+  }
   char path[64];
   snprintf(path, sizeof path, "/sys/devices/system/node/node%d/meminfo", node);
   FILE *f = fopen(path, "r");
   if (f == NULL)
     return SIZE_MAX;
-  char line[128];
-  size_t kb = 0;
-  bool found = false;
-  while (fgets(line, sizeof line, f) != NULL) {
-    unsigned long v;
-    if (sscanf(line, "Node %*d MemFree: %lu kB", &v) == 1) {
-      kb = (size_t)v;
-      found = true;
-      break;
-    }
-  }
+  size_t r = arts_regpool_parse_node_avail(f);
   fclose(f);
-  return found ? kb * 1024 : SIZE_MAX;
+  return r;
 }
 
 /* Map `len` bytes aligned to `align`, NUMA-bind, and (when a domain is set)
@@ -329,13 +420,39 @@ static bool regpool_map_slab(int node, size_t len, size_t align, void **out_base
    * process never observes: the allocator hands out addresses against the
    * not-yet-resident range, the cross-node fallback cascade never sees a
    * failure, and the process dies silently at the touch.  Populating at
-   * map time closes that window for the slab's whole lifetime.  The size
-   * was clamped to the node's free bytes by the grow that requested this
-   * slab (MADV_POPULATE_WRITE cannot report bind-exhaustion itself — the
-   * population walks the ordinary fault path, so only sizing within the
-   * node keeps the constrained OOM killer out of reach).  The cost is
+   * map time narrows that window to slab creation — and the population's
+   * RESULT must be honored for even that to hold: it can stop early on a
+   * signal (EINTR/EAGAIN) or fail outright (EFAULT and kin), and a
+   * partially populated slab would fault its tail later under the strict
+   * bind.  Interruptions are retried over the whole range (populated pages
+   * are cheap no-ops); a real failure fails the map so the caller can step
+   * down or relocate.  What the return can NOT report is bind exhaustion
+   * itself — that dies inside the fault path as a constrained OOM — so the
+   * availability clamp and its headroom remain the guard against
+   * over-sizing; this check covers the reportable failures.  The cost is
    * that a slab commits in full at creation. */
-  (void)madvise(base, len, MADV_POPULATE_WRITE);
+  if (!g_populate_unsupported) {
+    for (int tries = 0;; tries++) {
+      if (madvise(base, len, MADV_POPULATE_WRITE) == 0) {
+        break;
+      }
+      if (errno == EINVAL) {
+        /* Unsupported advice on this kernel — a fresh anonymous mapping
+         * admits no other reading of EINVAL.  Not a failure: fall back to
+         * demand faulting for the process lifetime. */
+        g_populate_unsupported = true;
+        ARTS_WARN("regpool: MADV_POPULATE_WRITE unsupported by this kernel "
+                  "— slabs fall back to demand faulting");
+        break;
+      }
+      if ((errno != EINTR && errno != EAGAIN) || tries >= 1000) {
+        ARTS_WARN("regpool: populate(%zu MiB) failed: %s", len >> 20,
+                  strerror(errno));
+        munmap(base, len);
+        return false;
+      }
+    }
+  }
 
   struct fid_mr *mr = NULL;
   uint64_t rkey = 0;
@@ -354,7 +471,27 @@ static bool regpool_map_slab(int node, size_t len, size_t align, void **out_base
       munmap(base, len);
       return false;
     }
+    if (g_ep != NULL) {
+      /* Endpoint-bound discipline: the region becomes usable only after it
+       * is bound to the endpoint and enabled, and with provider-assigned
+       * keys the key exists only after the enable. */
+      rc = fi_mr_bind(mr, &g_ep->fid, 0);
+      if (rc == 0) {
+        rc = fi_mr_enable(mr);
+      }
+      if (rc != 0) {
+        ARTS_WARN("regpool: fi_mr_bind/enable(%zu MiB) failed: %s", len >> 20,
+                  fi_strerror((int)-rc));
+        fi_close(&mr->fid);
+        munmap(base, len);
+        return false;
+      }
+    }
     rkey = fi_mr_key(mr);
+    if (g_ep != NULL && rkey == FI_KEY_NOTAVAIL) {
+      ARTS_ERROR("regpool: MR key unavailable after enable — provider broke "
+                 "the key-after-enable contract");
+    }
   }
 
   *out_base = base;
@@ -479,26 +616,29 @@ static bool regpool_grow_locked(int node) {
       want = g_slab_bytes;
   }
   /* Under the strict NUMA bind a slab must also fit the NODE, not just the
-   * machine: populating a bound range on a full node is answered by the
-   * mempolicy-constrained OOM killer, never by ENOMEM.  Clamp to the node's
-   * own free bytes (headroom held back for the kernel and concurrent
-   * consumers) so the node's tail is still used, and fail the grow — warned
-   * once per exhaustion, cleared when the node grows again — when not even
-   * a base slab fits; the caller's cascade then grows another node. */
+   * machine: populating a bound range on a genuinely full node risks the
+   * mempolicy-constrained OOM killer rather than a clean ENOMEM.  Clamp to
+   * the node's available bytes — free pages plus discounted reclaimable
+   * file cache, since the populate's fault path reclaims cache on demand
+   * (headroom held back for the kernel and concurrent consumers) — so the
+   * node's tail is still used, and fail the grow — warned once per
+   * exhaustion, cleared when the node grows again — when not even a base
+   * slab fits; the caller's cascade then grows another node. */
   {
-    const size_t headroom = (size_t)2 * 1024 * 1024 * 1024;
-    size_t node_free = regpool_node_free_bytes(node);
-    if (node_free != SIZE_MAX) {
-      size_t usable = node_free > headroom ? node_free - headroom : 0;
+    size_t node_avail = regpool_node_avail_bytes(node);
+    if (node_avail != SIZE_MAX) {
+      size_t usable = node_avail > REGPOOL_NODE_HEADROOM
+                          ? node_avail - REGPOOL_NODE_HEADROOM
+                          : 0;
       while (want > usable && want > g_slab_bytes)
         want >>= 1;
       if (want > usable) {
         if (!g_node_full_warned[node]) {
           g_node_full_warned[node] = true;
-          ARTS_WARN("regpool: node %d holds %zu MiB free — no room for even "
-                    "a %zu MiB slab; growth falls over to the remaining "
+          ARTS_WARN("regpool: node %d has %zu MiB available — no room for "
+                    "even a %zu MiB slab; growth falls over to the remaining "
                     "nodes",
-                    node, node_free >> 20, g_slab_bytes >> 20);
+                    node, node_avail >> 20, g_slab_bytes >> 20);
         }
         return false;
       }
@@ -583,11 +723,41 @@ static void *regpool_alloc_direct(size_t size, size_t align, int node) {
   uint64_t rkey;
 
   pthread_mutex_lock(&g_lock);
-  if (!regpool_map_slab(node, len, a, &base, &mr, &rkey)) {
+  /* Placement is a preference here as everywhere, and a bound populate of
+   * an oversize mapping on a node with nothing to reclaim is the same
+   * constrained-OOM hazard a slab grow is clamped against — so candidates
+   * are screened by the same availability estimate (unknown never vetoes),
+   * the preferred node first, then the rest, then an unbound mapping; a
+   * candidate that passes the screen can still fail the map itself
+   * (population), which just moves on to the next. */
+  int used_node = node;
+  bool mapped = false;
+  for (unsigned k = 0; k <= g_numa_nodes && !mapped; k++) {
+    int cand;
+    if (k == 0) {
+      cand = node;
+    } else {
+      cand = (int)(k - 1);
+      if (cand == node)
+        continue;
+    }
+    size_t av = regpool_node_avail_bytes(cand);
+    if (av != SIZE_MAX &&
+        (av <= REGPOOL_NODE_HEADROOM || av - REGPOOL_NODE_HEADROOM < len))
+      continue;
+    used_node = cand;
+    mapped = regpool_map_slab(cand, len, a, &base, &mr, &rkey);
+  }
+  if (!mapped) {
+    used_node = -1;
+    mapped = regpool_map_slab(-1, len, a, &base, &mr, &rkey);
+  }
+  if (!mapped) {
     pthread_mutex_unlock(&g_lock);
     return NULL;
   }
-  regpool_slab_t *s = regpool_publish_direct_locked(base, len, mr, rkey, node, NULL);
+  regpool_slab_t *s =
+      regpool_publish_direct_locked(base, len, mr, rkey, used_node, NULL);
   pthread_mutex_unlock(&g_lock);
   if (s == NULL) {
     if (mr != NULL)
@@ -662,18 +832,29 @@ static void *regpool_sweep_arenas(size_t size, size_t align, bool zero,
  * preference — sweep every node's arenas, then grow any other node.  Loops
  * until the allocation succeeds or every node's grow fails at the
  * map/registration level; only that is genuine exhaustion.  A transient
- * miss (a peer raced away a fresh slab) re-enters the cascade. */
+ * miss (a peer raced away a fresh slab) re-enters the cascade.
+ * `refused` names the one arena that already failed this request (NULL
+ * when none was tried — entry from a node with no arena of its own), so
+ * the sweeps skip exactly the arena known to be exhausted and no other. */
 static void *regpool_alloc_arena_slow(size_t size, size_t align, bool zero,
-                                      int node) {
+                                      int node, mi_arena_id_t refused) {
   for (;;) {
     size_t seen = atomic_load_explicit(&g_slab_count, memory_order_acquire);
-    void *p = regpool_sweep_arenas(size, align, zero, node, t_arena);
+    void *p = regpool_sweep_arenas(size, align, zero, node, refused);
     if (p != NULL)
       return p;
 
     if (regpool_grow_if_unchanged(node, seen)) {
       mi_arena_id_t cur =
           atomic_load_explicit(&g_node_arena[node], memory_order_acquire);
+      if (cur == NULL) {
+        /* "Someone else grew" was another node's slab and this node still
+         * has no arena.  A NULL arena id must never reach a heap bind: it
+         * addresses the allocator's unmanaged default space, outside every
+         * registered slab — the confinement the pool exists to provide.
+         * Re-enter the cascade; the fresh slab is found by the sweeps. */
+        continue;
+      }
       if (!regpool_thread_bind(cur, node)) {
         ARTS_WARN("regpool: heap re-bind failed for node %d", node);
         return NULL;
@@ -686,7 +867,7 @@ static void *regpool_alloc_arena_slow(size_t size, size_t align, bool zero,
     }
 
     /* This node cannot grow: fall back across nodes before failing. */
-    p = regpool_sweep_arenas(size, align, zero, -1, t_arena);
+    p = regpool_sweep_arenas(size, align, zero, -1, refused);
     if (p != NULL)
       return p;
     bool grew = false;
@@ -708,15 +889,43 @@ static void *regpool_alloc_arena_slow(size_t size, size_t align, bool zero,
 }
 
 /* Arena path: allocate from the calling thread's heap; on exhaustion enter
- * the re-binding cascade above. */
+ * the re-binding cascade above.  A node with no arena of its own (refused
+ * at init, not yet recovered) is served from a memoized fallback node's
+ * arena on this same fast path — the node's own slot is re-checked every
+ * call, so a later successful grow reclaims its threads automatically. */
 static void *regpool_alloc_arena(size_t size, size_t align, bool zero,
                                  int node) {
   mi_arena_id_t cur = atomic_load_explicit(&g_node_arena[node],
                                            memory_order_acquire);
-  if (cur == NULL)
-    return NULL; /* node not initialized */
-  if (t_heap == NULL || t_arena != cur || t_node != node) {
-    if (!regpool_thread_bind(cur, node))
+  int home = node;
+  if (cur == NULL) {
+    int fb = atomic_load_explicit(&g_node_fallback[node],
+                                  memory_order_acquire);
+    if (fb >= 0) {
+      cur = atomic_load_explicit(&g_node_arena[fb], memory_order_acquire);
+      home = fb;
+    }
+    if (cur == NULL) {
+      for (unsigned o = 0; o < g_numa_nodes; o++) {
+        mi_arena_id_t a =
+            atomic_load_explicit(&g_node_arena[o], memory_order_acquire);
+        if (a != NULL) {
+          cur = a;
+          home = (int)o;
+          atomic_store_explicit(&g_node_fallback[node], (int)o,
+                                memory_order_release);
+          break;
+        }
+      }
+    }
+    if (cur == NULL) {
+      /* No node has an arena yet: let the cascade try to grow this one
+       * (nothing was tried, so nothing is refused). */
+      return regpool_alloc_arena_slow(size, align, zero, node, NULL);
+    }
+  }
+  if (t_heap == NULL || t_arena != cur || t_node != home) {
+    if (!regpool_thread_bind(cur, home))
       return NULL;
   }
 
@@ -724,14 +933,23 @@ static void *regpool_alloc_arena(size_t size, size_t align, bool zero,
                  : mi_heap_malloc_aligned(t_heap, size, align);
   if (p != NULL)
     return p;
-  return regpool_alloc_arena_slow(size, align, zero, node);
+  /* The preferred node (not the fallback) leads the cascade, so a starved
+   * node is re-probed for growth exactly when serving capacity runs out.
+   * A memo that just failed to serve is dropped first: the cascade may
+   * settle on a different node, and a dead memo would otherwise re-route
+   * every later allocation through this slow path. */
+  if (home != node) {
+    atomic_store_explicit(&g_node_fallback[node], -1, memory_order_release);
+  }
+  return regpool_alloc_arena_slow(size, align, zero, node, t_arena);
 }
 
 /* ------------------------------------------------------------------------- */
 /* public API                                                                  */
 /* ------------------------------------------------------------------------- */
 
-bool arts_regpool_init(struct fid_domain *domain_or_null, size_t slab_bytes,
+bool arts_regpool_init(struct fid_domain *domain_or_null,
+                       struct fid_ep *ep_or_null, size_t slab_bytes,
                        unsigned int numa_nodes) {
   pthread_mutex_lock(&g_lock);
   if (g_inited) {
@@ -765,19 +983,58 @@ bool arts_regpool_init(struct fid_domain *domain_or_null, size_t slab_bytes,
     slab = REGPOOL_SLAB_CAP;
 
   g_domain = domain_or_null;
+  g_ep = ep_or_null;
   g_slab_bytes = slab;
   g_numa_nodes = numa_nodes;
   atomic_store_explicit(&g_slab_count, 0, memory_order_relaxed);
-  for (unsigned i = 0; i < REGPOOL_MAX_NODES; i++)
+  for (unsigned i = 0; i < REGPOOL_MAX_NODES; i++) {
     atomic_store_explicit(&g_node_arena[i], NULL, memory_order_relaxed);
+    atomic_store_explicit(&g_node_fallback[i], -1, memory_order_relaxed);
+  }
+  g_forced_full = 0;
+  {
+    const char *ff = getenv("ARTS_REGPOOL_FORCE_FULL_NODES");
+    if (ff != NULL && ff[0] != '\0') {
+      const char *p = ff;
+      while (*p != '\0') {
+        char *end = NULL;
+        long v = strtol(p, &end, 10);
+        if (end == p) {
+          /* A diagnostic knob's whole value is determinism: a silently
+           * dropped token would make its absence look like a pass. */
+          ARTS_WARN("regpool: unparsable node list token ignored: \"%s\"", p);
+          break;
+        }
+        if (v >= 0 && v < (long)REGPOOL_MAX_NODES) {
+          g_forced_full |= 1ULL << (unsigned)v;
+        } else {
+          ARTS_WARN("regpool: node %ld out of range in force-full list", v);
+        }
+        if (*end != ',')
+          break;
+        p = end + 1;
+      }
+      if (g_forced_full != 0)
+        ARTS_WARN("regpool: diagnostic override — nodes mask 0x%llx treated "
+                  "as full",
+                  (unsigned long long)g_forced_full);
+    }
+  }
   g_inited = true;
 
-  bool ok = true;
-  for (unsigned i = 0; i < numa_nodes && ok; i++)
-    ok = regpool_grow_locked((int)i);
+  /* Per-node carving is best-effort: every node is tried (no short-circuit
+   * — a refused node must not shadow the ones after it), a refused node is
+   * left with a NULL arena (its threads are served through the fallback
+   * path and it recovers on demand), and only ZERO carved nodes is an init
+   * failure. */
+  bool any = false;
+  for (unsigned i = 0; i < numa_nodes; i++) {
+    if (regpool_grow_locked((int)i))
+      any = true;
+  }
   pthread_mutex_unlock(&g_lock);
 
-  if (!ok) {
+  if (!any) {
     arts_regpool_cleanup();
     return false;
   }
@@ -807,13 +1064,50 @@ void arts_regpool_cleanup(void) {
   atomic_store_explicit(&g_slab_count, 0, memory_order_release);
   for (unsigned i = 0; i < REGPOOL_MAX_NODES; i++) {
     atomic_store_explicit(&g_node_arena[i], NULL, memory_order_release);
+    atomic_store_explicit(&g_node_fallback[i], -1, memory_order_release);
     g_node_grow_count[i] = 0;
+    g_node_full_warned[i] = false;
   }
+  g_forced_full = 0;
   g_domain = NULL;
+  g_ep = NULL;
   g_slab_bytes = 0;
   g_numa_nodes = 0;
   g_inited = false;
   pthread_mutex_unlock(&g_lock);
+}
+
+void arts_regpool_unregister(void) {
+  pthread_mutex_lock(&g_lock);
+  size_t n = atomic_load_explicit(&g_slab_count, memory_order_acquire);
+  size_t closed = 0;
+  for (size_t i = 0; i < n; i++) {
+    regpool_slab_t *s = &g_slabs[i];
+    if (atomic_load_explicit(&s->is_free, memory_order_relaxed)) {
+      continue;
+    }
+    if (s->mr.mr != NULL) {
+      int rc = fi_close(&s->mr.mr->fid);
+      if (rc != 0) {
+        ARTS_WARN("regpool: unregister fi_close(mr) failed: %s",
+                  fi_strerror(-rc));
+      }
+      s->mr.mr = NULL;
+      s->mr.rkey = 0;
+      closed++;
+    }
+  }
+  /* Detach from the fabric: a slab mapped after this point registers
+   * nothing (NULL-domain behavior), rather than touching a domain or
+   * endpoint the transport is about to close. */
+  g_domain = NULL;
+  g_ep = NULL;
+  pthread_mutex_unlock(&g_lock);
+  if (closed != 0) {
+    ARTS_INFO("regpool: closed %zu slab registrations ahead of endpoint "
+              "teardown",
+              closed);
+  }
 }
 
 bool arts_regpool_grow(int numa_node) {
@@ -963,14 +1257,17 @@ const arts_regpool_mr_t *arts_regpool_lookup(const void *p) {
        * the arena-allocator build; this build only guarantees plain,
        * symmetric alloc/free. */
 
-bool arts_regpool_init(struct fid_domain *domain_or_null, size_t slab_bytes,
+bool arts_regpool_init(struct fid_domain *domain_or_null,
+                       struct fid_ep *ep_or_null, size_t slab_bytes,
                        unsigned int numa_nodes) {
   (void)domain_or_null;
+  (void)ep_or_null;
   (void)slab_bytes;
   (void)numa_nodes;
   return true;
 }
 void arts_regpool_cleanup(void) {}
+void arts_regpool_unregister(void) {}
 void *arts_regpool_alloc_aligned(size_t size, size_t align) {
   if (size == 0) {
     return NULL;
