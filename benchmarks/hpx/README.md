@@ -18,7 +18,7 @@ cmake --build build --target nqueens_hpx
 
 ## Threading and pinning
 
-One locality is one process (one MPI rank). Every app here bakes in two
+One locality is one process (one MPI rank). Every app here bakes in three
 runtime defaults:
 
 - `hpx.use_process_mask=1` — an externally installed CPU affinity mask is
@@ -27,6 +27,11 @@ runtime defaults:
 - `hpx.os_threads=cores` — the default worker count is one per *physical
   core* in the mask, so SMT siblings never carry a second worker. An
   explicit `--hpx:threads=N` overrides.
+- `hpx.parcel.mpi.sendimm=1` — sends go out immediately instead of waiting
+  for one of the few cached connections; a fire-and-forget delivery that
+  waits parks its thread, and a completion burst parks thousands at once
+  (each parked HPX thread is a stack, i.e. two memory mappings, against
+  the kernel's per-process mapping budget).
 
 So a bare run uses every physical core of the machine, a run under a
 narrowed mask uses exactly the cores of that mask, and one locality per
