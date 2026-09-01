@@ -146,6 +146,10 @@ def show_plane() -> None:
                 row.append(names)
         table.add_row(*row)
     console.print(table)
+    for entry in plane.entries:
+        if entry.is_external:
+            console.print(f"off-plane [b]{entry.key}[/b] ({entry.label}): "
+                          f"{entry.note}")
     console.print(f"\n{len(plane.entries)} selectable entries: "
                   f"{', '.join(plane.entry_keys)}")
     for cell in plane.cells:
@@ -192,10 +196,10 @@ def show_apps(
     first = True
     labels = {
         Kind.APP: "app",
-        Kind.MICROBENCH: "[cyan]micro[/cyan]",
+        Kind.ATTACK: "[red]attack[/red]",
         Kind.TOY: "[dim]toy[/dim]",
     }
-    for kind in (Kind.APP, Kind.MICROBENCH, Kind.TOY):
+    for kind in (Kind.APP, Kind.ATTACK, Kind.TOY):
         rows = [a for a in catalog.rows_of(kind)
                 if not enabled_only or bs.is_enabled(a)]
         if not rows:
@@ -464,7 +468,7 @@ def sweep_cmd(
     dry_run: bool = typer.Option(False, "--dry-run"),
     detach: bool = typer.Option(False, "--detach"),
 ) -> None:
-    """Run a probe sweep: one microbenchmark, an argument matrix, every arm,
+    """Run a probe sweep: one attack probe, an argument matrix, every arm,
     at one node count — arms interleaved round-robin inside each repeat."""
     from artsrun.model.catalog import load_catalog as _lc
     from artsrun.sweep import SweepCampaign, load_past_sweep

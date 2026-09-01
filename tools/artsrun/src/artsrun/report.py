@@ -48,6 +48,7 @@ RT_LABEL = {
     # OCR-vx ships three runtime families; the one built here is the
     # distributed-memory one, which is what the label should name.
     "ocrvx": "OCR-Vdm",
+    "hpx": "HPX",
 }
 RT_COLOR = {
     "arts_excl_purge": "#4C72B0",
@@ -68,6 +69,7 @@ RT_COLOR = {
     "arts_val_wt_purge_nocomb": "#5C7A64",
     "xsocr": "#8172B3",
     "ocrvx": "#937860",
+    "hpx": "#C44E52",
 }
 
 
@@ -215,7 +217,7 @@ def write_summary(
 ) -> str:
     console = Console(record=True, width=200, file=open("/dev/null", "w"))
     console.print(consensus_table(groups, plane, selection.entries))
-    if any(g.teardown_hang.values() for g in groups):
+    if any(any(g.teardown_hang.values()) for g in groups):
         console.print(
             "[dim]† OK: reaped by timeout after a completed, measured run "
             "(teardown hang)[/dim]"

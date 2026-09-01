@@ -39,11 +39,20 @@ def test_every_unbuildable_position_states_a_reason():
 
 def test_two_configurations_offer_a_reference_and_the_rest_do_not():
     plane = load_plane()
-    assert len(plane.entries) == 10
-    refs = [e for e in plane.entries if e.is_reference]
+    assert len(plane.entries) == 11
+    refs = [e for e in plane.entries if e.is_reference and not e.is_external]
     assert {e.key for e in refs} == {"xsocr", "ocrvx"}
     assert plane.entry("xsocr").cell == "EXCL/PURGE/WB"
     assert plane.entry("ocrvx").cell == "INV/RETAIN/WB"
+
+
+def test_hpx_is_selectable_but_sits_on_no_plane_position():
+    plane = load_plane()
+    hpx = plane.entry("hpx")
+    assert hpx.kind is RuntimeKind.HPX
+    assert hpx.is_reference and hpx.is_external
+    assert hpx.cell is None
+    assert all(hpx not in plane.entries_of(c) for c in plane.cells)
 
 
 def test_wrf_is_not_selectable():
@@ -371,28 +380,33 @@ def test_the_policies_read_as_words_and_the_families_as_acronyms():
     assert plane.family_labels[Family.EXCL] == "EXCL"
 
 
-# --- application vs microbenchmark vs toy ---------------------------------
+# --- application vs attack probe vs toy -----------------------------------
 def test_the_catalog_separates_apps_probes_and_toys():
     catalog = load_catalog()
     apps = catalog.rows_of(Kind.APP)
-    micro = catalog.rows_of(Kind.MICROBENCH)
+    attacks = catalog.rows_of(Kind.ATTACK)
     toys = catalog.rows_of(Kind.TOY)
-    assert apps and micro and toys
-    assert len(apps) + len(micro) + len(toys) == len(catalog.rows)
+    assert apps and attacks and toys
+    assert len(apps) + len(attacks) + len(toys) == len(catalog.rows)
+
+
+def test_the_old_probe_spelling_still_parses():
+    # The probe group was spelled "microbench" before its rename.
+    assert Kind("microbench") is Kind.ATTACK
 
 
 def test_no_probe_or_toy_is_enabled_by_default():
-    # A toy is a regression check and a microbenchmark is sweep material;
+    # A toy is a regression check and an attack probe is sweep material;
     # neither belongs in a fresh comparison campaign.
     catalog = load_catalog()
     assert not [a for a in catalog.rows_of(Kind.TOY) if a.default_enabled]
-    assert not [a for a in catalog.rows_of(Kind.MICROBENCH) if a.default_enabled]
+    assert not [a for a in catalog.rows_of(Kind.ATTACK) if a.default_enabled]
 
 
-def test_characterization_probes_are_microbenchmarks():
+def test_characterization_probes_are_attacks():
     catalog = load_catalog()
-    for name in ("rwmix", "rwrounds"):
-        assert catalog.apps[name].kind is Kind.MICROBENCH, name
+    for name in ("rwmix", "rwrounds", "rwsteady", "rwpriv", "rwhandoff"):
+        assert catalog.apps[name].kind is Kind.ATTACK, name
 
 
 def test_the_suite_core_is_made_of_applications():

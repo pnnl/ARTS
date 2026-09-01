@@ -33,7 +33,8 @@ def test_everything_is_selected_by_default():
         )
 
     entries, nodes, apps = drive(check)
-    assert len(entries) == 10
+    assert len(entries) == 11
+    assert "hpx" in entries
     assert nodes == [1, 2, 4, 8]
     assert apps > 0
 
@@ -45,7 +46,7 @@ def test_the_plane_draws_every_position_but_only_offers_eight():
         return len(plane.toggles), len(blanks)
 
     toggles, blanks = drive(check)
-    assert toggles == 10
+    assert toggles == 11
     assert blanks == 4
 
 
@@ -60,9 +61,9 @@ def test_one_control_clears_then_restores_the_whole_plane():
         return first, cleared, restored
 
     first, cleared, restored = drive(check)
-    assert first == 10
+    assert first == 11
     assert cleared == 0
-    assert restored == 10
+    assert restored == 11
 
 
 def test_the_control_acts_on_the_surface_that_is_showing():
@@ -79,7 +80,7 @@ def test_the_control_acts_on_the_surface_that_is_showing():
 
     apps, entries = drive(check)
     assert apps == 0        # the visible surface cleared
-    assert entries == 10    # the others did not
+    assert entries == 11    # the others did not
 
 
 def test_a_version_the_application_lacks_is_absent_not_unchecked():
@@ -108,7 +109,7 @@ def test_the_selection_becomes_a_campaign_of_the_expected_size():
 
     cells, entries, nodes = drive(check)
     assert cells == len(entries) * 4 * (cells // (len(entries) * 4))
-    assert len(entries) == 10
+    assert len(entries) == 11
     assert nodes == [1, 2, 4, 8]
 
 
@@ -865,20 +866,24 @@ def test_the_application_boxes_show_state_the_same_way():
     assert off == 0
 
 
-def test_the_application_screen_groups_applications_before_microbenchmarks():
+def test_the_application_screen_hides_the_attack_suite_unless_named():
+    # The adversarial suite has a roster of its own; a general application
+    # surface showing it invites checking probes into an app campaign.
     async def check(app, pilot):
         from textual.widgets import Static
 
         bench = app.query_one("#bench", BenchsetPanel)
-        # every row belongs to the group above it, so order is the claim
-        return [str(g.render())
-                for g in bench.query(".bench-group").results(Static)]
+        headings = [str(g.render())
+                    for g in bench.query(".bench-group").results(Static)]
+        idents = {t.ident for t in bench.toggles}
+        return headings, idents
 
-    headings = drive(check)
-    assert len(headings) == 3
+    headings, idents = drive(check)
+    assert len(headings) == 2
     assert headings[0].startswith("Applications")
-    assert headings[1].startswith("Microbenchmarks")
-    assert headings[2].startswith("Toys")
+    assert headings[1].startswith("Toys")
+    assert not any(i.startswith("rwmix") or i.startswith("rwsteady")
+                   for i in idents)
 
 
 # --- counters -------------------------------------------------------------

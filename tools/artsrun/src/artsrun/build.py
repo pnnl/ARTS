@@ -15,7 +15,7 @@ from pathlib import Path
 
 from artsrun.model.benchset import Benchset
 from artsrun.model.catalog import Catalog
-from artsrun.model.plane import Plane
+from artsrun.model.plane import Plane, RuntimeKind
 from artsrun.model.selection import Selection
 
 
@@ -239,6 +239,16 @@ def plan_targets(
             else:
                 stem = app.binary
             for entry in entries:
+                if entry.kind is RuntimeKind.HPX:
+                    # The port is its own target, and only the version row
+                    # it mirrors carries one.
+                    if app is not None and app.hpx_binary:
+                        wanted.append(app.hpx_binary)
+                    elif app is None:
+                        capp = catalog.apps.get(name)
+                        if capp and capp.hpx and version is capp.hpx_tier:
+                            wanted.append(f"{capp.binary}_hpx")
+                    continue
                 if entry.kind.value == "ocrvx" and app and app.ocrvx_skip:
                     continue
                 # The hint layer is already folded into the resolved stem.

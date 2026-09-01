@@ -47,6 +47,8 @@ def _ineligible(entry: SelectionEntry, app: ResolvedApp, nodes: int) -> str | No
         return f"application cannot run multinode: {app.multinode_skip}"
     if entry.kind is RuntimeKind.OCRVX and app.ocrvx_skip:
         return "application uses OCR extensions this reference does not implement"
+    if entry.kind is RuntimeKind.HPX and app.hpx_binary is None:
+        return "application has no HPX port at this version tier"
     absent = _missing_inputs(app)
     if absent:
         return "input not staged on this machine: " + ", ".join(absent)
@@ -93,13 +95,20 @@ def expand(
                     if why:
                         skipped.append(Skipped(entry.key, app.key, nodes, why))
                         continue
+                    if entry.kind is RuntimeKind.HPX:
+                        # The HPX apps are a standalone project beside the
+                        # OCR apps in the build tree, one target per port.
+                        binary = apps_dir.parent / "hpx" / app.hpx_binary
+                    else:
+                        binary = apps_dir / entry.binary(app.binary,
+                                                         hinted=False)
                     for repeat in range(1, selection.repeats + 1):
                         cell = Cell(
                             entry=entry,
                             app=app,
                             nodes=nodes,
                             repeat=repeat,
-                            binary=apps_dir / entry.binary(app.binary, hinted=False),
+                            binary=binary,
                             args=app.args_for(nodes),
                             timeout_s=app.timeout_for(nodes) or profile.cell_timeout_s,
                             cfg=config_for(entry.kind, configs[nodes]),

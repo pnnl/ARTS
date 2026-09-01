@@ -16,7 +16,7 @@ from artsrun.model.counters import (
     Counterset, CounterSetting, Level, Mode, Reduce,
     load_counter_catalog,
 )
-from artsrun.model.plane import Plane
+from artsrun.model.plane import Plane, RuntimeKind
 from artsrun.model.profile import Profile
 from artsrun.tui import form
 from artsrun.tui.widgets import NodeDelete, Toggle, toggle_all
@@ -43,46 +43,78 @@ class PlanePanel(Vertical):
         self.plane = plane
 
     def compose(self) -> ComposeResult:
-        yield Static("[b]Coherence configuration[/b]  [dim]which protocol "
+        yield Static("[b]OCR coherence plane[/b]  [dim]which protocol "
                      "arms to measure · space toggles · a = all/none[/dim]",
                      classes="panel-head")
         # Two header rows rather than one compound name: the write policy
         # spans its pair of release policies, so the grid reads as two axes
-        # instead of four labels.
+        # instead of four labels.  The write-policy halves keep a gap
+        # between them (`group-gap`) so the four columns read as two pairs.
         top = Horizontal(classes="plane-row")
         top.styles.height = 1
         with top:
-            yield Label("", classes="plane-family")
-            for write in self.plane.writes:
-                yield Label(self.plane.write_label(write),
-                            classes="plane-write-head")
+            yield Label("", classes="plane-gutter")
+            for i, write in enumerate(self.plane.writes):
+                classes = "plane-write-head" + (" group-gap" if i else "")
+                yield Label(self.plane.write_label(write), classes=classes)
         sub = Horizontal(classes="plane-row")
         sub.styles.height = 1
         with sub:
-            yield Label("", classes="plane-family")
-            for release, _ in self.plane.columns():
-                yield Label(self.plane.release_label(release),
-                            classes="plane-col-head")
+            yield Label("", classes="plane-gutter")
+            for i, (release, _) in enumerate(self.plane.columns()):
+                classes = ("plane-col-head"
+                           + (" group-gap" if i == len(self.plane.releases)
+                              else ""))
+                yield Label(self.plane.release_label(release), classes=classes)
         for family in self.plane.families:
             with Horizontal(classes="plane-row"):
                 yield Label(
                     self.plane.family_labels.get(family, family.value),
                     classes="plane-family",
                 )
-                for release, write in self.plane.columns():
+                for i, (release, write) in enumerate(self.plane.columns()):
+                    gap = " group-gap" if i == len(self.plane.releases) else ""
                     cell = self.plane.cell(family, release, write)
                     if not cell.buildable:
-                        blank = Static("····", classes="plane-cell blank")
+                        blank = Static("····", classes="plane-cell blank" + gap)
                         blank.tooltip = cell.reason
                         yield blank
                     else:
-                        with Horizontal(classes="plane-cell"):
+                        with Horizontal(classes="plane-cell" + gap):
                             for entry in self.plane.entries_of(cell):
                                 yield Toggle(
                                     entry.label if entry.is_reference else "ARTS",
                                     entry.key,
                                     classes="entry-toggle",
                                 )
+        external = [e for e in self.plane.entries if e.is_external]
+        if external:
+            # Off-plane cross-model references get a section of their own: a
+            # row inside the grid would read as one more coherence position,
+            # which is exactly what such a runtime is not.
+            yield Static("[b]External runtimes[/b]  [dim]cross-model "
+                         "references — no coherence position[/dim]",
+                         classes="panel-head external-head")
+            with Horizontal(classes="plane-row"):
+                yield Label("", classes="plane-gutter")
+                for entry in external:
+                    with Horizontal(classes="plane-cell"):
+                        toggle = Toggle(entry.label, entry.key,
+                                        classes="entry-toggle")
+                        toggle.tooltip = entry.note
+                        yield toggle
+            if any(e.kind is RuntimeKind.HPX for e in external):
+                from artsrun.model.catalog import load_catalog
+
+                ports = [a for a in load_catalog().rows if a.hpx]
+                names = ", ".join(f"{a.name} ({a.hpx_tier.value} row)"
+                                  for a in ports) or "none yet"
+                with Horizontal(classes="plane-row"):
+                    yield Label("", classes="plane-gutter")
+                    yield Static(
+                        "[dim]not an OCR runtime — runs only applications "
+                        f"with a matched HPX port: {names}[/dim]",
+                        classes="external-note")
 
     @property
     def toggles(self) -> list[Toggle]:
@@ -434,20 +466,38 @@ class BenchsetPanel(VerticalScroll):
             yield Label("arguments", classes="bench-args-head")
 
         # Three groups, applications first: a result is claimed about an
-        # application; a microbenchmark is a characterization probe that
-        # sweeps run; a toy exercises one mechanism and belongs in a
+        # application; an attack is an adversarial probe with a roster of
+        # its own; a toy exercises one mechanism and belongs in a
         # regression suite rather than in any measurement.
         for kind, title in (
             (Kind.APP, "Applications"),
-            (Kind.MICROBENCH, "Microbenchmarks (characterization probes)"),
+            (Kind.ATTACK, "Adversarial attacks (coherence probes)"),
             (Kind.TOY, "Toys and fixtures"),
         ):
-            rows = self.catalog.rows_of(kind)
+            rows = self._rendered_rows(kind)
             if not rows:
                 continue
             yield Static(f"[b]{title}[/b]  [dim]{len(rows)}[/dim]",
                          classes="bench-group")
             yield from self._app_rows(rows)
+
+    def _rendered_rows(self, kind: Kind) -> list:
+        """The rows this surface draws for one group.
+
+        The attack suite belongs to its own roster (and to sweeps); on a
+        general application surface its rows only invite checking probes
+        into an application campaign, so they appear exactly when the
+        loaded benchset names them.
+        """
+        rows = self.catalog.rows_of(kind)
+        if kind is Kind.ATTACK:
+            rows = [a for a in rows if a.name in self.benchset.apps]
+        return rows
+
+    def _rendered_names(self) -> set[str]:
+        return {a.name
+                for kind in (Kind.APP, Kind.ATTACK, Kind.TOY)
+                for a in self._rendered_rows(kind)}
 
     def _app_rows(self, rows) -> ComposeResult:
         for app in rows:
@@ -541,38 +591,21 @@ class BenchsetPanel(VerticalScroll):
 
     # -- editing -----------------------------------------------------------
     def reload(self, name: str) -> None:
-        """Load another roster into the rows already on screen.
+        """Load another roster and rebuild the surface around it.
 
-        The rows come from the catalog, so a benchset changes which boxes are
-        ticked and what the argument fields hold, never which rows exist.
+        Which rows exist depends on the roster itself — an attack row is
+        drawn only when the loaded set names it — so loading recomposes the
+        rows rather than repainting values into a fixed set of them (the
+        compose path already reads every tick and argument box from the
+        benchset).
         """
         try:
             self.benchset = store.load_benchset(name)
         except store.NotFound:
             self.status("nothing saved to reload", error=True)
             return
-        self.query_one("#bench-name-input", Input).value = self.benchset.name
-        for app in self.catalog.rows:
-            enabled = self.benchset.is_enabled(app)
-            picked = self.benchset.versions_for(app) if enabled else []
-            for version in app.own_versions:
-                ident = f"{app.name}:{version.value}"
-                for toggle in self.toggles:
-                    if toggle.ident == ident:
-                        toggle.value = version in picked
-                        break
-            entry = self.benchset.apps.get(app.name)
-            override = entry.args if entry and entry.args is not None else None
-            self.query_one(f"#a-{app.name}", Input).value = (
-                " ".join(override) if override else ""
-            )
-            if app.restructured_as:
-                sub = self.benchset.apps.get(app.restructured_as)
-                sub_args = sub.args if sub and sub.args is not None else None
-                self.query_one(f"#a-{app.restructured_as}", Input).value = (
-                    " ".join(sub_args) if sub_args else ""
-                )
-        self.status("")
+        self.last_status = ""
+        self.refresh(recompose=True)
 
     def status(self, message: str, *, error: bool = False) -> None:
         self.last_status = message
@@ -589,8 +622,14 @@ class BenchsetPanel(VerticalScroll):
         membership to the catalog's defaults.
         """
         picked = self.selected()
+        rendered = self._rendered_names()
         apps: dict[str, BenchsetEntry] = {}
         for app in self.catalog.rows:
+            if app.name not in rendered:
+                # A row the surface does not draw cannot be edited; absent
+                # from the save means not on the roster, which is exactly
+                # what an unnamed probe is.
+                continue
             versions = picked.get(app.name, [])
             box = self.query_one(f"#a-{app.name}", Input).value.strip()
             args = box.split() if box else None

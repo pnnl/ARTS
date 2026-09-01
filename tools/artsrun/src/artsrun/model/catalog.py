@@ -36,25 +36,27 @@ class Kind(StrEnum):
     create loop) or after nothing at all; it exercises one runtime mechanism
     and belongs in a regression suite rather than in any measurement.
 
-    MICROBENCH: a parameterized characterization probe, written FOR
-    measurement — its knobs move a controlled workload across the coherence
-    design space (read/write mix, sharers, sizes) and its output is the
-    figure axis itself.  Toys check that a mechanism works; microbenches
-    measure what a mechanism costs.
+    ATTACK: an adversarial characterization probe, written FOR measurement —
+    its knobs move a designed workload across the coherence design space
+    (read/write mix, sharers, handoff shapes) to force each arm's best and
+    worst case by construction.  Toys check that a mechanism works; attacks
+    measure what a mechanism costs when the workload is built against it.
     """
 
     APP = "app"
     TOY = "toy"
-    MICROBENCH = "microbench"
+    ATTACK = "attack"
 
     @classmethod
     def _missing_(cls, value):
-        # Pre-split spelling: "application" named today's APP.  The old
-        # "microbench" VALUE is deliberately NOT aliased to TOY — the name
-        # was reassigned to the probes, and the catalog rows were rewritten
-        # in the same change, so an unknown value should fail loudly.
+        # Pre-split spelling: "application" named today's APP.  The probe
+        # group was spelled "microbench" before its rename to ATTACK; the
+        # still-older use of that word for today's TOY group predates the
+        # split and is not what the alias restores.
         if value == "application":
             return cls.APP
+        if value == "microbench":
+            return cls.ATTACK
         return None
 
 
@@ -120,6 +122,14 @@ class AppEntry(BaseModel):
     hinted: bool = Field(default=False, validation_alias=AliasChoices("hinted", "optimized"))
     restructured_as: str | None = None
     restructured_from: str | None = None
+
+    # An algorithmically matched HPX port exists as target `{binary}_hpx`.
+    # The port is one program, not one per version: `hpx_tier` names the
+    # version whose structure it mirrors, which is the row its cells join —
+    # so it runs once per (app, nodes), grouped where its comparison is
+    # honest.
+    hpx: bool = False
+    hpx_tier: Version = Version.HINTED
 
     # Optional post-run verifier: a shell command run in the cell's working
     # directory after the binary exits 0 (chained with &&, so its exit status

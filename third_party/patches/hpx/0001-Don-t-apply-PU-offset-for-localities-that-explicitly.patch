@@ -1,0 +1,55 @@
+From 6df14adf09e1bedbf77b3bcd0d3e60dc98d009c9 Mon Sep 17 00:00:00 2001
+From: Hartmut Kaiser <hartmut.kaiser@gmail.com>
+Date: Fri, 17 Jul 2026 11:54:03 -0500
+Subject: [PATCH] Don't apply PU offset for localities that explicitly use core
+ bindings
+
+Signed-off-by: Hartmut Kaiser <hartmut.kaiser@gmail.com>
+---
+ .../src/command_line_handling_local.cpp                   | 7 +++++++
+ libs/full/runtime_distributed/src/big_boot_barrier.cpp    | 8 +++++++-
+ 2 files changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/libs/core/command_line_handling_local/src/command_line_handling_local.cpp b/libs/core/command_line_handling_local/src/command_line_handling_local.cpp
+index 8ac3b7538b..7735358ce5 100644
+--- a/libs/core/command_line_handling_local/src/command_line_handling_local.cpp
++++ b/libs/core/command_line_handling_local/src/command_line_handling_local.cpp
+@@ -555,8 +555,15 @@ namespace hpx::local::detail {
+             affinity_bind_ = "";
+ #else
+             ini_config.emplace_back("hpx.bind!=" + affinity_bind_);
++            ini_config.emplace_back("hpx.bind-provided!=1");
+ #endif
+         }
++#if !defined(__APPLE__)
++        else if (use_process_mask_)
++        {
++            ini_config.emplace_back("hpx.bind-provided!=1");
++        }
++#endif
+ 
+         pu_step_ = detail::handle_pu_step(cfgmap, vm, 1);
+ #if defined(__APPLE__)
+diff --git a/libs/full/runtime_distributed/src/big_boot_barrier.cpp b/libs/full/runtime_distributed/src/big_boot_barrier.cpp
+index 8a482f9e1e..6e065ad4f2 100644
+--- a/libs/full/runtime_distributed/src/big_boot_barrier.cpp
++++ b/libs/full/runtime_distributed/src/big_boot_barrier.cpp
+@@ -605,8 +605,14 @@ namespace hpx::agas {
+         // store number of initial localities
+         cfg.set_num_localities(header.num_localities);
+ 
++        // prevent adding a core-offset if the user provided explicit affinity
++        // bindings
++        bool const explicit_core_assignment =
++            cfg.get_entry("hpx.bind-provided", "0") != "0";
++
+         // store number of used cores by other localities
+-        cfg.set_first_used_core(header.used_cores);
++        cfg.set_first_used_core(
++            explicit_core_assignment ? 0 : header.used_cores);
+         rt.assign_cores();
+ 
+         // pre-cache all known locality endpoints in local AGAS
+-- 
+2.39.5
+

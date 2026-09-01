@@ -8,10 +8,12 @@
 #
 # `kind` separates what the program is from whether a campaign runs it. An
 # application is one a field cites by name (graph500, HPCG, CoMD, XSBench,
-# STREAM); a microbenchmark is named after an operation (globalsum, reduction,
-# dbcreate) or after nothing, and probes one runtime mechanism. Upstream's own
-# layout decides most of it: apps/kernels/ and apps/examples/ are
-# microbenchmarks, apps/<name>/ is an application.
+# STREAM); a toy is named after an operation (globalsum, reduction,
+# dbcreate) or after nothing, and exercises one runtime mechanism; an attack
+# is an adversarial probe written for measurement, its knobs building each
+# arm's best and worst case by construction. Upstream's own layout decides
+# most of it: apps/kernels/ and apps/examples/ are toys, apps/<name>/ is an
+# application.
 #
 # Versions: every application has `base` (as published, plus the disclosed
 # structure-preserving conformance adaptations).  `hinted` exists where the
@@ -640,13 +642,13 @@ apps:
   # dataflow with halo exchange) and dominated by it -- 9 EDT creation sites
   # against 21, no refinement clone machinery, every EDT pinned to the
   # creating rank so nothing distributes, and per-block checksums with no
-  # grand total to pin.  Kept as a microbench of the caller-pinned shape.
+  # grand total to pin.  Kept as a toy of the caller-pinned shape.
   miniAMR_intel_bryan:
     binary: miniAMR_intel_bryan
     kind: toy
     # Reclassified from application: the same physics as miniAMR_intel and
     # dominated by it, with every EDT pinned to the rank that created it, so
-    # nothing distributes.  A microbenchmark is not campaign material.
+    # nothing distributes.  A toy is not campaign material.
     default_enabled: false
     class: task
     provenance: 'miniAMR (Mantevo); full refinement and communication'
@@ -860,6 +862,11 @@ apps:
     expect_args: ['19', '15', '1', '6']
     args: ['19', '15', '1', '6']
     hinted: true
+    # The HPX port (benchmarks/hpx/nqueens.cpp) carries the same bitmask
+    # search, cutoff, and mixed-key scatter placement as the hinted OCR
+    # version, and takes the same argument list — so it runs in the hinted
+    # row, against the tier whose structure it mirrors.
+    hpx: true
 
   p2p:
     binary: p2p
@@ -1104,7 +1111,7 @@ apps:
     # a column of the suite is one of those rows, which owns the workload and
     # names what it is built to prove.  This entry exists so the binary and its
     # result line have a home.
-    kind: microbench
+    kind: attack
     provenance: 'racy single-datablock reader/writer saturation probe, written for this repo'
     # One flat fan-out: N tasks (W of them RW) become ready at once against
     # one shared DB and the makespan is the measurement.  No result value to
@@ -1124,7 +1131,7 @@ apps:
     # a column of the suite is one of those rows, which owns the workload and
     # names what it is built to prove.  This entry exists so the binary and its
     # result line have a home.
-    kind: microbench
+    kind: attack
     provenance: 'round-structured reader/writer superadditivity probe, written for this repo'
     # Forced [1 writer -> (n-1) readers] rounds; modes 0/1/2 keep spin totals
     # equal so T(mix) - [T(ro)+T(wo)] isolates the read/write interaction.
@@ -1143,7 +1150,7 @@ apps:
     # a column of the suite is one of those rows, which owns the workload and
     # names what it is built to prove.  This entry exists so the binary and its
     # result line have a home.
-    kind: microbench
+    kind: attack
     provenance: 'closed-loop steady-state reader/writer coherence probe, written for this repo'
     # Reader/writer EDT chains free-run against shared datablocks for a fixed
     # window with explicit per-op release; the completion marker is printed
@@ -1212,7 +1219,7 @@ apps:
     # a column of the suite is one of those rows, which owns the workload and
     # names what it is built to prove.  This entry exists so the binary and its
     # result line have a home.
-    kind: microbench
+    kind: attack
     provenance: 'private-working-set release-axis probe, written for this repo'
     # Every chain re-touches its OWN block homed one PD away: required
     # steady-state communication is zero, so per-op wire cost is purely the
@@ -1258,7 +1265,7 @@ apps:
     # a column of the suite is one of those rows, which owns the workload and
     # names what it is built to prove.  This entry exists so the binary and its
     # result line have a home.
-    kind: microbench
+    kind: attack
     provenance: 'phase-alternating producer/consumer handoff probe, written for this repo'
     # Each generation's release wakes one consumer and one next producer on
     # rotating ranks touching byte-disjoint regions: race-free by event
@@ -1306,7 +1313,7 @@ apps:
   own_reread_64k:
     binary: rwpriv
     class: mw
-    kind: microbench
+    kind: attack
     provenance: 'attack matrix C1: private-lane re-read (release-axis spectrometer)'
     marker: 'RWPRIV OK '
     scalar_kind: bool
@@ -1325,7 +1332,7 @@ apps:
   own_reread_16m:
     binary: rwpriv
     class: mw
-    kind: microbench
+    kind: attack
     provenance: 'attack matrix C1: private-lane re-read at size'
     marker: 'RWPRIV OK '
     scalar_kind: bool
@@ -1341,7 +1348,7 @@ apps:
   own_rewrite_64k:
     binary: rwpriv
     class: mw
-    kind: microbench
+    kind: attack
     provenance: 'attack matrix C1: private-lane re-write (turn amortization)'
     marker: 'RWPRIV OK '
     scalar_kind: bool
@@ -1361,7 +1368,7 @@ apps:
   own_rewrite_16m:
     binary: rwpriv
     class: mw
-    kind: microbench
+    kind: attack
     provenance: 'attack matrix C1: private-lane re-write at size'
     marker: 'RWPRIV OK '
     scalar_kind: bool
@@ -1377,7 +1384,7 @@ apps:
   one_home_funnel_4m:
     binary: rwsteady
     class: mw
-    kind: microbench
+    kind: attack
     provenance: 'attack matrix C2: many readers funnelled through one home'
     marker: 'RWSTEADY OK '
     scalar_kind: bool
@@ -1396,7 +1403,7 @@ apps:
   audienceless_publish_16m:
     binary: rwsteady
     class: mw
-    kind: microbench
+    kind: attack
     provenance: 'attack matrix C8: writes nobody reads'
     marker: 'RWSTEADY OK '
     scalar_kind: bool
@@ -1423,7 +1430,7 @@ apps:
   freerun_read_heavy_64k:
     binary: rwsteady
     class: mw
-    kind: microbench
+    kind: attack
     provenance: 'attack matrix C9: uncoupled read-heavy mix'
     marker: 'RWSTEADY OK '
     scalar_kind: bool
@@ -1442,7 +1449,7 @@ apps:
   pipeline_converge_1m:
     binary: rwsteady
     class: mw
-    kind: microbench
+    kind: attack
     provenance: 'attack matrix C10: coupled producer-consumer pipeline'
     marker: 'RWSTEADY OK '
     scalar_kind: bool
@@ -1464,7 +1471,7 @@ apps:
   alternating_bomb_64k:
     binary: rwsteady
     class: mw
-    kind: microbench
+    kind: attack
     provenance: 'attack matrix C11: two alternating writers against a wide sharer set'
     marker: 'RWSTEADY OK '
     scalar_kind: bool
@@ -1485,7 +1492,7 @@ apps:
   resident_mill_1m:
     binary: rwsteady
     class: mw
-    kind: microbench
+    kind: attack
     provenance: 'attack matrix C5: one resident writer churning under a reader mill'
     marker: 'RWSTEADY OK '
     scalar_kind: bool
@@ -1506,7 +1513,7 @@ apps:
   migration_gauntlet_64k:
     binary: rwsteady
     class: mw
-    kind: microbench
+    kind: attack
     provenance: 'attack matrix A9/C7: write ownership dragged across ranks'
     marker: 'RWSTEADY OK '
     scalar_kind: bool
@@ -1527,7 +1534,7 @@ apps:
   slow_churn_dial_16m:
     binary: rwsteady
     class: mw
-    kind: microbench
+    kind: attack
     provenance: 'attack matrix C6: the churn dial at its slow end'
     marker: 'RWSTEADY OK '
     scalar_kind: bool

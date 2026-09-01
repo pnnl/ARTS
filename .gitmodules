@@ -21,3 +21,7 @@
 	path = third_party/rdma-core
 	url = https://github.com/linux-rdma/rdma-core.git
 	shallow = true
+[submodule "third_party/hpx"]
+	path = third_party/hpx
+	url = https://github.com/TheHPXProject/hpx.git
+	shallow = true

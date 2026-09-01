@@ -60,10 +60,10 @@ def test_every_written_document_tells_the_whole_story():
 
 def test_an_entry_without_a_document_still_renders_its_facts():
     catalog = load_catalog()
-    micro = next(a for a in catalog.apps.values() if a.kind is Kind.MICROBENCH)
-    text = document(micro)
-    assert micro.name in text
-    assert micro.binary in facts_markdown(micro)
+    probe = next(a for a in catalog.apps.values() if a.kind is Kind.ATTACK)
+    text = document(probe)
+    assert probe.name in text
+    assert probe.binary in facts_markdown(probe)
 
 
 def test_clicking_an_application_name_opens_its_document():

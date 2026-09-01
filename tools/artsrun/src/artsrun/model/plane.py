@@ -47,6 +47,7 @@ class RuntimeKind(StrEnum):
     ARTS = "arts"
     XSOCR = "xsocr"
     OCRVX = "ocrvx"
+    HPX = "hpx"
 
 
 def _arts_key(variant: str) -> str:
@@ -64,21 +65,36 @@ class SelectionEntry(BaseModel):
 
     `key` is the stable identifier used on the command line, in saved
     selections and in result rows: an ARTS entry is named by the
-    configuration it selects, a reference entry by the runtime.
+    configuration it selects, a reference entry by the runtime.  An entry
+    whose `cell` is None sits on no plane position: a cross-model reference,
+    selectable like any entry but tied to no coherence design point.
     """
 
     key: str
     label: str
     kind: RuntimeKind
-    cell: str
+    cell: str | None = None
     variant: str | None = None
+    note: str | None = None
 
     @property
     def is_reference(self) -> bool:
         return self.kind is not RuntimeKind.ARTS
 
+    @property
+    def is_external(self) -> bool:
+        return self.cell is None
+
     def binary(self, app_binary: str, *, hinted: bool) -> str:
-        """Executable name this entry runs a given application under."""
+        """Executable name this entry runs a given application under.
+
+        A cross-model reference does not run the OCR program in any version:
+        its port is one target of its own, named from the catalog's base
+        binary — the caller resolves it, so this mapping never applies.
+        """
+        if self.kind is RuntimeKind.HPX:
+            raise ValueError("an HPX port is named by the catalog, not "
+                             "derived from a version stem")
         stem = f"{app_binary}_hinted" if hinted else app_binary
         if self.kind is RuntimeKind.ARTS:
             return f"{stem}_arts_{self.variant}"
@@ -219,6 +235,16 @@ def load_plane() -> Plane:
                         cell=cell.key,
                     )
                 )
+
+    for key, ref in raw.get("external_references", {}).items():
+        entries.append(
+            SelectionEntry(
+                key=key,
+                label=ref["label"],
+                kind=RuntimeKind(ref["kind"]),
+                note=ref.get("note"),
+            )
+        )
 
     return Plane(
         families=families,

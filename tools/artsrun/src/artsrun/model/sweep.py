@@ -1,4 +1,4 @@
-"""A sweep: one microbenchmark probe, many argument points, at one node count.
+"""A sweep: one attack probe, many argument points, at one node count.
 
 A campaign compares applications across the plane at their calibrated
 arguments; a sweep holds ONE probe and moves its knobs across a matrix.  The
@@ -136,8 +136,8 @@ class SweepSpec(BaseModel):
         row = catalog.apps[self.app]
         if row.kind is Kind.TOY:
             raise ValueError(
-                f"{self.app} is a toy, not a microbench or application — a "
-                f"sweep runs characterization probes and applications whose "
+                f"{self.app} is a toy, not an attack probe or application — "
+                f"a sweep runs characterization probes and applications whose "
                 f"campaign varies arguments with geometry (weak scaling)")
         for n in {self.nodes, *(p.nodes for p in self.points if p.nodes)}:
             if n not in profile.nodes:

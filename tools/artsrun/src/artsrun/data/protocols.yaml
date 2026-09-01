@@ -81,6 +81,21 @@ unbuildable:
     cannot serve a reader alone (shipping the bytes home too is, by
     definition, write-through).
 
+# A runtime that implements no position on this plane: its comparison axis
+# is the programming model, not a coherence design point, so it hangs off no
+# cell, never multiplies by the plane, and runs only the applications that
+# carry an algorithmically matched port (the catalog's `hpx` flag) — in the
+# version row that port structurally mirrors, where its scalar joins the
+# ordinary consensus vote.
+external_references:
+  hpx:
+    label: HPX
+    kind: hpx
+    note: >-
+      STE||AR HPX with the MPI parcelport; cross-programming-model
+      reference — its applications are matched ports of the OCR programs,
+      not the OCR programs themselves
+
 references:
   xsocr:
     label: XSOCR

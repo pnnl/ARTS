@@ -1,8 +1,8 @@
 """Build the command line a cell runs under, per runtime.
 
-Three runtimes launch three ways: ARTS spawns or remote-launches its own
-ranks from the configuration it is handed, while both references are MPI
-programs.  Every reference rank, on every launcher, runs inside the same
+ARTS spawns or remote-launches its own ranks from the configuration it is
+handed; every reference — xsocr, ocr-vx, and the cross-model hpx — is an
+MPI program.  Every reference rank, on every launcher, runs inside the same
 explicit CPU envelope (tools/artsrun/envelope.sh): the profile-width block of
 per-core first threads, verified on the compute node itself and applied as
 the rank's affinity mask before exec.  Per-core placement INSIDE the envelope
@@ -144,7 +144,8 @@ def build_command(cell: Cell, profile: Profile) -> list[str]:
     if kind is RuntimeKind.XSOCR or cell.nodes > 1:
         return [*mpirun(cell.nodes, launcher=launcher, one_per_node=remote,
                         hosts=hosts), *wrap, *tail]
-    # A single ocr-vx rank needs no launcher at all (MPI singleton init).
+    # A single ocr-vx or hpx rank needs no launcher at all (MPI singleton
+    # init).
     return [*wrap, *tail]
 
 

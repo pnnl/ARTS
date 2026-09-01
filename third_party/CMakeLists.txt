@@ -147,9 +147,62 @@ function(arts_init_submodule path marker)
     endif()
 endfunction()
 
+# Apply a pinned upstream commit onto a pristine submodule working tree at
+# configure time.  This carries a fix the pinned release lacks without
+# forking the upstream repository for one commit: the patch file is the
+# upstream commit verbatim (format-patch), so its header preserves the
+# provenance.  Application is idempotent — a tree already carrying the
+# change verifies in reverse and is left alone; any other state is an error
+# rather than a silent partial apply.  A fresh application drops the
+# external build's stamps so the next build recompiles what changed;
+# a `git submodule update` that reverts the tree is likewise healed on the
+# next configure.
+function(arts_patch_submodule submodule_dir patch_file stamp_dir)
+    execute_process(
+        COMMAND git apply --reverse --check "${patch_file}"
+        WORKING_DIRECTORY "${submodule_dir}"
+        RESULT_VARIABLE _rc_applied
+        OUTPUT_QUIET ERROR_QUIET
+    )
+    if(_rc_applied EQUAL 0)
+        return()
+    endif()
+    execute_process(
+        COMMAND git apply --check "${patch_file}"
+        WORKING_DIRECTORY "${submodule_dir}"
+        RESULT_VARIABLE _rc_appliable
+        OUTPUT_QUIET ERROR_QUIET
+    )
+    if(NOT _rc_appliable EQUAL 0)
+        message(FATAL_ERROR
+            "${submodule_dir} carries neither a clean base for ${patch_file} "
+            "nor its applied result.  Restore the recorded submodule state "
+            "(git -C ${submodule_dir} status) and re-run cmake.")
+    endif()
+    execute_process(
+        COMMAND git apply "${patch_file}"
+        WORKING_DIRECTORY "${submodule_dir}"
+        RESULT_VARIABLE _rc_apply
+    )
+    if(NOT _rc_apply EQUAL 0)
+        message(FATAL_ERROR "Failed to apply ${patch_file} in ${submodule_dir}")
+    endif()
+    get_filename_component(_patch_name "${patch_file}" NAME)
+    message(STATUS "Applied ${_patch_name} to ${submodule_dir}")
+    if(EXISTS "${stamp_dir}")
+        file(REMOVE_RECURSE "${stamp_dir}")
+    endif()
+endfunction()
+
 set(HWLOC_DIST_VERSION "2.13.0")
 set(HWLOC_DIST_URL "https://download.open-mpi.org/release/hwloc/v2.13/hwloc-${HWLOC_DIST_VERSION}.tar.bz2")
 set(HWLOC_DIST_SHA256 "52e936afb6ebd80f171f763fcf14f7b1f5ce98b125af5dd2f328b873b1fd0dab")
+
+# HPX embeds its own hwloc, at the release its pinned version fetches by
+# default upstream — the pairing stays exactly as upstream validated it.
+set(HPX_HWLOC_DIST_VERSION "2.10.0")
+set(HPX_HWLOC_DIST_URL "https://download.open-mpi.org/release/hwloc/v2.10/hwloc-${HPX_HWLOC_DIST_VERSION}.tar.bz2")
+set(HPX_HWLOC_DIST_SHA256 "0305dd60c9de2fbe6519fe2a4e8fdc6d3db8de574a0ca7812b92e80c05ae1392")
 
 set(NUMACTL_DIST_VERSION "2.0.19")
 set(NUMACTL_DIST_URL "https://github.com/numactl/numactl/releases/download/v${NUMACTL_DIST_VERSION}/numactl-${NUMACTL_DIST_VERSION}.tar.gz")
@@ -159,27 +212,29 @@ set(OFI_DIST_VERSION "2.6.0")
 set(OFI_DIST_URL "https://github.com/ofiwg/libfabric/releases/download/v${OFI_DIST_VERSION}/libfabric-${OFI_DIST_VERSION}.tar.bz2")
 set(OFI_DIST_SHA256 "1ee2ab6eb16462c0fe7a836f9df52b8f12309dfee3f3774aa93a86f521a8e8b1")
 
-# Build hwloc from its vendored dist tarball
-function(build_hwloc)
+# Build one hwloc from a pinned dist tarball into its own prefix.  More than
+# one consumer embeds hwloc statically, each at the release its own project
+# validates against, so version and prefix belong to the caller.
+function(build_hwloc version url sha256 build_dir install_dir)
     arts_fetch_dist_tarball(HWLOC_TARBALL
-        "hwloc-${HWLOC_DIST_VERSION}.tar.bz2" "${HWLOC_DIST_URL}" "${HWLOC_DIST_SHA256}")
+        "hwloc-${version}.tar.bz2" "${url}" "${sha256}")
 
     # Extraction preserves the dist tree's relative timestamps, so make never
     # invokes the maintainer rules that would regenerate configure/Makefile.in
     # (and would require autotools after all).
-    set(HWLOC_SRC_DIR "${CMAKE_BINARY_DIR}/third_party/hwloc-${HWLOC_DIST_VERSION}")
+    set(HWLOC_SRC_DIR "${CMAKE_BINARY_DIR}/third_party/hwloc-${version}")
     if(NOT EXISTS "${HWLOC_SRC_DIR}/configure")
-        message(STATUS "Extracting hwloc ${HWLOC_DIST_VERSION}")
+        message(STATUS "Extracting hwloc ${version}")
         file(ARCHIVE_EXTRACT INPUT "${HWLOC_TARBALL}"
              DESTINATION "${CMAKE_BINARY_DIR}/third_party")
     endif()
 
     # Configure hwloc (out-of-tree; the extracted source stays pristine)
-    set(HWLOC_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/hwloc")
-    set(HWLOC_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/hwloc_install")
+    set(HWLOC_BUILD_DIR "${build_dir}")
+    set(HWLOC_INSTALL_DIR "${install_dir}")
     file(MAKE_DIRECTORY ${HWLOC_BUILD_DIR})
 
-    message(STATUS "Configuring hwloc with prefix: ${HWLOC_INSTALL_DIR}")
+    message(STATUS "Configuring hwloc ${version} with prefix: ${HWLOC_INSTALL_DIR}")
     execute_process(
         # Consumers use CPU/NUMA topology only.  Every I/O discovery backend
     # (accelerators, display, PCI, udev device naming) exists to place I/O
@@ -249,7 +304,8 @@ set(HWLOC_LIB_A "${HWLOC_INSTALL_DIR}/lib/libhwloc.a")
 set(HWLOC_INCLUDE_PATH "${HWLOC_INSTALL_DIR}/include/hwloc.h")
 
 if(NOT (EXISTS ${HWLOC_LIB_A} AND EXISTS ${HWLOC_INCLUDE_PATH}))
-    build_hwloc()
+    build_hwloc(${HWLOC_DIST_VERSION} ${HWLOC_DIST_URL} ${HWLOC_DIST_SHA256}
+        "${CMAKE_BINARY_DIR}/third_party/hwloc" "${HWLOC_INSTALL_DIR}")
 endif()
 
 if(NOT EXISTS ${HWLOC_LIB_A})
@@ -368,6 +424,99 @@ if(ARTS_BUILD_BENCHMARKS)
         INTERFACE_INCLUDE_DIRECTORIES "${NUMA_INCLUDE_DIRS}")
     add_dependencies(arts_numa numactl_ep)
     add_library(arts::numa ALIAS arts_numa)
+endif()
+
+# HPX is configured out-of-tree so its project-wide CMake settings cannot
+# alter the ARTS build. Its installed package is consumed by a second,
+# standalone benchmark project under benchmarks/hpx.
+set(ARTS_HPX_AVAILABLE OFF PARENT_SCOPE)
+if(ARTS_BUILD_BENCHMARKS AND ARTS_BUILD_HPX)
+    find_package(MPI COMPONENTS CXX QUIET)
+    if(MPI_CXX_FOUND)
+        arts_init_submodule(third_party/hpx CMakeLists.txt)
+        # Backport of upstream 6df14adf09: without it, colocated localities
+        # on one host shift each other's thread bindings by their peers'
+        # reported core footprints even when an explicit process mask
+        # already places every locality.
+        arts_patch_submodule(
+            "${CMAKE_CURRENT_SOURCE_DIR}/hpx"
+            "${CMAKE_CURRENT_SOURCE_DIR}/patches/hpx/0001-Don-t-apply-PU-offset-for-localities-that-explicitly.patch"
+            "${CMAKE_CURRENT_BINARY_DIR}/hpx_ep-prefix/src/hpx_ep-stamp")
+        include(ExternalProject)
+
+        set(ARTS_HPX_INSTALL_DIR
+            "${CMAKE_BINARY_DIR}/third_party/hpx_install")
+        set(ARTS_HPX_BUILD_DIR
+            "${CMAKE_BINARY_DIR}/third_party/hpx-build")
+
+        set(HPX_HWLOC_INSTALL_DIR
+            "${CMAKE_BINARY_DIR}/third_party/hpx_hwloc_install")
+        if(NOT EXISTS "${HPX_HWLOC_INSTALL_DIR}/lib/libhwloc.a")
+            build_hwloc(${HPX_HWLOC_DIST_VERSION} ${HPX_HWLOC_DIST_URL}
+                ${HPX_HWLOC_DIST_SHA256}
+                "${CMAKE_BINARY_DIR}/third_party/hpx_hwloc"
+                "${HPX_HWLOC_INSTALL_DIR}")
+        endif()
+
+        ExternalProject_Add(hpx_ep
+            SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/hpx"
+            BINARY_DIR "${ARTS_HPX_BUILD_DIR}"
+            DOWNLOAD_COMMAND ""
+            UPDATE_COMMAND ""
+            CMAKE_GENERATOR "${CMAKE_GENERATOR}"
+            CMAKE_ARGS
+                -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+                # The MPI wrapper is the compiler: a static-library build
+                # prefers .a when resolving the wrapper's link line, and a
+                # distribution's static MPI archive underlinks its private
+                # dependencies.  With the wrapper compiling, MPI detection
+                # needs no library resolution at all and MPI itself stays
+                # the host's dynamic library — the intended boundary.
+                -DCMAKE_CXX_COMPILER=${MPI_CXX_COMPILER}
+                -DCMAKE_INSTALL_PREFIX=${ARTS_HPX_INSTALL_DIR}
+                -DCMAKE_INSTALL_LIBDIR=lib
+                -DHPX_WITH_DISTRIBUTED_RUNTIME=ON
+                -DHPX_WITH_NETWORKING=ON
+                -DHPX_WITH_PARCELPORT_MPI=ON
+                -DHPX_WITH_PARCELPORT_TCP=OFF
+                -DHPX_WITH_FETCH_BOOST=ON
+                -DHPX_WITH_FETCH_ASIO=ON
+                # HPX's own pinned hwloc as a static archive, named exactly:
+                # a find through NAMES/paths can still land on a host copy,
+                # and a dynamic hwloc binds at load time to whatever the
+                # host ships — per-machine drift, or a loader failure where
+                # nothing ships.
+                -DHPX_WITH_FETCH_HWLOC=OFF
+                -DHwloc_INCLUDE_DIR=${HPX_HWLOC_INSTALL_DIR}/include
+                -DHwloc_LIBRARY=${HPX_HWLOC_INSTALL_DIR}/lib/libhwloc.a
+                # Static HPX libraries: the apps embed the runtime the same
+                # way every other vendored runtime here is embedded, so a
+                # binary resolves nothing through the loader beyond the host
+                # toolchain and MPI.
+                -DHPX_WITH_STATIC_LINKING=ON
+                -DHPX_WITH_MALLOC=system
+                -DHPX_WITH_DYNAMIC_HPX_MAIN=OFF
+                -DHPX_WITH_EXAMPLES=OFF
+                -DHPX_WITH_TESTS=OFF
+                -DHPX_WITH_TOOLS=OFF
+                -DHPX_WITH_DOCUMENTATION=OFF
+                -DHPX_WITH_IO_COUNTERS=OFF
+            BUILD_COMMAND
+                ${CMAKE_COMMAND} --build <BINARY_DIR>
+                --parallel ${CMAKE_BUILD_PARALLEL_LEVEL}
+            INSTALL_COMMAND ${CMAKE_COMMAND} --install <BINARY_DIR>
+            LOG_CONFIGURE 1
+            LOG_BUILD 1
+            LOG_INSTALL 1
+        )
+
+        set(ARTS_HPX_AVAILABLE ON PARENT_SCOPE)
+        set(ARTS_HPX_INSTALL_DIR "${ARTS_HPX_INSTALL_DIR}" PARENT_SCOPE)
+        set(HPX_HWLOC_INSTALL_DIR "${HPX_HWLOC_INSTALL_DIR}" PARENT_SCOPE)
+    else()
+        message(STATUS
+            "HPX reference skipped: an MPI C++ implementation is required")
+    endif()
 endif()
 
 # The vendored archive as a proper target: a consumer names arts::hwloc and

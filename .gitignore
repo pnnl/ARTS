@@ -14,10 +14,13 @@ docs/_build/
 .cache/
 .venv/
 .vscode/
+.agents/
+.codex/
 .claude/
 .pytest_cache/
 .superpowers/
 .remember/
+AGENTS.md
 CLAUDE.md
 
 # Vendored dist-tarball cache (downloaded or pre-staged; pinned by SHA256 in

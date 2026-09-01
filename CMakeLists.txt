@@ -201,7 +201,7 @@ endif()
 # tests/CMakeLists.txt), so a full test tree costs real disk and link time
 # that a benchmark/experiment build never uses.  Validation builds opt in.
 option(ARTS_BUILD_TESTS      "Build test programs (enables ctest)"             OFF)
-option(ARTS_BUILD_BENCHMARKS "Build OCR benchmark apps (XSOCR + ARTS + ocrvx)" ON)
+option(ARTS_BUILD_BENCHMARKS "Build benchmark apps (ARTS + reference runtimes)" ON)
 # The native (non-OCR) OpenMP/MPI implementations predate the current
 # experiment driver and sit outside its catalog/consensus surface; they are
 # an explicit opt-in so the default build carries no extra link surface.
@@ -209,6 +209,7 @@ option(ARTS_BUILD_BASELINES  "Build native OpenMP/MPI baseline implementations" 
 # The reference runtimes are individually optional under ARTS_BUILD_BENCHMARKS.
 option(ARTS_BUILD_XSOCR      "Build the XSOCR reference runtime" ON)
 option(ARTS_BUILD_OCRVX      "Build the ocr-vx reference runtime" ON)
+option(ARTS_BUILD_HPX        "Build HPX and the HPX benchmark apps" ON)
 option(ARTS_BUILD_DOCS       "Build documentation (requires Doxygen + Sphinx)" OFF)
 
 # ── GPU / CUDA ─────────────────────────────────────────────────────────────
@@ -989,6 +990,9 @@ if(ARTS_BUILD_BENCHMARKS)
     if(TARGET ocr_vdm_mpi)
         list(APPEND _arts_ref_runtimes "ocrvx")
     endif()
+    if(TARGET hpx_ep)
+        list(APPEND _arts_ref_runtimes "hpx")
+    endif()
     if(_arts_ref_runtimes)
         string(REPLACE ";" "+" _arts_ref_runtimes "${_arts_ref_runtimes}")
         message(STATUS "  References:      ${_arts_ref_runtimes}")
@@ -1000,6 +1004,7 @@ endif()
 message(STATUS "  Baselines:       ${ARTS_BUILD_BASELINES}")
 message(STATUS "  XSOCR:           ${ARTS_BUILD_XSOCR}")
 message(STATUS "  OCRVX:           ${ARTS_BUILD_OCRVX}")
+message(STATUS "  HPX:             ${ARTS_BUILD_HPX}")
 message(STATUS "")
 message(STATUS "Installation paths:")
 message(STATUS "  Libraries:       ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}")
@@ -1010,4 +1015,3 @@ message(STATUS "")
 message(STATUS "To specify a custom install prefix, use:")
 message(STATUS "  cmake -DCMAKE_INSTALL_PREFIX=/path/to/install ..")
 message(STATUS "=================================================================")
-

@@ -20,7 +20,7 @@ def load_doc(name: str) -> str | None:
     """The structural document for one catalog entry, or None.
 
     Documents are per-entry markdown files shipped with the tool; an entry
-    without one (microbenchmarks, mostly) is an absence, not an error.
+    without one (attack probes, mostly) is an absence, not an error.
     """
     doc = files(__package__).joinpath("appdocs", f"{name}.md")
     if not doc.is_file():

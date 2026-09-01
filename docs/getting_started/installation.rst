@@ -77,7 +77,7 @@ All options are set with ``-D<NAME>=<VALUE>`` on the cmake line.
        validation builds.
    * - ``ARTS_BUILD_BENCHMARKS``
      - ON
-     - Build the OCR benchmark apps (XSOCR + ARTS + ocrvx).
+     - Build the benchmark apps (ARTS and the enabled reference runtimes).
    * - ``ARTS_BUILD_XSOCR``
      - ON
      - Build the XSOCR reference runtime and its ``*_xsocr`` app variants
@@ -86,6 +86,10 @@ All options are set with ``-D<NAME>=<VALUE>`` on the cmake line.
      - ON
      - Build the ocr-vx reference runtime and its ``*_ocrvx`` app variants
        (needs a host MPI).
+   * - ``ARTS_BUILD_HPX``
+     - ON
+     - Source-build HPX v1.11.0 with its MPI parcelport and build the
+       standalone HPX benchmark apps (needs a host MPI).
    * - ``ARTS_BUILD_BASELINES``
      - OFF
      - Build the native (non-OCR) OpenMP/MPI baseline implementations —

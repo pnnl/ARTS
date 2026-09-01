@@ -23,6 +23,21 @@ HeaderIcon {
     padding: 0 1;
     color: $text;
     text-style: bold;
+    /* The label stands beside three-line bordered cells; without an
+       explicit height it top-aligns against their middles. */
+    height: 3;
+    content-align: left middle;
+}
+
+/* Header and section rows carry no family name; the spacer only keeps the
+   columns in register. */
+.plane-gutter {
+    width: 13;
+}
+
+/* The write-policy halves read as two pairs, not four equal columns. */
+.group-gap {
+    margin-left: 2;
 }
 
 /* Just wide enough for the longest pair a split cell holds — two checkboxes
@@ -44,7 +59,7 @@ HeaderIcon {
 .plane-cell {
     width: 24;
     height: auto;
-    border: round $panel-darken-2;
+    border: round $panel-lighten-2;
     align: left middle;
 }
 
@@ -52,6 +67,15 @@ HeaderIcon {
     color: $text-disabled;
     text-align: center;
     border: round $panel-darken-3;
+}
+
+.external-head {
+    margin-top: 1;
+}
+
+.external-note {
+    width: auto;
+    padding: 0 1;
 }
 
 /* Sized to its own label, not to the cell: a lone toggle stretched across a

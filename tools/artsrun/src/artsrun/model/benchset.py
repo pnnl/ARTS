@@ -48,6 +48,9 @@ class ResolvedApp(BaseModel):
     timeout: int = 0
     multinode_timeout: int = 0
     args_overridden: bool = False
+    # The HPX port's target name, set only on the version row the port
+    # structurally mirrors — every other row is ineligible for the HPX entry.
+    hpx_binary: str | None = None
 
     @property
     def key(self) -> str:
@@ -176,6 +179,9 @@ class Benchset(BaseModel):
                         timeout=source.timeout,
                         multinode_timeout=source.multinode_timeout,
                         args_overridden=overridden,
+                        hpx_binary=(f"{app.binary}_hpx"
+                                    if app.hpx and version is app.hpx_tier
+                                    else None),
                     )
                 )
         return out
