@@ -594,6 +594,7 @@ def _launcher_view(profile_name):
             return {
                 "ssh": panel.query_one("#section-ssh", Vertical).display,
                 "slurm": panel.query_one("#section-slurm", Vertical).display,
+                "flux": panel.query_one("#section-flux", Vertical).display,
                 "ports_disabled": panel.query_one("#f-ports", Input).disabled,
                 "ports_placeholder": panel.query_one("#f-ports", Input).placeholder,
             }
@@ -602,10 +603,11 @@ def _launcher_view(profile_name):
     return asyncio.run(main())
 
 
-def test_a_local_profile_hides_both_launcher_sections_and_locks_ports():
+def test_a_local_profile_hides_every_launcher_section_and_locks_ports():
     view = _launcher_view("ferrari")
     assert view["ssh"] is False
     assert view["slurm"] is False
+    assert view["flux"] is False
     assert view["ports_disabled"] is True
     assert "automatic" in view["ports_placeholder"]
 
@@ -614,6 +616,7 @@ def test_a_slurm_profile_shows_only_its_own_section():
     view = _launcher_view("junction")
     assert view["slurm"] is True
     assert view["ssh"] is False
+    assert view["flux"] is False
     assert view["ports_disabled"] is False
 
 
@@ -629,6 +632,21 @@ def test_switching_the_launcher_switches_the_sections():
                 panel.query_one("#section-slurm", Vertical).display)
 
     assert drive(check) == (True, False)
+
+
+def test_switching_the_launcher_to_flux_shows_its_section():
+    async def check(app, pilot):
+        from textual.containers import Vertical
+        from textual.widgets import Select
+
+        panel = app.query_one("#profile", ProfilePanel)
+        panel.query_one("#f-launcher", Select).value = "flux"
+        await pilot.pause()
+        return (panel.query_one("#section-flux", Vertical).display,
+                panel.query_one("#section-ssh", Vertical).display,
+                panel.query_one("#section-slurm", Vertical).display)
+
+    assert drive(check) == (True, False, False)
 
 
 def test_the_provider_offers_only_what_the_transport_builds():

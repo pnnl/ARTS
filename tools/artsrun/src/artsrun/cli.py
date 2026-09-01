@@ -407,6 +407,10 @@ def _dry_run(campaign, selection: Selection) -> None:
                 from artsrun.run.slurm import _launch
 
                 line = _launch(cell, campaign.profile)
+            elif campaign.profile.launcher is Launcher.FLUX:
+                from artsrun.run.flux import _launch
+
+                line = _launch(cell, campaign.profile)
             else:
                 from artsrun.run.command import (build_command, render,
                                                  with_post_verify, with_timeout)

@@ -100,3 +100,19 @@ def test_reference_config_width_follows_the_profile():
     profile = load_profile("junction")
     text = render_ocr(profile, 2)
     assert "0-63" in text
+
+
+def test_arts_config_for_flux_names_ports_but_no_hosts():
+    # The runtime discovers its roster from the flux CLI; only ssh carries
+    # a host list in the config.
+    from artsrun.model.profile import Profile
+
+    profile = Profile.model_validate({
+        "name": "t", "launcher": "flux", "nodes": [1, 2, 4],
+        "workers": 15, "progress": 1, "ports": [25000], "flux": {},
+    })
+    text = render_arts(profile, 4)
+    assert "launcher=flux" in text
+    assert "ports=25000" in text
+    assert "node_count=4" in text
+    assert "\nnodes=" not in text

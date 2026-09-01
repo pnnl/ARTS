@@ -137,6 +137,7 @@ set(TEST_PROGRAMS
     coherence_buffer_test
     grant_purge_word_model
     config_ports_contract
+    config_flux_setup
     port_block_relocation
     stdio_forward_scale_test
     regpool_basic
@@ -516,6 +517,11 @@ set_tests_properties(grant_purge_word_model PROPERTIES
 register_pure_unit_test(config_ports_contract TIMEOUT 30)
 set_tests_properties(config_ports_contract PROPERTIES
     PASS_REGULAR_EXPRESSION "PASS config_ports_contract")
+# Forks to probe the flux launcher arm's ARTS_ERROR death paths against a
+# stub flux CLI the test writes itself; loads cfgs only, binds nothing.
+register_pure_unit_test(config_flux_setup TIMEOUT 30)
+set_tests_properties(config_flux_setup PROPERTIES
+    PASS_REGULAR_EXPRESSION "PASS config_flux_setup")
 # Binds real sockets to occupy a block, then checks the selector moves off it.
 register_pure_unit_test(port_block_relocation TIMEOUT 30)
 set_tests_properties(port_block_relocation PROPERTIES

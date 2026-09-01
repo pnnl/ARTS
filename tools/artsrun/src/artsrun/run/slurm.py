@@ -22,6 +22,7 @@ from artsrun.model.plane import RuntimeKind
 from artsrun.model.profile import Profile
 from artsrun.paths import scratch_dir
 from artsrun.run.command import build_command, build_env, render, with_post_verify
+from artsrun.run.markers import marker_path, read_marker
 from artsrun.run.types import Cell, CellResult, Status
 
 _JOB_ID = re.compile(r"(\d+)")
@@ -76,21 +77,6 @@ def alive_jobs(job_ids: list[str]) -> set[str]:
         capture_output=True, text=True, check=False,
     )
     return {line.strip() for line in proc.stdout.splitlines() if line.strip()}
-
-
-def marker_path(log_dir: Path, cell: Cell) -> Path:
-    """Where a cell's job records its own outcome."""
-    return log_dir / f"{cell.slug}.rc"
-
-
-def read_marker(path: Path) -> tuple[int, float] | None:
-    """(exit status, wall seconds) a job recorded for itself, if it has."""
-    try:
-        parts = path.read_text().split()
-        rc, start, end = int(parts[0]), float(parts[1]), float(parts[2])
-    except (OSError, IndexError, ValueError):
-        return None
-    return rc, max(0.0, end - start)
 
 
 def _launch(cell: Cell, profile: Profile) -> str:

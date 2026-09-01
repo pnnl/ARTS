@@ -542,3 +542,39 @@ def test_a_run_with_no_selection_is_not_offered_for_continuing(tmp_path, monkeyp
         {"event": "finished", "cell": "a", "status": "ok"},
     ])
     assert mod.past_runs() == []
+
+
+def test_flux_requires_its_section():
+    with pytest.raises(ValidationError, match="requires a flux section"):
+        Profile.model_validate(_local(launcher="flux", ports=[25000]))
+
+
+def test_flux_profile_requires_ports_like_every_remote_launcher():
+    with pytest.raises(ValidationError, match="ports is required"):
+        Profile.model_validate(_local(launcher="flux", flux={}))
+
+
+def test_flux_defaults_state_the_llnl_posture():
+    profile = Profile.model_validate(_local(
+        launcher="flux", ports=[25000],
+        flux={"queue": "pbatch", "bank": "guests"},
+    ))
+    # mpibind is on by default at the sites this exists for; build work
+    # follows the cell queue (a debug queue's short cap kills a build).
+    assert profile.flux.mpibind is True
+    assert profile.flux.build_cpus == 8
+    assert profile.flux.build_queue is None
+    assert profile.flux.poll_interval_s == 10.0
+
+
+def test_sched_settings_reads_the_launchers_own_section():
+    # Build sizing and poll cadence go through one accessor, so a consumer
+    # wired to profile.slurm cannot silently ignore a flux profile's values.
+    slurm = Profile.model_validate(_local(
+        launcher="slurm", ports=[25000], slurm={"build_cpus": 4}))
+    flux = Profile.model_validate(_local(
+        launcher="flux", ports=[25000], flux={"build_cpus": 12}))
+    local = Profile.model_validate(_local())
+    assert slurm.sched_settings.build_cpus == 4
+    assert flux.sched_settings.build_cpus == 12
+    assert local.sched_settings is None

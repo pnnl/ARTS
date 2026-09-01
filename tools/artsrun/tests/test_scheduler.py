@@ -223,7 +223,7 @@ def test_a_marker_is_the_authority_on_how_a_job_ended(tmp_path):
     assert updated.wall_s == 60.5
 
 
-def test_resume_never_resubmits_a_job_the_queue_still_holds(tmp_path, monkeypatch):
+def test_resume_never_resubmits_a_job_the_queue_still_holds(tmp_path):
     import json
 
     from artsrun import campaign as campaign_mod
@@ -237,9 +237,9 @@ def test_resume_never_resubmits_a_job_the_queue_still_holds(tmp_path, monkeypatc
     ]
     (tmp_path / "track.jsonl").write_text(
         "".join(json.dumps(r) + "\n" for r in rows))
-    monkeypatch.setattr("artsrun.run.slurm.alive_jobs",
-                        lambda ids: {"12"})
-    still = campaign_mod.queued_cells(tmp_path, cells)
+    # The launcher's own alive-query is injected, so the resume filter is
+    # backend-agnostic: whichever scheduler answered, alive means withheld.
+    still = campaign_mod.queued_cells(tmp_path, cells, lambda ids: {"12"})
     assert still == {cells[1].key}
 
 

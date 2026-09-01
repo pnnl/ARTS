@@ -12,6 +12,7 @@ class Launcher(StrEnum):
     LOCAL = "local"
     SSH = "ssh"
     SLURM = "slurm"
+    FLUX = "flux"
 
 
 # A typoed profile key must refuse, not vanish: some keys (slurm.mpi in
@@ -63,6 +64,42 @@ class SlurmSettings(BaseModel):
     poll_interval_s: float = Field(default=10.0, gt=0)
 
 
+class FluxSettings(BaseModel):
+    """Submission parameters for a Flux cluster.
+
+    Same contract as Slurm: each cell is its own exclusive job, submitted up
+    front, writing its own outcome marker — the queue is the scheduler's to
+    run and the submitter is optional.
+    """
+
+    model_config = _STRICT
+
+    queue: str | None = None
+    # Build work may queue elsewhere than the cells — but a debug queue's
+    # short time cap kills a full build mid-link, so this defaults to the
+    # cell queue, not to debug.
+    build_queue: str | None = None
+    build_cpus: int = Field(default=8, ge=1)
+    # Rendered as -t on the build job; unset inherits the queue default.
+    build_time: str | None = None
+    # The accounting bank the node-hours are charged to; rendered --bank=.
+    # (--setattr=system.bank= is the fallback spelling on an instance whose
+    # flux-core predates the option.)
+    bank: str | None = None
+    # Shell PMI service list for the reference cells (-o pmi=...).  Unset
+    # relies on the site default; set it when that default cannot form the
+    # MPI world — the failure that produces is otherwise SILENT (each rank
+    # degrades to a size-1 singleton world and "succeeds" alone).
+    pmi: str | None = None
+    # True = the site loads the mpibind plugin, so every run line disables
+    # it (-o mpibind=off).  False omits the option entirely: an instance
+    # without the plugin may reject the unknown name.
+    mpibind: bool = True
+    extra_batch: list[str] = Field(default_factory=list)
+    extra_run: list[str] = Field(default_factory=list)
+    poll_interval_s: float = Field(default=10.0, gt=0)
+
+
 class Profile(BaseModel):
     model_config = _STRICT
 
@@ -103,6 +140,7 @@ class Profile(BaseModel):
 
     ssh: SshSettings | None = None
     slurm: SlurmSettings | None = None
+    flux: FluxSettings | None = None
 
     cell_timeout_s: int = Field(default=300, ge=1)
     repeats: int = Field(default=1, ge=1)
@@ -124,6 +162,20 @@ class Profile(BaseModel):
     @property
     def hosts(self) -> list[str]:
         return self.ssh.hosts if self.ssh else []
+
+    @property
+    def sched_settings(self) -> SlurmSettings | FluxSettings | None:
+        """The scheduler section this profile's launcher reads.
+
+        The build-job width and the poll cadence mean the same thing under
+        either scheduler; going through one accessor keeps every consumer
+        from wiring itself to a single launcher's section.
+        """
+        if self.launcher is Launcher.SLURM:
+            return self.slurm
+        if self.launcher is Launcher.FLUX:
+            return self.flux
+        return None
 
     @model_validator(mode="after")
     def _check(self) -> "Profile":
@@ -162,6 +214,8 @@ class Profile(BaseModel):
                 raise ValueError("ssh.hosts must name distinct hosts")
         if self.launcher is Launcher.SLURM and self.slurm is None:
             raise ValueError("launcher=slurm requires a slurm section")
+        if self.launcher is Launcher.FLUX and self.flux is None:
+            raise ValueError("launcher=flux requires a flux section")
         if self.provider == "verbs":
             # The runtime requires RDM endpoints; the verbs core provider
             # offers only connection-oriented MSG endpoints, so RDM exists

@@ -14,7 +14,7 @@ from artsrun.model.plane import (
     Write,
     load_plane,
 )
-from artsrun.model.profile import Launcher, Profile, SlurmSettings
+from artsrun.model.profile import FluxSettings, Launcher, Profile, SlurmSettings
 from artsrun.model.selection import Selection
 
 __all__ = [
@@ -24,6 +24,7 @@ __all__ = [
     "BenchsetEntry",
     "Catalog",
     "Family",
+    "FluxSettings",
     "Kind",
     "Launcher",
     "Plane",

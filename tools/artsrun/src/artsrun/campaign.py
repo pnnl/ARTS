@@ -98,6 +98,10 @@ class Campaign:
             from artsrun.run.slurm import srun_build_prefix
 
             return srun_build_prefix(self.profile)
+        if self.profile.launcher is Launcher.FLUX:
+            from artsrun.run.flux import flux_build_prefix
+
+            return flux_build_prefix(self.profile)
         return []
 
     # -- phases ------------------------------------------------------------
@@ -168,6 +172,10 @@ class Campaign:
             from artsrun.run.slurm import SlurmBackend
 
             return SlurmBackend(self.profile, log_dir)
+        if self.profile.launcher is Launcher.FLUX:
+            from artsrun.run.flux import FluxBackend
+
+            return FluxBackend(self.profile, log_dir)
         from artsrun.run.local import LocalBackend
 
         return LocalBackend(self.profile, log_dir)
@@ -189,7 +197,7 @@ class Campaign:
         prefix = self._build_prefix()
         # ninja sizes itself to the node it lands on; inside a narrow job it
         # must size itself to the slot instead.
-        jobs = self.profile.slurm.build_cpus if prefix else None
+        jobs = self.profile.sched_settings.build_cpus if prefix else None
         build(plan, on_line=lambda line: say(line), prefix=prefix, jobs=jobs)
 
         cells, skipped = self.cells()
@@ -211,12 +219,16 @@ class Campaign:
             carried = keep
             done = {r.cell.key for r in keep}
             cells = [c for c in cells if c.key not in done]
-            if self.profile.launcher is Launcher.SLURM:
+            if self.profile.launcher in (Launcher.SLURM, Launcher.FLUX):
                 # Jobs an earlier submitter left in the queue are not lost
                 # work but work in flight: resubmitting them would run every
                 # such cell twice.  They finish on their own and a later
                 # look collects their markers.
-                still_out = queued_cells(self.run_dir, cells)
+                if self.profile.launcher is Launcher.SLURM:
+                    from artsrun.run.slurm import alive_jobs
+                else:
+                    from artsrun.run.flux import alive_jobs
+                still_out = queued_cells(self.run_dir, cells, alive_jobs)
                 if still_out:
                     cells = [c for c in cells if c.key not in still_out]
                     say(f"{len(still_out)} cells still in the queue — "
@@ -261,10 +273,8 @@ class Campaign:
 
         backend = self.backend()
         self._backend = backend
-        poll = (
-            self.profile.slurm.poll_interval_s
-            if self.profile.slurm else 5.0
-        )
+        sched = self.profile.sched_settings
+        poll = sched.poll_interval_s if sched else 5.0
         scheduler = Scheduler(
             backend, cells, WallCache(wall_cache_path()),
             on_event=on_event, poll_interval_s=poll,
@@ -368,7 +378,7 @@ def recorded_results(run_dir: Path, cells: list) -> list[CellResult]:
     # A fire-and-forget job finishes whether or not anyone recorded it: its
     # own marker on the shared filesystem carries the outcome the track never
     # saw, because the process that would have written the track was gone.
-    from artsrun.run.slurm import marker_path, read_marker
+    from artsrun.run.markers import marker_path, read_marker
 
     seen = {r.cell.key for r in out}
     for cell in cells:
@@ -388,14 +398,13 @@ def recorded_results(run_dir: Path, cells: list) -> list[CellResult]:
     return out
 
 
-def queued_cells(run_dir: Path, cells: list) -> set[str]:
-    """Cells whose submitted job is still in Slurm's queue.
+def queued_cells(run_dir: Path, cells: list, alive_jobs) -> set[str]:
+    """Cells whose submitted job the scheduler still holds.
 
-    The track records each submission's job id; one squeue call says which
-    of those jobs are still alive.  Anything alive must not be resubmitted.
+    The track records each submission's job id; the launcher's own
+    `alive_jobs` says which of those jobs are still alive.  Anything alive
+    must not be resubmitted.
     """
-    from artsrun.run.slurm import alive_jobs
-
     track = run_dir / "track.jsonl"
     if not track.is_file():
         return set()

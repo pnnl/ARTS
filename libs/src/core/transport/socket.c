@@ -207,6 +207,82 @@ bool arts_transport_set_ip(struct arts_config_s *config) {
     return true;
   }
 
+  /* flux: the declared launcher wins over any leaked wrapper-scheduler
+   * variables (a flux instance can itself run inside another scheduler's
+   * allocation, where every task inherits its broker's rank variables),
+   * so this branch is gated on the launcher and sits ahead of the SLURM
+   * one.  The launcher setup already required the flux task environment. */
+  if (config->launcher != NULL && strcmp(config->launcher, "flux") == 0) {
+    char *flux_rank = getenv("FLUX_TASK_RANK");
+    if (flux_rank) {
+      arts_global_rank_id = (unsigned int)strtol(flux_rank, NULL, 10);
+      /* One rank per node is the launch contract (see the SLURM branch
+       * below for why extra tasks are unusable). */
+      if (arts_global_rank_id >= config->table_length) {
+        ARTS_ERROR("task rank %u exceeds the %u-node routing table — the "
+                   "launcher must start exactly one task per node "
+                   "(flux run -N<n> -n<n>)",
+                   arts_global_rank_id, config->table_length);
+      }
+      /* The routing table was built from the job hostlist in list order,
+       * and the mesh treats row r as rank r — which assumes the launcher
+       * assigns task ranks in that same order (block task map, one task
+       * per node).  Verify by address: this host must carry row r's
+       * address.  Carrying a DIFFERENT row's address instead is an
+       * unambiguous ordering violation and fails now, rather than as an
+       * unattributable connect timeout; carrying none of them is only
+       * ambiguity (NAT, unmatched interface remap) and warns. */
+      unsigned int r = arts_global_rank_id;
+      bool match_self = false;
+      int match_other = -1;
+      struct ifaddrs *ifap = NULL;
+      if (getifaddrs(&ifap) == 0) {
+        for (struct ifaddrs *ifa = ifap; ifa && !match_self;
+             ifa = ifa->ifa_next) {
+          char addr[100];
+          if (ifa->ifa_addr == NULL) {
+            continue;
+          }
+          if (ifa->ifa_addr->sa_family == AF_INET) {
+            struct sockaddr_in *sa = (struct sockaddr_in *)ifa->ifa_addr;
+            inet_ntop(AF_INET, &sa->sin_addr, addr, sizeof(addr));
+          } else if (ifa->ifa_addr->sa_family == AF_INET6) {
+            struct sockaddr_in6 *sa6 = (struct sockaddr_in6 *)ifa->ifa_addr;
+            inet_ntop(AF_INET6, &sa6->sin6_addr, addr, sizeof(addr));
+          } else {
+            continue;
+          }
+          if (strcmp(addr, ip_list + ((ptrdiff_t)100 * r)) == 0) {
+            match_self = true;
+          } else if (match_other < 0) {
+            for (int i = 0; i < (int)config->table_length; i++) {
+              if (strcmp(addr, ip_list + ((ptrdiff_t)100 * i)) == 0) {
+                match_other = i;
+                break;
+              }
+            }
+          }
+        }
+        freeifaddrs(ifap);
+      }
+      if (!match_self) {
+        if (match_other >= 0) {
+          ARTS_ERROR("flux task rank %u runs on the host of routing-table "
+                     "row %d — task ranks do not follow the job hostlist "
+                     "order this table was built in",
+                     r, match_other);
+        }
+        ARTS_WARN("flux: no local interface carries the address of "
+                  "routing-table row %u — task placement cannot be "
+                  "verified on this host",
+                  r);
+      }
+      config->my_rank = arts_global_rank_id;
+      arts_global_rank_count = config->table_length;
+      return true;
+    }
+  }
+
   // SLURM: use SLURM_PROCID for rank (srun sets this per task)
   // IP matching fails when all nodes resolve to the same address (e.g., WSL2)
   char *task_rank = getenv("SLURM_PROCID");

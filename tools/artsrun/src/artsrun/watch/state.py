@@ -286,7 +286,7 @@ class RunState:
         if now - self._marker_sweep_at < 5.0:
             return False
         self._marker_sweep_at = now
-        from artsrun.run.slurm import marker_path, read_marker
+        from artsrun.run.markers import marker_path, read_marker
 
         changed = False
         for key in self.order:

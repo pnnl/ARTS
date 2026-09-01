@@ -156,6 +156,10 @@ class SweepCampaign:
             from artsrun.run.slurm import srun_build_prefix
 
             return srun_build_prefix(self.profile)
+        if self.profile.launcher is Launcher.FLUX:
+            from artsrun.run.flux import flux_build_prefix
+
+            return flux_build_prefix(self.profile)
         return []
 
     def backend(self):
@@ -164,6 +168,10 @@ class SweepCampaign:
             from artsrun.run.slurm import SlurmBackend
 
             return SlurmBackend(self.profile, log_dir)
+        if self.profile.launcher is Launcher.FLUX:
+            from artsrun.run.flux import FluxBackend
+
+            return FluxBackend(self.profile, log_dir)
         from artsrun.run.local import LocalBackend
 
         return LocalBackend(self.profile, log_dir)
@@ -198,7 +206,7 @@ class SweepCampaign:
                 "the build tree has no target for: " + ", ".join(plan.missing))
         say(f"building {len(plan.targets)} targets in {self.build_dir}")
         prefix = self._build_prefix()
-        jobs = self.profile.slurm.build_cpus if prefix else None
+        jobs = self.profile.sched_settings.build_cpus if prefix else None
         build(plan, on_line=say, prefix=prefix, jobs=jobs)
 
         cells = self.cells()
@@ -215,8 +223,12 @@ class SweepCampaign:
             carried = keep
             done = {r.cell.key for r in keep}
             cells = [c for c in cells if c.key not in done]
-            if self.profile.launcher is Launcher.SLURM:
-                still_out = queued_cells(self.run_dir, cells)
+            if self.profile.launcher in (Launcher.SLURM, Launcher.FLUX):
+                if self.profile.launcher is Launcher.SLURM:
+                    from artsrun.run.slurm import alive_jobs
+                else:
+                    from artsrun.run.flux import alive_jobs
+                still_out = queued_cells(self.run_dir, cells, alive_jobs)
                 if still_out:
                     cells = [c for c in cells if c.key not in still_out]
                     say(f"{len(still_out)} cells still in the queue — "
@@ -250,8 +262,8 @@ class SweepCampaign:
 
         backend = self.backend()
         self._backend = backend
-        poll = (self.profile.slurm.poll_interval_s
-                if self.profile.slurm else 5.0)
+        sched = self.profile.sched_settings
+        poll = sched.poll_interval_s if sched else 5.0
         scheduler = Scheduler(
             backend, cells, WallCache(wall_cache_path()),
             on_event=on_event, poll_interval_s=poll,

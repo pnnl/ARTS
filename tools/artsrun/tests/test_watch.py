@@ -25,9 +25,9 @@ def _profile(launcher: str = "local") -> Profile:
         "name": "t", "launcher": launcher, "nodes": [1, 2],
         "workers": 2, "progress": 1,
     }
-    if launcher == "slurm":
+    if launcher in ("slurm", "flux"):
         data["ports"] = [25000]
-        data["slurm"] = {}
+        data[launcher] = {}
     return Profile.model_validate(data)
 
 
@@ -106,6 +106,16 @@ def test_a_slurm_manifest_carries_both_layers_of_the_command(tmp_path):
     assert meta["command"].startswith("sbatch")
     assert "--nodes=2" in meta["command"]
     assert "srun" in meta["script"]
+    assert "timeout -k 1 60" in meta["script"]
+
+
+def test_a_flux_manifest_carries_both_layers_of_the_command(tmp_path):
+    _write(tmp_path, [_cell("arts_val_wb", nodes=2)], launcher="flux")
+    manifest = Manifest.load(tmp_path)
+    meta = manifest.commands[next(iter(manifest.commands))]
+    assert meta["command"].startswith("flux batch")
+    assert "--nodes=2" in meta["command"]
+    assert "flux run -N 2 -n 2" in meta["script"]
     assert "timeout -k 1 60" in meta["script"]
 
 

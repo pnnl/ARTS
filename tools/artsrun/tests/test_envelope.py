@@ -133,3 +133,52 @@ def test_real_taskset_applies_the_mask(tmp_path):
         pytest.skip("cpu0 is not a first sibling on this host")
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.split()[-1] == "0"
+
+
+# --- launcher-keyed scheduler guards ---------------------------------------
+# Scheduler variables leak across nestings: a flux cell inherits its
+# broker's SLURM_* inside a Slurm allocation, and a local/ssh cell inside a
+# flux allocation inherits FLUX_*.  The guards are therefore keyed on the
+# launcher the cell was built for (ARTSRUN_LAUNCHER, exported by build_env).
+
+def test_leaked_flux_vars_do_not_judge_a_non_flux_cell(tmp_path):
+    proc = _run(tmp_path, [2, 2, "fixed", "--", "echo", "ok"],
+                cpus=FIRST_SIBLINGS, allowed="0-1",
+                env={"FLUX_JOB_SIZE": "1", "FLUX_TASK_LOCAL_ID": "1"})
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "ok"
+
+
+def test_a_flux_cell_fails_on_a_world_size_mismatch(tmp_path):
+    proc = _run(tmp_path, [2, 2, "fixed", "--", "echo", "ok"],
+                cpus=FIRST_SIBLINGS, allowed="0-1",
+                env={"ARTSRUN_LAUNCHER": "flux", "FLUX_JOB_SIZE": "1"})
+    assert proc.returncode == 90
+    assert "world: FLUX_JOB_SIZE=1" in proc.stderr
+
+
+def test_a_flux_cell_refuses_a_colocated_second_rank(tmp_path):
+    proc = _run(tmp_path, [2, 2, "fixed", "--", "echo", "ok"],
+                cpus=FIRST_SIBLINGS, allowed="0-1",
+                env={"ARTSRUN_LAUNCHER": "flux", "FLUX_TASK_LOCAL_ID": "1"})
+    assert proc.returncode == 90
+    assert "colocation: FLUX_TASK_LOCAL_ID=1" in proc.stderr
+
+
+def test_a_flux_cell_ignores_leaked_slurm_vars(tmp_path):
+    # The mirror image: a flux-on-Slurm rehearsal leaks the broker's
+    # SLURM_NTASKS/SLURM_LOCALID into every task.
+    proc = _run(tmp_path, [2, 2, "fixed", "--", "echo", "ok"],
+                cpus=FIRST_SIBLINGS, allowed="0-1",
+                env={"ARTSRUN_LAUNCHER": "flux", "FLUX_JOB_SIZE": "2",
+                     "SLURM_NTASKS": "1", "SLURM_LOCALID": "1"})
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "ok"
+
+
+def test_a_non_flux_cell_keeps_the_slurm_world_guard(tmp_path):
+    proc = _run(tmp_path, [2, 2, "fixed", "--", "echo", "ok"],
+                cpus=FIRST_SIBLINGS, allowed="0-1",
+                env={"SLURM_NTASKS": "1"})
+    assert proc.returncode == 90
+    assert "world: SLURM_NTASKS=1" in proc.stderr

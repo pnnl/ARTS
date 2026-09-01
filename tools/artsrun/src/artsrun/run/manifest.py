@@ -29,14 +29,27 @@ FILE_NAME = "manifest.json"
 def describe_command(cell: Cell, profile: Profile, log_path: Path) -> dict:
     """The exact invocation one cell runs under.
 
-    A Slurm cell is two layers — the submission command and the batch script
-    it carries — and both are part of what "the command" means there.
+    A scheduler cell (Slurm, Flux) is two layers — the submission command
+    and the batch script it carries — and both are part of what "the
+    command" means there.
     """
     if profile.launcher is Launcher.SLURM:
-        from artsrun.run.slurm import job_script, marker_path, sbatch_argv
+        from artsrun.run.markers import marker_path
+        from artsrun.run.slurm import job_script, sbatch_argv
 
         return {
             "command": render(sbatch_argv(cell, profile, log_path)),
+            "script": job_script(cell, profile,
+                                 marker_path(log_path.parent, cell)),
+        }
+    if profile.launcher is Launcher.FLUX:
+        from artsrun.run.flux import batch_argv, job_script, script_path
+        from artsrun.run.markers import marker_path
+
+        return {
+            "command": render(batch_argv(
+                cell, profile, log_path,
+                script_path(log_path.parent, cell))),
             "script": job_script(cell, profile,
                                  marker_path(log_path.parent, cell)),
         }
@@ -81,10 +94,11 @@ def write_manifest(
         })
 
     # Which mpirun the reference cells resolved their flag spellings against —
-    # provenance for a run judged later, from another host.  Slurm cells
-    # launch through srun and never consult the probe.
+    # provenance for a run judged later, from another host.  Scheduler cells
+    # launch through the scheduler's own step launcher (srun / flux run) and
+    # never consult the probe.
     flavor = None
-    if profile.launcher is not Launcher.SLURM and any(
+    if profile.launcher not in (Launcher.SLURM, Launcher.FLUX) and any(
             c.entry.kind is not RuntimeKind.ARTS for c in cells):
         from artsrun.run.command import MpiProbeError, mpi_flavor
 

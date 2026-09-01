@@ -155,7 +155,8 @@ Networking
      - Network port(s) every node's listen ports are derived from.  A single
        port (``25000``), a range (``[25000-25001]``), or a comma-separated
        list (``25000,25010``).  **Required** with ``launcher=ssh``,
-       ``slurm``, or ``lsf``, and **rejected** with ``launcher=local``.
+       ``slurm``, ``flux``, or ``lsf``, and **rejected** with
+       ``launcher=local``.
 
 Who fixes the ports depends on where the ranks land.  A remote launcher puts
 one rank on each host, so every rank can listen on the same port — but each of
@@ -178,6 +179,19 @@ the collisions the search exists to avoid.
 
    To run several ranks on one machine, use ``launcher=local`` and let it
    place them.  The nodes list carries hostnames only.
+
+Launcher selection is environment-driven for the schedulers that publish
+their layout in the environment: under Slurm or LSF the runtime detects the
+scheduler's variables and ignores the configured value.  ``launcher=flux``
+is the one **opt-in** value: it must be named in the config, and the process
+must then be a task of a Flux job — one task per node, e.g.
+``flux run -N<node_count> -n<node_count> -c<width> <binary>`` — because the
+runtime reads its rank from the task environment and its node roster from
+the Flux CLI (Flux publishes no hostlist variable).  Naming ``flux`` outside
+a Flux task environment is a hard error, never a silent fallback; and a
+Flux variable leaking into a ``local`` or ``ssh`` run changes nothing.  A
+config with **no** ``launcher`` line and no scheduler environment still
+defaults to ``ssh``, Flux environment or not.
 
 Debug / Utility
 ---------------

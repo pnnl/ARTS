@@ -134,9 +134,10 @@ def build_command(cell: Cell, profile: Profile) -> list[str]:
     tail += list(cell.args)
 
     launcher = profile.launcher
-    if launcher is Launcher.SLURM:
-        # srun launches the ranks; the prefix is part of the job script
-        # (run/slurm.py), which wraps this argv for every kind identically.
+    if launcher in (Launcher.SLURM, Launcher.FLUX):
+        # The scheduler's step launcher (srun / flux run) starts the ranks;
+        # the prefix is part of the job script (run/slurm.py, run/flux.py),
+        # which wraps this argv for every kind identically.
         return [*wrap, *tail]
 
     remote = launcher is Launcher.SSH
@@ -169,6 +170,12 @@ def build_env(cell: Cell, profile: Profile) -> dict[str, str]:
     # (runtime init and teardown excluded on both ends) — so every cell asks
     # for it and the log parse turns it into the cell's measured time.
     env["ARTS_E2E_MARKER"] = "1"
+    # Which launcher this cell believes it runs under.  The envelope's
+    # scheduler-specific guards key on it, because scheduler variables LEAK:
+    # a cell of one launcher running inside another scheduler's allocation
+    # inherits that scheduler's task variables, and judging the cell
+    # against them produces spurious verdicts in both directions.
+    env["ARTSRUN_LAUNCHER"] = profile.launcher.value
     if cell.entry.kind is RuntimeKind.ARTS and cell.cfg:
         env["ARTS_CONFIG"] = str(cell.cfg)
     elif cell.entry.kind is RuntimeKind.OCRVX:

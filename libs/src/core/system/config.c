@@ -39,12 +39,14 @@
 #include "arts/system/config.h"
 
 #include <ctype.h>
+#include <errno.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include "arts.h"
@@ -634,6 +636,22 @@ static void config_auto_parse(struct arts_config_s *config,
 static void handle_launcher(struct arts_config_s *config, const char *value,
                             struct arts_config_variable_s **vars) {
   (void)vars;
+  /* flux is opt-in by explicit value, honored ahead of the scheduler
+   * sniffs: a flux instance may itself run inside another scheduler's
+   * allocation, whose leaked variables must not steal a declared flux
+   * run.  The value is only usable from inside a task of a flux job (the
+   * runtime reads its rank and roster from the task environment), so a
+   * declaration without that environment is a hard error rather than the
+   * silent legacy fall-through to ssh. */
+  if (value && strcmp(value, "flux") == 0) {
+    if (getenv("FLUX_TASK_RANK") == NULL) {
+      ARTS_ERROR("launcher=flux requires a Flux task environment — launch "
+                 "one task per node: flux run -N<node_count> -n<node_count> "
+                 "-c<width> <binary>");
+    }
+    config->launcher = arts_config_make_new_var("flux");
+    return;
+  }
   /* Environment always wins: SLURM/LSF env vars override config value */
   if (getenv("SLURM_PROCID") || getenv("SLURM_NNODES")) {
     config->launcher = arts_config_make_new_var("slurm");
@@ -920,6 +938,113 @@ static void config_setup_slurm(struct arts_config_s *config) {
   config_set_master_from_table(config);
 }
 
+/* Turn one line of whitespace-separated hostnames into a comma-separated
+ * list in place, and reject anything that is not a plain expanded list.
+ * Returns the number of hosts, 0 for an empty line. */
+static unsigned int config_flux_normalize_hostlist(char *list) {
+  char *out = list;
+  unsigned int hosts = 0;
+  bool in_host = false;
+  for (char *in = list; *in; in++) {
+    if (*in == ' ' || *in == '\t' || *in == ',') {
+      in_host = false;
+      continue;
+    }
+    if (*in == '[' || *in == ']' || *in == ':') {
+      ARTS_ERROR("launcher=flux: hostlist is not in expanded form ('%c' in "
+                 "'%s') — 'flux hostlist -e local' must emit plain "
+                 "hostnames",
+                 *in, list);
+    }
+    if (!in_host) {
+      if (hosts > 0) {
+        *out++ = ',';
+      }
+      hosts++;
+      in_host = true;
+    }
+    *out++ = *in;
+  }
+  *out = '\0';
+  return hosts;
+}
+
+static void config_setup_flux(struct arts_config_s *config) {
+  /* One task per node, already placed by flux run; the runtime only
+   * discovers identity and roster.  Flux publishes no hostlist variable,
+   * so the roster comes from the flux CLI itself. */
+  config->master_boot = false;
+
+  const char *nnodes_env = getenv("FLUX_JOB_NNODES");
+  if (nnodes_env == NULL) {
+    ARTS_ERROR("launcher=flux: FLUX_JOB_NNODES is not set — this process "
+               "is not a task of a flux job");
+  }
+  config->nodes = (unsigned int)strtol(nnodes_env, NULL, 10);
+  if (config->nodes == 0) {
+    ARTS_ERROR("launcher=flux: FLUX_JOB_NNODES='%s' is not a node count",
+               nnodes_env);
+  }
+
+  const char *size_env = getenv("FLUX_JOB_SIZE");
+  if (size_env != NULL) {
+    unsigned int size = (unsigned int)strtol(size_env, NULL, 10);
+    if (size != config->nodes) {
+      ARTS_ERROR("launcher=flux: %u tasks on %u nodes — the launch "
+                 "contract is one task per node (flux run -N<n> -n<n>)",
+                 size, config->nodes);
+    }
+  }
+
+  /* popen is safe here because configuration loads before signal handlers
+   * are installed and before any thread exists, and the runtime installs
+   * no SIGCHLD handler that could reap or race the child. */
+  errno = 0;
+  FILE *pipe = popen("flux hostlist -e local", "r");
+  if (pipe == NULL) {
+    ARTS_ERROR("launcher=flux: cannot run 'flux hostlist -e local': %s",
+               strerror(errno));
+  }
+  char *line = NULL;
+  size_t line_cap = 0;
+  ssize_t line_len = getline(&line, &line_cap, pipe);
+  int status = pclose(pipe);
+  if (status < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+    ARTS_ERROR("launcher=flux: 'flux hostlist -e local' failed (%s %d) — "
+               "flux must be on PATH inside the task environment",
+               WIFEXITED(status) ? "exit" : "status",
+               WIFEXITED(status) ? WEXITSTATUS(status) : status);
+  }
+  if (line_len <= 0) {
+    ARTS_ERROR("launcher=flux: 'flux hostlist -e local' printed nothing");
+  }
+  while (line_len > 0 &&
+         (line[line_len - 1] == '\n' || line[line_len - 1] == '\r')) {
+    line[--line_len] = '\0';
+  }
+
+  unsigned int hosts = config_flux_normalize_hostlist(line);
+  if (hosts != config->nodes) {
+    ARTS_ERROR("launcher=flux: hostlist names %u host(s) but "
+               "FLUX_JOB_NNODES=%u ('%s')",
+               hosts, config->nodes, line);
+  }
+
+  arts_config_create_routing_table(&config, line);
+  /* The table builder sizes the table at config->nodes and stops early on
+   * a short list; a NULL row would otherwise surface much later as an
+   * unresolvable-hostname error with no hint of the cause. */
+  for (unsigned int i = 0; i < config->table_length; i++) {
+    if (config->table[i].ip_address == NULL) {
+      ARTS_ERROR("launcher=flux: routing table row %u is empty — hostlist "
+                 "parsed short of FLUX_JOB_NNODES=%u",
+                 i, config->nodes);
+    }
+  }
+  free(line);
+  config_set_master_from_table(config);
+}
+
 static void config_setup_lsf(struct arts_config_s *config) {
   config->master_boot = false;
   unsigned int count = 0;
@@ -1054,6 +1179,8 @@ static void config_setup_launcher(struct arts_config_s *config,
                                   struct arts_config_variable_s **vars) {
   if (strcmp(config->launcher, "slurm") == 0) {
     config_setup_slurm(config);
+  } else if (strcmp(config->launcher, "flux") == 0) {
+    config_setup_flux(config);
   } else if (strcmp(config->launcher, "lsf") == 0) {
     config_setup_lsf(config);
   } else if (strcmp(config->launcher, "ssh") == 0) {

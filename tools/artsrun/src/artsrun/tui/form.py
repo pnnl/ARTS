@@ -30,7 +30,8 @@ class FieldSpec:
 
 PROFILE_FIELDS: list[FieldSpec] = [
     FieldSpec("launcher", "launcher", "choice",
-              "how ranks are started", choices=("local", "ssh", "slurm")),
+              "how ranks are started",
+              choices=("local", "ssh", "slurm", "flux")),
     FieldSpec("workers", "workers / node", "int",
               "compute threads per rank", example="15"),
     FieldSpec("progress", "progress / node", "int",
@@ -82,8 +83,9 @@ PROFILE_FIELDS: list[FieldSpec] = [
               example="256", section="run"),
     FieldSpec("port_count", "connections / node", "int",
               "parallel connections each node opens. A local run has the "
-              "runtime claim node_count x this many ports itself; ssh and "
-              "slurm must be given the ports below, exactly this many of them",
+              "runtime claim node_count x this many ports itself; every "
+              "other launcher must be given the ports below, exactly this "
+              "many of them",
               example="1", section="transport"),
     FieldSpec("ports", "ports", "int_list",
               "one base port per connection — must name exactly "
@@ -134,6 +136,52 @@ PROFILE_FIELDS: list[FieldSpec] = [
               "how often a submitted job's state is checked; longer is "
               "gentler on a busy controller",
               example="10", optional=True, section="slurm"),
+
+    FieldSpec("flux.queue", "queue", "text",
+              "which queue the cells run in — Flux clusters group their "
+              "nodes into named queues with their own limits "
+              "(empty = the cluster's default)",
+              example="pbatch", optional=True, section="flux"),
+    FieldSpec("flux.build_queue", "build queue", "text",
+              "where build work runs, when that differs from the cells — "
+              "beware short debug-queue time caps: a full build killed "
+              "mid-link wasted the wait (empty = same as queue)",
+              example="", optional=True, section="flux"),
+    FieldSpec("flux.build_cpus", "build cpus", "int",
+              "cpus the build job asks for — small enough to slot into any "
+              "gap in the queue, and ninja is sized to match (empty = 8)",
+              example="16", optional=True, section="flux"),
+    FieldSpec("flux.build_time", "build time limit", "text",
+              "time limit for the build job, minutes or with units (30m, "
+              "2h); empty inherits the queue default",
+              example="30m", optional=True, section="flux"),
+    FieldSpec("flux.bank", "bank", "text",
+              "the accounting bank the node-hours are charged to — some "
+              "sites refuse jobs without one (empty = the default bank)",
+              example="guests", optional=True, section="flux"),
+    FieldSpec("flux.pmi", "pmi services", "text",
+              "shell PMI service list for the reference cells (-o pmi=...); "
+              "empty relies on the site default. Set it when that default "
+              "cannot form the MPI world — that failure is otherwise "
+              "SILENT: each rank runs a size-1 world alone",
+              example="cray-pals,simple", optional=True, section="flux"),
+    FieldSpec("flux.mpibind", "site runs mpibind", "bool",
+              "the site loads the mpibind plugin, so every run line "
+              "disables it (-o mpibind=off) — the envelope and the "
+              "runtimes' own pinning are the only affinity actors. Turn "
+              "off only for an instance without the plugin, which may "
+              "reject the unknown option name", section="flux"),
+    FieldSpec("flux.extra_batch", "extra batch flags", "str_list",
+              "verbatim extra flags for every flux batch submission, e.g. "
+              "--requires=-host:badnode",
+              example="", optional=True, section="flux"),
+    FieldSpec("flux.extra_run", "extra run flags", "str_list",
+              "verbatim extra flags for every inner flux run line",
+              example="", optional=True, section="flux"),
+    FieldSpec("flux.poll_interval_s", "poll interval (s)", "float",
+              "how often a submitted job's state is checked; longer is "
+              "gentler on a busy broker",
+              example="10", optional=True, section="flux"),
 ]
 
 SECTIONS = [
@@ -142,10 +190,11 @@ SECTIONS = [
     ("flags", "Flags"),
     ("ssh", "SSH"),
     ("slurm", "Slurm"),
+    ("flux", "Flux"),
 ]
 
 # Sections that only apply to one launcher, and which one.
-LAUNCHER_SECTIONS = {"ssh": "ssh", "slurm": "slurm"}
+LAUNCHER_SECTIONS = {"ssh": "ssh", "slurm": "slurm", "flux": "flux"}
 
 # Node counts are edited as toggles on the screen rather than as a text box,
 # but the command line still needs a name for them.
@@ -239,6 +288,8 @@ def values_to_profile_data(name: str, values: dict[str, Any]) -> dict:
         _set(data, spec.path, value)
     if launcher != "slurm":
         data["slurm"] = None
+    if launcher != "flux":
+        data["flux"] = None
     return data
 
 
@@ -260,6 +311,10 @@ def blank_values() -> dict[str, Any]:
         "pin": True, "core_dump": False,
         "slurm.partition": "", "slurm.build_partition": "", "slurm.build_cpus": "",
         "slurm.account": "", "slurm.qos": "", "slurm.poll_interval_s": "",
+        "flux.queue": "", "flux.build_queue": "", "flux.build_cpus": "",
+        "flux.build_time": "", "flux.bank": "", "flux.pmi": "",
+        "flux.mpibind": True, "flux.extra_batch": "", "flux.extra_run": "",
+        "flux.poll_interval_s": "",
     }
 
 

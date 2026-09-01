@@ -51,8 +51,20 @@ rank)
 fixed)
     # One rank per host is the remote contract; a second rank here would
     # claim the same block and the overcommit is invisible to either rank.
-    for v in SLURM_LOCALID OMPI_COMM_WORLD_LOCAL_RANK MPI_LOCALRANKID \
-             PMI_LOCAL_RANK; do
+    # The variable sets are LAUNCHER-KEYED because scheduler variables leak
+    # across nestings: a flux cell inherits its broker's SLURM_* inside a
+    # Slurm allocation, and a local/ssh cell inside a flux allocation
+    # inherits FLUX_* — judging a cell against a foreign scheduler's
+    # variables fails correct runs in both directions.
+    if [ "${ARTSRUN_LAUNCHER-}" = flux ]; then
+        local_rank_vars="FLUX_TASK_LOCAL_ID MPI_LOCALRANKID PMI_LOCAL_RANK"
+        world_vars="FLUX_JOB_SIZE PMI_SIZE"
+    else
+        local_rank_vars="SLURM_LOCALID OMPI_COMM_WORLD_LOCAL_RANK \
+                         MPI_LOCALRANKID PMI_LOCAL_RANK"
+        world_vars="SLURM_NTASKS PMI_SIZE"
+    fi
+    for v in $local_rank_vars; do
         val=${!v-}
         if [ -n "$val" ] && [ "$val" != 0 ]; then
             fail "colocation: $v=$val — a second rank landed on this host"
@@ -61,7 +73,7 @@ fixed)
     # A launch whose process manager never formed the world degrades MPI to
     # singleton init: n independent size-1 worlds that each "succeed".  The
     # launcher-side task count is cross-checked where one is visible.
-    for v in SLURM_NTASKS PMI_SIZE; do
+    for v in $world_vars; do
         val=${!v-}
         if [ -n "$val" ] && [ "$val" != "$ranks" ]; then
             fail "world: $v=$val but this cell runs $ranks rank(s)"
