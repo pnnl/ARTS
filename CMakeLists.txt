@@ -403,8 +403,10 @@ endif()
 # ── Build tooling ──────────────────────────────────────────────────────────
 # (To pick a faster linker, use CMake's own -DCMAKE_LINKER_TYPE=MOLD/LLD/GOLD
 #  (cmake >= 3.29) or -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=mold — no ARTS option.)
+# A fresh tree measures with every counter compiled out; a counter set is opted
+# into per campaign (artsrun -c), never inherited from the tree's default.
 set(ARTS_COUNTER_CONFIG
-    "${CMAKE_CURRENT_SOURCE_DIR}/configs/counters.cfg"
+    "${CMAKE_CURRENT_SOURCE_DIR}/configs/counters_off.cfg"
     CACHE FILEPATH "ARTS counter configuration file (parsed to generate introspection macros)")
 
 # ── Memory-model × family × second-axes validation + arm derivation ───────
