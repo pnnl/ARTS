@@ -223,3 +223,131 @@ def test_an_all_off_set_still_reconfigures_a_counting_tree(tmp_path, monkeypatch
     assert reconfigured == [(build_dir, wanted)]
     # Nothing is on, so there is no counter output to read back through.
     assert c.counters_cfg is None
+
+
+def test_a_campaign_without_a_set_measures_on_an_uninstrumented_tree(tmp_path):
+    # The timing default is no instrumentation at all, so a tree that already
+    # says so is exactly the tree a counterless campaign wants.
+    from artsrun.build import require_default_counters
+
+    build_dir = _tree_with_counters(tmp_path / "build", {
+        "NUM_EDT_CREATE": ("OFF", "NODE", "SUM"),
+        "NUM_DB_CREATE": ("OFF", "NODE", "SUM"),
+    })
+    require_default_counters(build_dir)  # no refusal
+
+
+def test_a_counterless_campaign_refuses_an_instrumented_tree(tmp_path,
+                                                             monkeypatch):
+    # Instrumentation is compiled in, so a tree an earlier campaign left
+    # counting measures every later timing campaign through those counters
+    # with nothing said.  The refusal names the file the cache points at,
+    # because that is what the reconfigure has to replace.
+    from types import SimpleNamespace
+
+    import artsrun.campaign as campaign_mod
+    from artsrun.build import BuildError
+    from artsrun.campaign import Campaign
+    from artsrun.model.profile import Launcher
+
+    build_dir = _tree_with_counters(tmp_path / "build", {
+        "NUM_EDT_CREATE": ("PERIODIC", "CLUSTER", "SUM"),
+        "NUM_DB_CREATE": ("OFF", "NODE", "SUM"),
+    })
+    (build_dir / "CMakeCache.txt").write_text(
+        "ARTS_COUNTER_CONFIG:FILEPATH=/somewhere/counters_attribution.cfg\n")
+    monkeypatch.setattr(campaign_mod, "ensure_build_dir", lambda *a, **k: None)
+    monkeypatch.setattr(campaign_mod, "plan_targets", lambda *a: "plan")
+
+    c = Campaign(
+        selection=None, plane=None, catalog=None, benchset=None,
+        profile=SimpleNamespace(launcher=Launcher.LOCAL),
+        build_dir=build_dir, run_dir=tmp_path / "run", counterset=None,
+    )
+    with pytest.raises(BuildError) as excinfo:
+        c.build_plan()
+    msg = str(excinfo.value)
+    assert "NUM_EDT_CREATE" in msg
+    assert "/somewhere/counters_attribution.cfg" in msg
+    assert "configs/counters_off.cfg" in msg
+    assert f"ninja -C {build_dir}" in msg
+
+
+def test_a_selected_set_the_tree_already_carries_still_runs(tmp_path,
+                                                            monkeypatch):
+    # The refusal is for campaigns that asked for nothing; -c is unchanged.
+    from types import SimpleNamespace
+
+    import artsrun.campaign as campaign_mod
+    from artsrun.campaign import Campaign
+    from artsrun.model.counters import Counterset, CounterSetting, Level, Mode
+    from artsrun.model.profile import Launcher
+
+    build_dir = _tree_with_counters(tmp_path / "build", {
+        "NUM_EDT_CREATE": ("PERIODIC", "CLUSTER", "SUM"),
+    })
+    wanted = tmp_path / "cfg" / "counters_x.cfg"
+    reconfigured = []
+    monkeypatch.setattr(campaign_mod, "ensure_build_dir", lambda *a, **k: None)
+    monkeypatch.setattr(campaign_mod, "write_counter_config", lambda cs, d: wanted)
+    monkeypatch.setattr(campaign_mod, "configure_counters",
+                        lambda bd, w, **k: reconfigured.append((bd, w)))
+    monkeypatch.setattr(campaign_mod, "plan_targets", lambda *a: "plan")
+
+    c = Campaign(
+        selection=None, plane=None, catalog=None, benchset=None,
+        profile=SimpleNamespace(launcher=Launcher.LOCAL),
+        build_dir=build_dir, run_dir=tmp_path / "run",
+        counterset=Counterset(name="x", counters={
+            "NUM_EDT_CREATE": CounterSetting(mode=Mode.PERIODIC,
+                                             level=Level.CLUSTER)}),
+    )
+    assert c.build_plan() == "plan"
+    assert reconfigured == []
+
+
+def test_a_sweep_without_a_set_refuses_an_instrumented_tree(tmp_path,
+                                                            monkeypatch):
+    # A sweep is a measurement too, and it shares the campaign's build path,
+    # so it shares the refusal.
+    from types import SimpleNamespace
+
+    import artsrun.sweep as sweep_mod
+    from artsrun.build import BuildError
+    from artsrun.model.profile import Launcher
+
+    build_dir = _tree_with_counters(tmp_path / "build", {
+        "NUM_EDT_CREATE": ("PERIODIC", "CLUSTER", "SUM"),
+    })
+    (build_dir / "CMakeCache.txt").write_text(
+        "ARTS_COUNTER_CONFIG:FILEPATH=/somewhere/counters_attribution.cfg\n")
+    monkeypatch.setattr(sweep_mod, "ensure_build_dir", lambda *a, **k: None)
+
+    s = sweep_mod.SweepCampaign(
+        spec=None, catalog=None,
+        profile=SimpleNamespace(launcher=Launcher.LOCAL),
+        build_dir=build_dir, run_dir=tmp_path / "run", counterset=None,
+    )
+    with pytest.raises(BuildError, match="counters_attribution.cfg"):
+        s.build_plan()
+
+
+def test_the_shipped_off_cfg_turns_every_declared_counter_off():
+    # The CMake default this refusal is written against: the parser leaves an
+    # unmentioned counter at its own default, so the file states every one.
+    header = (repo_root() /
+              "libs/include/internal/arts/counter/counter.h").read_text()
+    body = header.split("ARTS_COUNTER_LIST", 1)[1].split("// Generate enum")[0]
+    declared = set(re.findall(r"X\(([A-Z0-9_]+)\)", body))
+
+    cfg = (repo_root() / "configs/counters_off.cfg").read_text()
+    settings = dict(re.findall(r"^([A-Z][A-Z0-9_]*)=(\S+)$", cfg, re.MULTILINE))
+    assert set(settings) == declared
+    assert set(settings.values()) == {"OFF"}
+
+
+def test_the_build_defaults_to_the_all_off_counter_file():
+    # A fresh experiment tree measures; the profiling example is opted into.
+    text = (repo_root() / "CMakeLists.txt").read_text()
+    block = text.split("set(ARTS_COUNTER_CONFIG", 1)[1].split(")", 1)[0]
+    assert "configs/counters_off.cfg" in block

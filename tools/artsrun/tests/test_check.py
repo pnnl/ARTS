@@ -192,3 +192,118 @@ def test_a_teardown_hang_cell_votes_in_consensus_and_is_tagged(tmp_path):
     assert group.verdicts["b"] is Verdict.OK
     assert group.teardown_hang["b"]
     assert not group.teardown_hang["a"]
+
+
+def _result_rep(entry_key: str, scalar: str | None, app: ResolvedApp,
+                repeat: int, status: Status = Status.OK) -> CellResult:
+    from dataclasses import replace
+    cell = replace(_cell(entry_key, app), repeat=repeat)
+    r = CellResult(cell=cell, status=status)
+    r.scalar = scalar
+    return r
+
+
+# --- LONE ---------------------------------------------------------------
+def test_a_sole_survivor_of_a_group_is_lone_not_ok():
+    app = _app()
+    results = [_result("a", "1.0", app), _result("b", None, app, Status.TIMEOUT)]
+    group = vote(results)[0]
+    assert group.verdicts["a"] is Verdict.LONE
+    assert group.verdicts["b"] is Verdict.FAIL
+    assert group.unanimous                      # LONE is not disagreement
+    assert minority_report(vote(results))       # but it is reported
+
+
+def test_a_single_selected_entry_is_ok_not_lone():
+    app = _app()
+    group = vote([_result("a", "1.0", app)])[0]
+    assert group.verdicts["a"] is Verdict.OK
+
+
+def test_repeats_do_not_count_as_corroboration():
+    app = _app()
+    results = [_result_rep("a", "1.0", app, 1), _result_rep("a", "1.0", app, 2),
+               _result_rep("a", "1.0", app, 3),
+               _result("b", None, app, Status.TIMEOUT)]
+    group = vote(results)[0]
+    assert group.verdicts["a"] is Verdict.LONE
+
+
+def test_a_skipped_entry_does_not_make_a_survivor_lone():
+    app = _app()
+    results = [_result("a", "1.0", app), _result("b", None, app, Status.SKIPPED)]
+    group = vote(results)[0]
+    assert group.verdicts["a"] is Verdict.OK
+    assert group.verdicts["b"] is Verdict.NA
+
+
+def test_a_matching_pin_redeems_a_lone_cell():
+    app = _app(expect="1.0", expect_args=["1"])
+    results = [_result("a", "1.0", app), _result("b", None, app, Status.TIMEOUT)]
+    assert vote(results)[0].verdicts["a"] is Verdict.OK
+
+
+def test_a_mismatching_pin_overrides_lone():
+    app = _app(expect="9.0", expect_args=["1"])
+    results = [_result("a", "1.0", app), _result("b", None, app, Status.TIMEOUT)]
+    assert vote(results)[0].verdicts["a"] is Verdict.EXPECT_FAIL
+
+
+def test_a_failed_group_reaches_the_minority_report():
+    app = _app()
+    results = [_result("a", "1.0", app), _result("b", "1.0", app),
+               _result("c", None, app, Status.TIMEOUT)]
+    assert minority_report(vote(results))
+
+
+def _hpx_result(tmp_path, text: str, nodes: int, width: int | None,
+                status: Status = Status.OK) -> CellResult:
+    from dataclasses import replace
+    from artsrun.model.plane import RuntimeKind, SelectionEntry
+    app = _app(marker=r"sols: \d+", scalar_re=r"sols: (\d+)", scalar_kind=ScalarKind.INT)
+    entry = SelectionEntry(key="hpx", label="HPX", kind=RuntimeKind.HPX,
+                           cell=None, variant=None)
+    cell = replace(_cell("hpx", app, nodes=nodes), entry=entry, cpu_width=width)
+    log = tmp_path / "c.log"
+    log.write_text(text)
+    r = CellResult(cell=cell, status=status)
+    r.log_path = log
+    return apply_to(r)
+
+
+def test_an_hpx_cell_must_print_its_geometry(tmp_path):
+    r = _hpx_result(tmp_path, "sols: 92\n[E2E] 10\n", 1, 16)
+    assert r.status is Status.FAIL and "[HPX]" in r.note
+
+
+def test_a_run_killed_before_it_printed_its_geometry_keeps_its_own_verdict(tmp_path):
+    r = _hpx_result(tmp_path, "starting up\n", 2, 16, status=Status.TIMEOUT)
+    assert r.status is Status.TIMEOUT and "[HPX]" not in r.note
+
+
+def test_every_locality_prints_the_expected_geometry(tmp_path):
+    good = ("[HPX] locality=1 localities=2 threads=16\n"
+            "[HPX] locality=0 localities=2 threads=16\nsols: 92\n[E2E] 10\n")
+    assert _hpx_result(tmp_path, good, 2, 16).status is Status.OK
+    narrow = ("[HPX] locality=0 localities=2 threads=16\n"
+              "[HPX] locality=1 localities=2 threads=8\nsols: 92\n[E2E] 10\n")
+    r = _hpx_result(tmp_path, narrow, 2, 16)
+    assert r.status is Status.FAIL and "geometry" in r.note
+    short = "[HPX] locality=0 localities=2 threads=16\nsols: 92\n[E2E] 10\n"
+    assert _hpx_result(tmp_path, short, 2, 16).status is Status.FAIL
+    # A locality printing twice must not mask one that never printed.
+    twice = ("[HPX] locality=0 localities=2 threads=16\n"
+             "[HPX] locality=0 localities=2 threads=16\nsols: 92\n[E2E] 10\n")
+    r = _hpx_result(tmp_path, twice, 2, 16)
+    assert r.status is Status.FAIL and "geometry" in r.note
+
+
+def test_an_old_manifest_without_a_width_still_checks_the_id_set(tmp_path):
+    good = "[HPX] locality=0 localities=1 threads=16\nsols: 92\n[E2E] 10\n"
+    assert _hpx_result(tmp_path, good, 1, None).status is Status.OK
+    # Two localities that both believe they are locality 0 are two worlds,
+    # which the id set catches with no width to compare.
+    split = ("[HPX] locality=0 localities=1 threads=16\n"
+             "[HPX] locality=0 localities=1 threads=16\nsols: 92\n[E2E] 10\n")
+    r = _hpx_result(tmp_path, split, 2, None)
+    assert r.status is Status.FAIL and "geometry" in r.note

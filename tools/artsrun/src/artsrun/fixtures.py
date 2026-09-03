@@ -74,6 +74,7 @@ _SW_HUGE  = ("string1-huge.txt", "string2-huge.txt")
 _SW_CAL   = ("string1-cal.txt", "string2-cal.txt")
 _SW_TREND = ("string1-trend.txt", "string2-trend.txt")
 _SW_SWD   = ("string1-swd.txt", "string2-swd.txt")
+_SW_GATE  = ("string1-gate.txt", "string2-gate.txt")
 
 GENERATORS = {
     "cholesky_input.mat": lambda p: _identity_matrix(p, 50),
@@ -95,6 +96,9 @@ GENERATORS = {
     "string1-swd.txt":   lambda p: _acgt_pair(p, 0, (800000, 800000), 20260830, _SW_SWD),
     "string2-swd.txt":   lambda p: _acgt_pair(p, 1, (800000, 800000), 20260830, _SW_SWD),
     "score-swd.txt":     lambda p: p.write_text("493680\n"),
+    "string1-gate.txt":  lambda p: _acgt_pair(p, 0, (2000, 2000), 20260902, _SW_GATE),
+    "string2-gate.txt":  lambda p: _acgt_pair(p, 1, (2000, 2000), 20260902, _SW_GATE),
+    "score-gate.txt":    lambda p: p.write_text("1176\n"),
     "basicIO_test.dat": _counting_file,
 }
 

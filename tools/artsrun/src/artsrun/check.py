@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from artsrun.model.catalog import ScalarKind
+from artsrun.model.plane import RuntimeKind
 from artsrun.run.types import CellResult, Status
 
 
@@ -29,6 +30,7 @@ class Verdict(StrEnum):
     FAIL = "FAIL"
     NA = "N/A"
     EXPECT_FAIL = "EXPECT-FAIL"
+    LONE = "LONE"
 
 
 def extract(text: str, marker: str, scalar_re: str) -> tuple[bool, str | None]:
@@ -56,6 +58,13 @@ _E2E_RE = re.compile(r"^\[E2E\]\s+(\d+)\s*$", re.M)
 # surviving ranks block in MPI until the budget fires), so the verdict must
 # not depend on what the process tree happened to exit with.
 _ENVELOPE_RE = re.compile(r"^ARTSRUN-ENVELOPE-FAIL: (.*)$", re.M)
+
+# One line per locality, carrying its own id, printed by every HPX port;
+# together they are a world-size oracle independent of the [E2E] stamp
+# count, and the ids keep a locality that printed twice from masking one
+# that never printed.
+_HPX_GEOM_RE = re.compile(
+    r"^\[HPX\] locality=(\d+) localities=(\d+) threads=(\d+)\s*$", re.M)
 
 
 def extract_e2e(text: str) -> float | None:
@@ -114,6 +123,34 @@ def apply_to(result: CellResult) -> CellResult:
                        f"a rank-0-only contract (PMI missing / singleton "
                        f"MPI init suspected)")
         return result
+    if result.cell.entry.kind is RuntimeKind.HPX:
+        seen = _HPX_GEOM_RE.findall(text)
+        want_n, want_t = result.cell.nodes, result.cell.cpu_width
+        if not seen:
+            # A run that was killed on the way up never reached the line, so
+            # only a run that otherwise completed can be blamed for its
+            # absence: what stopped the others is the more informative
+            # verdict, and overwriting it would hide the real failure.
+            if result.status is Status.OK:
+                result.status = Status.FAIL
+                result.note = "no [HPX] geometry line (the port does not print its realised geometry)"
+            return result
+        ids = sorted(int(i) for i, _, _ in seen)
+        got = {(int(n), int(t)) for _, n, t in seen}
+        # The id set and the world size every locality reports are checked
+        # against the cell alone; only the per-rank width needs a granted
+        # core block to compare against.
+        wrong = ids != list(range(want_n)) or {n for n, _ in got} != {want_n}
+        if want_t is not None:
+            wrong = wrong or {t for _, t in got} != {want_t}
+        if wrong:
+            shape = ", ".join(f"{n}x{t}" for n, t in sorted(got))
+            width = f" x {want_t} threads" if want_t is not None else ""
+            result.status = Status.FAIL
+            result.note = (f"geometry: HPX realised localities {ids} of {shape}, "
+                           f"wanted ids 0..{want_n - 1} at {want_n} "
+                           f"localities{width}")
+            return result
     if result.status is Status.OK and not completed:
         result.status = Status.FAIL
         result.note = "exited cleanly but never printed its completion marker"
@@ -196,27 +233,40 @@ def vote(results: list[CellResult]) -> list[Group]:
         else:
             majority = set()
 
+        # Corroboration is counted over ENTRIES: repeats of one entry are
+        # the same voter, and a cell that was never eligible was never a
+        # voter — only a group where another entry was attempted and did
+        # not complete leaves a survivor uncorroborated.
+        voting_entries = {r.cell.entry.key for r in voters}
+        attempted = {r.cell.entry.key for r in group.results
+                     if r.status is not Status.SKIPPED}
+        lone = len(voting_entries) == 1 and len(attempted) > 1
+
         for r in group.results:
             if r.status is Status.SKIPPED:
                 group.verdicts[r.cell.entry.key] = Verdict.NA
             elif r.status is not Status.OK or r.scalar is None:
                 group.verdicts[r.cell.entry.key] = Verdict.FAIL
             elif id(r) in majority:
-                group.verdicts[r.cell.entry.key] = Verdict.OK
+                group.verdicts[r.cell.entry.key] = (
+                    Verdict.LONE if lone else Verdict.OK)
             else:
                 group.verdicts[r.cell.entry.key] = Verdict.DISAGREE
             group.teardown_hang[r.cell.entry.key] = r.teardown_hang
 
-        # A pinned answer catches the case where every configuration agrees on
-        # the same wrong value — but it only answers for the workload it was
-        # derived from, so a campaign running other arguments has no pin.
+        # A pinned answer catches the case where every configuration agrees
+        # on the same wrong value — and it is corroboration from outside the
+        # run, so a lone cell that matches it is not uncorroborated.  It
+        # only answers for the workload it was derived from.
         args = group.results[0].cell.args
         pinned = bool(app.expect) and list(app.expect_args) == list(args)
         if pinned and group.consensus is not None:
-            if not close(app.expect, group.consensus, app.scalar_kind, app.tolerance):
-                for key, verdict in group.verdicts.items():
-                    if verdict is Verdict.OK:
-                        group.verdicts[key] = Verdict.EXPECT_FAIL
+            matches = close(app.expect, group.consensus, app.scalar_kind,
+                            app.tolerance)
+            for key, verdict in group.verdicts.items():
+                if verdict in (Verdict.OK, Verdict.LONE):
+                    group.verdicts[key] = (Verdict.OK if matches
+                                           else Verdict.EXPECT_FAIL)
         out.append(group)
 
     out.sort(key=lambda g: (g.app_key, g.nodes))
@@ -224,5 +274,8 @@ def vote(results: list[CellResult]) -> list[Group]:
 
 
 def minority_report(groups: list[Group]) -> list[Group]:
+    """Groups a reader must look at: a disagreement, a pin miss, a cell that
+    never completed, or a survivor nobody corroborated."""
+    flagged = (Verdict.EXPECT_FAIL, Verdict.FAIL, Verdict.LONE)
     return [g for g in groups if not g.unanimous or
-            any(v is Verdict.EXPECT_FAIL for v in g.verdicts.values())]
+            any(v in flagged for v in g.verdicts.values())]

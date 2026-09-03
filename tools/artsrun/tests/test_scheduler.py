@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from artsrun.model.benchset import ResolvedApp
-from artsrun.model.catalog import AppClass, Version
+from artsrun.model.catalog import AppClass, ScalarKind, Version
 from artsrun.model.plane import RuntimeKind, SelectionEntry
 from artsrun.run.scheduler import Scheduler, WallCache, order
 from artsrun.run.types import Cell, CellResult, Status
@@ -352,3 +352,36 @@ def test_a_stop_is_noticed_between_cells_not_after_the_last_one():
     assert backend.ran == 2, "the sweep kept going after the stop"
     assert len(done) == 2
     assert sched.stopped and sched.unreached == 4
+
+
+def _app(name: str = "app") -> ResolvedApp:
+    return ResolvedApp(
+        name=name, version=Version.BASE, binary=name, cls=AppClass.TASK,
+        marker=r"RESULT", scalar_re=r"RESULT\s*=\s*([\d.]+)",
+        scalar_kind=ScalarKind.FLOAT, args=["1"],
+    )
+
+
+def _cell_for(entry_key: str, app: ResolvedApp, nodes: int = 1) -> Cell:
+    entry = SelectionEntry(
+        key=entry_key, label=entry_key, kind=RuntimeKind.ARTS,
+        cell="VAL/RETAIN/WB", variant=entry_key,
+    )
+    return Cell(
+        entry=entry, app=app, nodes=nodes, repeat=1,
+        binary=Path("/nonexistent"), args=app.args, timeout_s=10,
+    )
+
+
+def test_a_serial_backend_interleaves_repeats_across_entries(tmp_path):
+    from dataclasses import replace
+    cells = [
+        replace(_cell_for(entry, _app(name=name)), repeat=repeat)
+        for name in ("y", "x") for repeat in (2, 1) for entry in ("b", "a")
+    ]
+    ordered = order(cells, WallCache(tmp_path / "w.json"), capacity=1)
+    # One application's repeats stay together and interleave across the
+    # entries inside each repeat block; applications never interleave.
+    assert [(c.app.name, c.entry.key, c.repeat) for c in ordered] == [
+        ("x", "a", 1), ("x", "b", 1), ("x", "a", 2), ("x", "b", 2),
+        ("y", "a", 1), ("y", "b", 1), ("y", "a", 2), ("y", "b", 2)]

@@ -862,11 +862,11 @@ apps:
     expect_args: ['19', '15', '1', '6']
     args: ['19', '15', '1', '6']
     hinted: true
-    # The HPX port (benchmarks/hpx/nqueens.cpp) carries the same bitmask
-    # search, cutoff, and mixed-key scatter placement as the hinted OCR
-    # version, and takes the same argument list — so it runs in the hinted
-    # row, against the tier whose structure it mirrors.
-    hpx: true
+    # The HPX port (benchmarks/hpx/nqueens.cpp) mirrors the tiers listed
+    # here, one target each, with the same argument list and result line;
+    # `nqueens_hinted_hpx` carries the mixed-key scatter of the hinted
+    # layer, `nqueens_hpx` the runtime's blind round-robin.
+    hpx: [base, hinted]
 
   p2p:
     binary: p2p
@@ -914,6 +914,10 @@ apps:
     # iteration count reaches at t = 32: 146.2 s, 145.3 s and 152.8 s across the
     # three families, holding 159-175 GB.
     args: ['6912', '1347840', '6913', '32']
+    # The HPX port (benchmarks/hpx/p2p.cpp) mirrors the one tier listed here,
+    # with the same argument list and result line; there is no hinted target
+    # for the same reason the OCR build has none.
+    hpx: [base]
 
   printf:
     binary: printf
@@ -1641,8 +1645,16 @@ apps:
     # 10.88 s at 112, which is what a single-threaded creation loop looks like
     # when workers are added around it.
     args: ['100', '100', '{repo}/datasets/smithwaterman/string1-cal.txt', '{repo}/datasets/smithwaterman/string2-cal.txt', '{repo}/datasets/smithwaterman/score-cal.txt']
-    fixtures: ['{repo}/datasets/smithwaterman/string1-cal.txt', '{repo}/datasets/smithwaterman/string2-cal.txt', '{repo}/datasets/smithwaterman/score-cal.txt']
+    # The gate pair travels with the row rather than with the roster that
+    # names it: a roster row carries arguments only, so a small-size gate can
+    # stage its own inputs only from here.
+    fixtures: ['{repo}/datasets/smithwaterman/string1-cal.txt', '{repo}/datasets/smithwaterman/string2-cal.txt', '{repo}/datasets/smithwaterman/score-cal.txt', '{repo}/datasets/smithwaterman/string1-gate.txt', '{repo}/datasets/smithwaterman/string2-gate.txt', '{repo}/datasets/smithwaterman/score-gate.txt']
     hinted: true
+    # The HPX port (benchmarks/hpx/smithwaterman.cpp) mirrors the tiers listed
+    # here, one target each, with the same argument list and result line;
+    # `smithwaterman_hinted_hpx` carries the row-band map of the hinted layer,
+    # `smithwaterman_hpx` the residue of the runtime's blind round-robin.
+    hpx: [base, hinted]
     restructured_as: smithwaterman_dist
 
   smithwaterman_dist:
@@ -1819,6 +1831,11 @@ apps:
     expect: '802.000000000000'
     expect_args: ['31104', '13824', '400']
     args: ['31104', '13824', '400']
+    # The HPX port (benchmarks/hpx/stencil2d.cpp) mirrors the one tier listed
+    # here, with the same argument list and result line; there is no hinted
+    # target because the OCR source carries its own Cartesian placement map
+    # and no hint-layer guard.
+    hpx: [base]
 
   stream:
     binary: stream
@@ -1928,14 +1945,24 @@ apps:
     # the recommended argument is the patch range -- so the window is reached
     # with k, and the width follows: 6k^2 patches is far past the 3456 workers
     # the largest geometry offers, which is what the width rule asks for.
-    # This row anti-scales harder than anything else in the roster (4.8 s at one
-    # node; at two it was still running at 900 s, three quarters through, so
-    # about 1125 s -- 235x), which is what a program whose task does eight
-    # stores and then exchanges with eight neighbours looks like once half those
-    # exchanges cross a rank.  So the window is 10-30 s.
+    # This row anti-scales harder than anything else in the roster: at the
+    # sizing lattice's k=16 trend point one node takes 4.8 s while two nodes
+    # were still running at the 900 s cap, three quarters through, so about
+    # 1125 s -- 235x.  That is what a program whose task does eight stores and
+    # then exchanges with eight neighbours looks like once half those exchanges
+    # cross a rank.  So the window is 10-30 s, and the calibrated size below
+    # measures 19.0 / 19.3 / 20.2 s at one node on the three families -- the
+    # appdoc's Sizing table is the source for both figures.
     args: ['48', '1900']
     hinted: true
     restructured_as: tempest_dist
+    # The HPX port (benchmarks/hpx/tempest.cpp) mirrors the tiers listed
+    # here, one target each, with the same argument list and the same
+    # cross-check grid; `tempest_hinted_hpx` carries the minimum-cut P x Q
+    # map of the hinted layer and keeps a patch's state on its home,
+    # `tempest_hpx` the runtime's blind round-robin, which moves the state
+    # to the generation and fetches that generation's inputs back.
+    hpx: [base, hinted]
     # No multinode cap of its own.  This row's whole result is how badly it
     # degrades across a node boundary, and a cap shorter than that degradation
     # records it as a timeout instead of measuring it: at four nodes the base
@@ -2017,6 +2044,12 @@ apps:
     expect_args: ['8', '1', '8']
     args: ['8', '1', '8']
     hinted: true
+    # The HPX port (benchmarks/hpx/triangle.cpp) mirrors the tiers listed
+    # here, one target each, with the same argument list and result line;
+    # `triangle_hinted_hpx` carries the mixed-key scatter of the hinted layer
+    # above level three and the creating locality below it,
+    # `triangle_hpx` the runtime's blind round-robin.
+    hpx: [base, hinted]
 
   xeonNumaSize:
     binary: xeonNumaSize

@@ -123,13 +123,14 @@ class AppEntry(BaseModel):
     restructured_as: str | None = None
     restructured_from: str | None = None
 
-    # An algorithmically matched HPX port exists as target `{binary}_hpx`.
-    # The port is one program, not one per version: `hpx_tier` names the
-    # version whose structure it mirrors, which is the row its cells join —
-    # so it runs once per (app, nodes), grouped where its comparison is
-    # honest.
-    hpx: bool = False
-    hpx_tier: Version = Version.HINTED
+    # The version tiers an HPX port mirrors, one target per tier named from
+    # the row's binary — absent means no port.  A port is one source under a
+    # placement guard, exactly as the OCR row builds `<app>` and
+    # `<app>_hinted`; a rewrite has no mirror because its base tier IS a
+    # shared mutable object no coherence-free model can express.
+    hpx: list[Version] = Field(default_factory=list)
+    # Removed field, declared only so a leftover value fails loudly.
+    hpx_tier: str | None = None
 
     # Optional post-run verifier: a shell command run in the cell's working
     # directory after the binary exits 0 (chained with &&, so its exit status
@@ -179,6 +180,38 @@ class AppEntry(BaseModel):
         if self.restructured_as:
             v.append(Version.RESTRUCTURED)
         return v
+
+    def hpx_target(self, version: Version) -> str | None:
+        """The port's build target for a tier, or None where it mirrors none.
+
+        The runtime tag is the last token, as for every reference binary
+        (`<stem>_xsocr`, `<stem>_ocrvx`), and the tier marker sits on the
+        application stem.
+        """
+        if version not in self.hpx:
+            return None
+        stem = f"{self.binary}_hinted" if version is Version.HINTED else self.binary
+        return f"{stem}_hpx"
+
+    @model_validator(mode="after")
+    def _check_hpx(self) -> "AppEntry":
+        if self.hpx_tier is not None:
+            raise ValueError(
+                f"{self.name}: `hpx_tier` was replaced by `hpx: [<version>, ...]`"
+                " — a port mirrors a list of tiers, one target each; note that"
+                " `<binary>_hpx` now names the BASE tier and the hinted port is"
+                " `<binary>_hinted_hpx`")
+        if Version.RESTRUCTURED in self.hpx:
+            raise ValueError(
+                f"{self.name}: hpx names restructured — a rewrite has no HPX"
+                " mirror (its base tier is a shared mutable object)")
+        bad = [v for v in self.hpx if v not in self.own_versions]
+        if bad:
+            raise ValueError(
+                f"{self.name}: hpx names {', '.join(v.value for v in bad)}, "
+                f"which this row does not offer "
+                f"({', '.join(v.value for v in self.own_versions)})")
+        return self
 
 
 class Catalog(BaseModel):

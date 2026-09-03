@@ -107,8 +107,9 @@ class PlanePanel(Vertical):
                 from artsrun.model.catalog import load_catalog
 
                 ports = [a for a in load_catalog().rows if a.hpx]
-                names = ", ".join(f"{a.name} ({a.hpx_tier.value} row)"
-                                  for a in ports) or "none yet"
+                names = ", ".join(
+                    f"{a.name} ({', '.join(v.value for v in a.hpx)} rows)"
+                    for a in ports) or "none yet"
                 with Horizontal(classes="plane-row"):
                     yield Label("", classes="plane-gutter")
                     yield Static(

@@ -118,6 +118,48 @@ def counter_mismatch(build_dir: Path, counterset) -> list[str]:
     )
 
 
+# The state a tree measures in when nothing asked for counters: the build's
+# own default, every counter compiled out.
+DEFAULT_COUNTER_CONFIG = "configs/counters_off.cfg"
+
+
+def instrumented_counters(build_dir: Path) -> list[str]:
+    """Counters this tree compiled in, whatever file they arrived in."""
+    have = compiled_counters(build_dir)
+    if have is None:
+        return []
+    return sorted(name for name, (mode, _lvl, _red) in have.items()
+                  if mode != "OFF")
+
+
+def require_default_counters(build_dir: Path) -> None:
+    """Refuse to measure on a tree an earlier campaign left instrumented.
+
+    A campaign that names no counter set is asking for a timing measurement,
+    and instrumentation is compiled in: whatever the last reconfigure left in
+    the tree is what the cells would measure through, silently.  Counters are
+    opted into, so anything on without being asked for is the tree
+    contradicting the campaign, and the only honest answer is to stop.
+    """
+    from artsrun.paths import repo_root
+
+    on = instrumented_counters(build_dir)
+    if not on:
+        return
+    shown = ", ".join(on[:6]) + (f", and {len(on) - 6} more" if len(on) > 6 else "")
+    configured_from = counter_config_of(build_dir) or "(not recorded in the cache)"
+    off = repo_root() / DEFAULT_COUNTER_CONFIG
+    raise BuildError(
+        f"{build_dir} has {len(on)} counter(s) compiled in ({shown}) but this "
+        f"campaign selected no counter set — a timing run measures on an "
+        f"uninstrumented tree.\n"
+        f"  the tree is configured from: {configured_from}\n"
+        f"  select that set with -c to measure with it, or restore the default:\n"
+        f"    cmake -S . -B {build_dir} -DARTS_COUNTER_CONFIG={off} && "
+        f"ninja -C {build_dir}"
+    )
+
+
 def configure_counters(build_dir: Path, wanted: Path, *, on_line=None,
                        prefix: list[str] | None = None) -> None:
     """Point an existing tree at a counter configuration and reconfigure it.
@@ -240,14 +282,16 @@ def plan_targets(
                 stem = app.binary
             for entry in entries:
                 if entry.kind is RuntimeKind.HPX:
-                    # The port is its own target, and only the version row
-                    # it mirrors carries one.
-                    if app is not None and app.hpx_binary:
-                        wanted.append(app.hpx_binary)
-                    elif app is None:
+                    # One target per tier the port mirrors, named by the
+                    # row; nothing is derived from a version stem.
+                    if app is not None:
+                        if app.hpx_binary:
+                            wanted.append(app.hpx_binary)
+                    else:
                         capp = catalog.apps.get(name)
-                        if capp and capp.hpx and version is capp.hpx_tier:
-                            wanted.append(f"{capp.binary}_hpx")
+                        target = capp.hpx_target(version) if capp else None
+                        if target:
+                            wanted.append(target)
                     continue
                 if entry.kind.value == "ocrvx" and app and app.ocrvx_skip:
                     continue
@@ -268,9 +312,10 @@ def build(plan: BuildPlan, *, jobs: int | None = None, on_line=None,
             "the build tree has no target for: " + ", ".join(plan.missing[:10])
             + ("…" if len(plan.missing) > 10 else "")
             + "\n(either the application is not registered in CMake, or the "
-            "tree skipped its runtime — e.g. the xsocr/ocrvx references are "
-            "skipped on a host without MPI; the configure summary's "
-            "References line says which)"
+            "tree skipped its runtime — the xsocr/ocrvx references and the "
+            "hpx ports are skipped on a host without an MPI compiler, and "
+            "the hpx ports also under -DARTS_BUILD_HPX=OFF; the configure "
+            "summary's References/HPX lines say which)"
         )
     if shutil.which("ninja") is None:
         raise BuildError("ninja not found on PATH")

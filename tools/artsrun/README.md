@@ -68,6 +68,30 @@ artsrun counterset list | show X | render X
 artsrun run -p ferrari -b paper-main -c perf
 ```
 
+## External runtimes
+
+Besides the eleven-entry coherence plane, `hpx` is an off-plane entry: the
+STE||AR HPX runtime (MPI parcelport, static-linked like the other
+references), a cross-programming-model reference tied to no coherence
+position. It multiplies by nothing and runs only the applications whose
+catalog row carries `hpx: [<tiers>]` — an algorithmically matched port under
+`benchmarks/hpx/`, one target per mirrored tier (`<binary>_hpx` for base,
+`<binary>_hinted_hpx` for hinted) — in exactly those version rows, where its
+scalar joins the ordinary consensus vote. Every other row of that
+application reports the HPX cell as structurally ineligible.
+
+Six catalog rows carry a port: `nqueens`, `smithwaterman`, `triangle` and
+`tempest` in both tiers, and `p2p` and `Stencil2D_intel_channelEVTs` — the
+self-placing SPMD programs, whose single tier mirrors as base — in base
+only; ten binaries. The `hpx-gate` roster runs all six at small arguments
+and is the gate; `paper-main` is the measurement. Under `ARTS_STRUCT_MARKER`
+each port prints `[PARCELS] sent=… bytes=… wire=…` beside its `[STRUCT]`
+line, and its own structural counters count only then, so a timing cell
+never executes them; the ARTS arms beside it are built with the
+`configs/counters_off.cfg` default, which a `-c`-less campaign checks and
+refuses to run against an instrumented tree. Under `launcher=local` an HPX
+cell's environment also carries `UCX_TLS=^sysv`.
+
 On the screens: `1`–`4` switch surfaces, `5` is the run tab, `space`
 toggles, `a` is the shared all/none control for whichever surface is
 showing, `r` runs, `d` dry-runs. The run tab is the live table with a
@@ -189,7 +213,10 @@ time into `Preamble.h`, whose indices are compiled into every file that
 touches a counter, so switching sets means a reconfigure and a full rebuild.
 The driver refuses to run against a tree configured with a different counter
 file rather than measure with the wrong ones, and prints the `cmake` line to
-fix it. The sampling interval and the output folder are the exception — the
+fix it. A campaign that selects no set at all is checked the same way against
+the build's default of no counters (`configs/counters_off.cfg`) and refuses a
+tree an earlier counted campaign left instrumented, naming the file the cache
+points at. The sampling interval and the output folder are the exception — the
 runtime reads those from its own configuration, so they move freely.
 
 ## Tests

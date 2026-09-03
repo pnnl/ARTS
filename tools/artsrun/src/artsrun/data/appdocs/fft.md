@@ -115,13 +115,15 @@ in principle (each subtree only touches a disjoint slice).
 
 ## Placement (hinted)
 
-**No `hinted` variant is offered (decision 2026-08-19).**  With one
-per-node-exclusive RW block, the only thing a hint layer can do is refuse to
-distribute — and that number is already on every plot, because at one node all
-versions coincide: the containment performance at N nodes IS the base
-1-node cell.  A horizontal line derivable from the base curve adds nothing,
-so the guard code stays in the source but no `_hinted` target is built; the
-restructured version carries the distribution story.
+**A `hinted` target IS built** (`fft_hinted`, `HINTED_PLACEMENT` in
+`benchmarks/apps/CMakeLists.txt`; catalog `hinted: true`).  The layer was
+withheld on 2026-08-19 on the argument that containing a single
+per-node-exclusive RW block can only reproduce the one-node number; the
+measurement below reversed that: containment is not a horizontal line, because
+the base tier's multinode cells degrade far below their own one-node cell and
+the layer holds the anchor where base does not.  What the layer does is
+containment, never distribution — the restructured version carries the
+distribution story.
 
 As-born is placement-blind, and for this program that is structurally fatal at
 multinode: the entire recursion slices ONE shared data block acquired

@@ -26,6 +26,9 @@ def facts_markdown(entry: AppEntry) -> str:
         + (f" (tolerance {entry.tolerance})" if entry.tolerance else ""),
         f"- **calibrated args**: `{' '.join(entry.args) or '(none)'}`",
     ]
+    if entry.hpx:
+        lines.append(
+            f"- **HPX port**: {', '.join(v.value for v in entry.hpx)}")
     if entry.multinode_skip:
         lines.append(f"- **multinode**: skipped — {entry.multinode_skip}")
     if entry.ocrvx_skip:

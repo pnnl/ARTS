@@ -89,6 +89,7 @@ def write_manifest(
             "timeout_s": cell.timeout_s,
             "cfg": str(cell.cfg) if cell.cfg else None,
             "env": build_env(cell, profile),
+            "cpu_width": cell.cpu_width,
             "log": str(log_path),
             **describe_command(cell, profile, log_path),
         })
@@ -168,6 +169,7 @@ class Manifest:
                 timeout_s=int(row["timeout_s"]),
                 cfg=Path(row["cfg"]) if row.get("cfg") else None,
                 env=dict(row.get("env", {})),
+                cpu_width=row.get("cpu_width"),
             )
             self.cells.append(cell)
             self.commands[cell.key] = {

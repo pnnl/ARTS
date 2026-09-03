@@ -80,7 +80,12 @@ def order(cells: Iterable[Cell], cache: WallCache, *, capacity: int = 0,
         # over every arm instead of accruing to whichever sorts last.
         return cells
     if capacity == 1:
-        return sorted(cells, key=lambda c: (c.nodes, c.key))
+        # Narrowest first (a mistake shows up soonest), and inside one
+        # geometry repeats interleave across configurations: a slow drift
+        # over the campaign then hits every arm equally instead of
+        # accruing to whichever sorts last.
+        return sorted(cells, key=lambda c: (c.nodes, c.app.key, c.repeat,
+                                            c.entry.key))
 
     measured = sorted(cache.get(c) for c in cells if cache.get(c))
     typical = measured[len(measured) // 2] if measured else 1.0

@@ -58,10 +58,11 @@ the tile size:
 | DBs | `5·W·H + 2·W + 3·H + 7` | per compute tile: 2 temp (destroyed same task, `4·(tileWidth+1)·(tileHeight+1)` B + `8·(tileHeight+1)` B) + 3 output (`4` B / `4·tileHeight` B / `4·tileWidth` B); border init: `2W+2H+1` (≤ `4·max(tileWidth,tileHeight)` B each); tile-matrix structure: `H+2`; shared params DB: 1, `8·(8 + ⌈len1/8⌉ + ⌈len2/8⌉)` bytes; **+3** for the three input-file buffer DBs `read_file` allocates (one `ocrDbCreate` each for `fileName1`, `fileName2`, `scoreFile`, called from `ioHandling`) |
 | Events | `3·(W+1)·(H+1)` STICKY events (readiness signals for the border-inclusive `(H+1)×(W+1)` tile grid) |
 
-Worked numbers for the calibrated `args=[100, 100, ...large...]`
-(`len1=100713, len2=101133` after stripping) → `W=1008, H=1012`: EDTs =
-1,020,097; DBs = 5,105,539; Events = 3,066,351. The shared params DB is
-≈198 KB and is read (RO) by all 1,020,096 compute tasks.
+Worked numbers for the calibrated `args=[100, 100, ...cal...]` (the
+`string{1,2}-cal.txt` fixtures: `len1=140000, len2=140400` after stripping)
+→ `W=1400, H=1404`: EDTs = 1,965,601; DBs = 9,835,019; Events = 5,905,215.
+The shared params DB is ≈280 KB (`8·(8 + ⌈len1/8⌉ + ⌈len2/8⌉)` = 280,464 B)
+and is read (RO) by all 1,965,600 compute tasks.
 
 Counter cross-check: verified (1 node, `4 4` tiny fixtures (`W=H=2`) vs
 `4 4` small fixtures (`W=H=3`)): NUM_EDT_CREATE 6 → 11, NUM_DB_CREATE
@@ -69,6 +70,17 @@ Counter cross-check: verified (1 node, `4 4` tiny fixtures (`W=H=2`) vs
 `3(W+1)(H+1)` (app values 5/10, 37/67, 27/48) plus the runtime's constant
 +1 EDT/+1 DB/+0 EVT baseline. The DB formula's original `+4` constant
 undercounted by exactly the 3 file-buffer DBs above; corrected to `+7`.
+
+An HPX port (`benchmarks/hpx/smithwaterman.cpp`) mirrors both tiers as
+`smithwaterman_hpx` / `smithwaterman_hinted_hpx`: locality 0 reads the files
+once and broadcasts them, then posts every tile in one serial loop (base:
+round-robin, so tile `n = (i-1)*W + (j-1)` lands on locality `n mod L`, the
+same place the OCR base's blind creates put it; hinted: the band
+`((i-1)*L)/H`); a tile is the continuation on its west column, north row and
+north-west corner, pushed to it by their producers; the bottom-right tile
+delivers the score to locality 0. Structural references at the calibrated
+arguments: `tasks = posts_from_locality0 = W*H = 1,965,600`,
+`strips = H(W-1) + (H-1)W + (H-1)(W-1) = 5,891,193`, `bytes = 1,579,209,588`.
 
 ## Wiring
 
@@ -105,10 +117,11 @@ tile's own dependency join — no separate barrier phase.
 
 ## Placement (base)
 
-There is no `OCR_APP_OPTIMIZED_PLACEMENT` guard anywhere in this source —
-every `ocrEdtCreate`/`ocrDbCreate` call passes `NULL_HINT` directly, and
-the catalog correctly carries no `hinted` flag for this app. Effective
-policy:
+The source carries an `OCR_APP_OPTIMIZED_PLACEMENT` guard around one
+helper, `swBandEdtHint` (built as `smithwaterman_hinted`, `HINTED_PLACEMENT`
+in `benchmarks/apps/CMakeLists.txt`; catalog `hinted: true`) — see the next
+section. Outside that guard every `ocrEdtCreate`/`ocrDbCreate` call passes
+`NULL_HINT`, and base is the guard off. Effective policy:
 
 - **EDTs**: NULL hint → round-robin (`ARTS_HINT_ANY_RANK`) —
   `smith_waterman_task` instances scatter across ranks with no relation to

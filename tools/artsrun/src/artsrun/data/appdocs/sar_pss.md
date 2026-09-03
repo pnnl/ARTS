@@ -200,8 +200,12 @@ two tile families overlap and every serial head is fully exposed.
 Every `ocrEdtCreate` passes `NULL_HINT`, and every DB is created through
 `bsm/dram/spad_malloc`, which pass `NULL_HINT` too (`rag_ocr.c:22-24`).  The
 five tile-EDT creates route their hint through `ragTileEdtHint()`, guarded by
-`OCR_APP_OPTIMIZED_PLACEMENT` and returning `NULL_HINT` base (the
-`sar_pss_hinted` family compiles it in — the catalog's `hinted: true`).  So:
+`OCR_APP_OPTIMIZED_PLACEMENT` and returning `NULL_HINT` in the only build
+there is: no `hinted` target exists for this row (`benchmarks/apps/CMakeLists.txt`,
+catalog: no `hinted:`), because a placement layer here, measured, either
+collapses the pipeline onto one rank (97% of the work on one of four) or,
+written honestly, runs 23–36% slower than no hints at all — the serialisation
+is on a shared whole-image block, which affinity cannot address.  So:
 **EDTs** → the shim passes `ARTS_HINT_ANY_RANK` → runtime round-robin, and all
 5880 tile tasks plus every stage head land on arbitrary ranks; **DBs** →
 home = creating rank, and since `mainEdt` runs on rank 0 all 14 global blocks

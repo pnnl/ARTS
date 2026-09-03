@@ -22,6 +22,7 @@ build_command returns the bare wrapped rank command there.
 from __future__ import annotations
 
 import functools
+import os
 import shlex
 import subprocess
 
@@ -170,6 +171,11 @@ def build_env(cell: Cell, profile: Profile) -> dict[str, str]:
     # (runtime init and teardown excluded on both ends) — so every cell asks
     # for it and the log parse turns it into the cell's measured time.
     env["ARTS_E2E_MARKER"] = "1"
+    # The structural pass sets this in the driver's environment; it reaches
+    # every rank explicitly because not every launcher forwards the caller's
+    # environment.  A timed cell never has it.
+    if os.environ.get("ARTS_STRUCT_MARKER"):
+        env["ARTS_STRUCT_MARKER"] = "1"
     # Which launcher this cell believes it runs under.  The envelope's
     # scheduler-specific guards key on it, because scheduler variables LEAK:
     # a cell of one launcher running inside another scheduler's allocation
@@ -188,6 +194,16 @@ def build_env(cell: Cell, profile: Profile) -> dict[str, str]:
         # envelope is the only affinity actor, so it is disabled.  Other MPIs
         # ignore the variable.
         env["MV2_ENABLE_AFFINITY"] = "0"
+    if cell.entry.kind is RuntimeKind.HPX and profile.launcher is Launcher.LOCAL:
+        # Colocated ranks on one host put the whole message stream through
+        # the MPI layer's shared-memory transport.  UCX's SysV variant grows
+        # its receive-descriptor pool one shared-memory segment at a time and
+        # never returns them, so a run whose messages are counted in tens of
+        # millions exhausts the system-wide segment limit (kernel.shmmni) and
+        # dies inside the allocator; the POSIX variant maps files instead and
+        # has no such limit.  Only the colocated case can reach the limit, so
+        # remote launchers keep their site's MPI defaults untouched.
+        env["UCX_TLS"] = "^sysv"
     return env
 
 

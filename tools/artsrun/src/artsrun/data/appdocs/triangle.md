@@ -66,6 +66,15 @@ baseline (+1 EDT, +1 DB, +0 EVT per run) gives app-side EDT 7/17, DB 8/24, EVT
 4/14 — exactly the re-traced worked numbers above (`depth=1`'s 7/8/4 already
 matched on the first pass; `depth=2`'s 17/24/14 required the retrace).
 
+An HPX port (`benchmarks/hpx/triangle.cpp`) mirrors both tiers as
+`triangle_hpx` / `triangle_hinted_hpx`: a node applies its move to the board
+its parent pushed (`8·holes` bytes per child, one copy per child — the
+roster's one produced-data fan-out), the summer is a spawn (hinted: on the
+creating locality; base: blind) that collects its children's counts by key.
+At the calibrated `8 1 8`: `tree = nodes + summers = NUM_EDT_CREATE − 4 =
+22,725,548` (counted run, 2026-09-02); `boards = nodes − 1`,
+`board_bytes = 288 × boards`.
+
 ## Wiring
 
 Every `triangleTask` copies its `oldboard` into its own `board`, applies

@@ -96,8 +96,8 @@ Uncertain in the notes file — plus 8 `OCR_EVENT_CHANNEL_T` from
 channel = 16" claim; only the *count of labeled creates* needed
 correcting, not their sum.
 
-Calibrated args `['41472', '13824', '400']`: 108×128 tile grid,
-`np_x=384,np_y=324`, ≈1.9 MB/tile payload, ≈27.5 GB total; `C(13824)=1383`;
+Calibrated args `['31104', '13824', '400']`: 108×128 tile grid,
+`np_x=288,np_y=243`, ≈1.1 MB/tile payload, ≈15.5 GB total; `C(13824)=1383`;
 EDTs ≈ `-3+221,184+60,977,664+8,298` = **61.2 M**; DBs ≈ `32·13824-7` =
 **442,361**; Events ≈ `10+428,544+60,977,664+4,149` = **61.4 M**.
 
@@ -117,6 +117,16 @@ NT-independent 72: the setup/reduction terms vary with the grid's actual
 corner/edge/interior neighbor mix, which the `NR=4` (2×2, all-corner)
 verification point could not expose. The formula is kept with that caveat
 rather than re-fit.
+
+An HPX port (`benchmarks/hpx/stencil2d.cpp`) mirrors the base tier as
+`Stencil2D_intel_channelEVTs_hpx`: tiles are persistent objects on the
+locality the program's own Cartesian map names, one task per tile per round
+is the continuation on its four pushed halo strips (fresh copies, keyed by
+tile, side and round), the norm `all_reduce` is the completion edge and the
+join before shutdown is the second barrier. Structural references at the
+calibrated `31104 13824 400`: `tasks = NR·(NT+1) = 5,543,424`,
+`strips = (4·NR − 2·(NR_X+NR_Y))·(NT+1) = 21,984,424`,
+`bytes = 93,395,607,552`.
 
 ## Wiring
 
@@ -225,18 +235,22 @@ counters all off, `NR=13824`):
 | 27648 | 100 | 16.8 s* |
 | 13824 | 400 | 18.6 s* |
 | 27648 | 400 | 69.1 s |
-| 41472 | 400 | **144.4 s** |
+| 41472 | 400 | 144.4 s |
 | 55296 | 200 | 131.6 s |
 
 (*) measured with an object-counter set still compiled in; a clean-tree
 re-measure of `27648 400` moved 67.2→69.1 s, so that instrumentation is
 within run-to-run noise and the starred points stand for shape. e2e is
-linear in `NT` and tracks `NP²`, so the lattice extrapolates cleanly. The
-calibrated arguments are the feasible point nearest the ~150 s anchor:
-`41472 13824 400` (np `384×324` per tile, ≈27.5 GB total payload);
-`55296 13824 200` stands as the alternate if a larger domain at fewer
-rounds is ever preferred. Peak object load is bounded by the frontier, not
-the run: the only per-round survivor is one runtime-minted FINISH/output
-event per tile-round (measured slope exactly 1.0), ≈5.5 M events ≈
-single-digit GB at the calibrated size — no Dane budget concern, uniform
-across coherence arms, so the base source is left untouched.
+linear in `NT` and tracks `NP²`, so the lattice extrapolates cleanly. On
+this lattice the feasible point nearest the ~150 s anchor was
+`41472 13824 400` (np `384×324` per tile, ≈27.5 GB total payload); the
+catalog's calibration on ferrari's own geometry (15w+1p per node, three
+families) settled one rung lower, `31104 13824 400` (np `288×243` per tile,
+≈15.5 GB total payload; 134.0 / 127.6 / 154.0 s at one node, the next rung
+34,560 overshooting), which is the row's `args`. `55296 13824 200` stands
+as the alternate if a larger domain at fewer rounds is ever preferred. Peak
+object load is bounded by the frontier, not the run: the only per-round
+survivor is one runtime-minted FINISH/output event per tile-round (measured
+slope exactly 1.0), ≈5.5 M events ≈ single-digit GB at the calibrated size
+— no Dane budget concern, uniform across coherence arms, so the base source
+is left untouched.

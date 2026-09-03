@@ -17,7 +17,7 @@ from pathlib import Path
 from artsrun import check, report
 from artsrun.build import (
     BuildPlan, build, configure_counters, counter_mismatch, ensure_build_dir,
-    plan_targets,
+    plan_targets, require_default_counters,
 )
 from artsrun.model.benchset import Benchset
 from artsrun.model.catalog import Catalog
@@ -125,6 +125,8 @@ class Campaign:
             if differing:
                 configure_counters(self.build_dir, wanted, on_line=on_line,
                                    prefix=prefix)
+        else:
+            require_default_counters(self.build_dir)
         return plan_targets(
             self.selection, self.plane, self.catalog, self.benchset, self.build_dir
         )

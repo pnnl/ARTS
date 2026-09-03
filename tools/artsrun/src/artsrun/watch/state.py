@@ -335,7 +335,8 @@ class RunState:
     def broken_groups(self) -> list[Group]:
         return [
             g for g in self.groups
-            if any(v in (Verdict.DISAGREE, Verdict.EXPECT_FAIL, Verdict.FAIL)
+            if any(v in (Verdict.DISAGREE, Verdict.EXPECT_FAIL, Verdict.FAIL,
+                         Verdict.LONE)
                    for v in g.verdicts.values())
         ]
 
@@ -379,6 +380,13 @@ def _cell_verdict(result: CellResult, group: Group | None) -> Verdict:
     app = result.cell.app
     if not close(result.scalar, group.consensus, app.scalar_kind, app.tolerance):
         return Verdict.DISAGREE
+    voters = {r2.cell.entry.key for r2 in group.results
+              if r2.status is Status.OK and r2.scalar is not None}
+    attempted = {r2.cell.entry.key for r2 in group.results
+                 if r2.status is not Status.SKIPPED}
+    pinned = bool(app.expect) and list(app.expect_args) == list(result.cell.args)
+    if len(voters) == 1 and len(attempted) > 1 and not pinned:
+        return Verdict.LONE
     if any(v is Verdict.EXPECT_FAIL for v in group.verdicts.values()):
         return Verdict.EXPECT_FAIL
     return Verdict.OK

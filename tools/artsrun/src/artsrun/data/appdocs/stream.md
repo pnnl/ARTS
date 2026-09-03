@@ -155,13 +155,14 @@ is unaffected.
 
 ## Placement (hinted)
 
-**No `hinted` variant is offered (decision 2026-08-19).**  With one
-per-node-exclusive RW block, the only thing a hint layer can do is refuse to
-distribute — and that number is already on every plot, because at one node all
-versions coincide: the containment performance at N nodes IS the base
-1-node cell.  A horizontal line derivable from the base curve adds nothing,
-so the guard code stays in the source but no `_hinted` target is built; the
-restructured version carries the distribution story.
+**A `hinted` target IS built** (`stream_hinted`, `HINTED_PLACEMENT` in
+`benchmarks/apps/CMakeLists.txt`; catalog `hinted: true`).  The layer was
+withheld on 2026-08-19 on the argument that containment can only reproduce the
+one-node number; the measurement below reversed that: the base tier's
+multinode cells collapse far below their own one-node cell (67x at two nodes
+at a reduced size) and the layer is the difference between running and not.
+What the layer does is containment, never distribution — the restructured
+version carries the distribution story.
 
 As-born ships placement INTENT (`OCR_HINT_EDT_DISPERSE` on `mainLet`) that the
 shim does not translate, so effectively everything round-robins: each kernel

@@ -48,7 +48,10 @@ def _ineligible(entry: SelectionEntry, app: ResolvedApp, nodes: int) -> str | No
     if entry.kind is RuntimeKind.OCRVX and app.ocrvx_skip:
         return "application uses OCR extensions this reference does not implement"
     if entry.kind is RuntimeKind.HPX and app.hpx_binary is None:
-        return "application has no HPX port at this version tier"
+        if not app.hpx_versions:
+            return "no HPX port exists for this application"
+        return (f"the HPX port does not mirror the {app.version.value} tier "
+                f"(it mirrors {', '.join(v.value for v in app.hpx_versions)})")
     absent = _missing_inputs(app)
     if absent:
         return "input not staged on this machine: " + ", ".join(absent)
@@ -90,6 +93,7 @@ def expand(
                 )
                 continue
             for nodes in selection.node_counts:
+                runnable: list[tuple] = []
                 for entry in entries:
                     why = _ineligible(entry, app, nodes)
                     if why:
@@ -102,7 +106,9 @@ def expand(
                     else:
                         binary = apps_dir / entry.binary(app.binary,
                                                          hinted=False)
-                    for repeat in range(1, selection.repeats + 1):
+                    runnable.append((entry, binary))
+                for repeat in range(1, selection.repeats + 1):
+                    for entry, binary in runnable:
                         cell = Cell(
                             entry=entry,
                             app=app,
@@ -112,6 +118,7 @@ def expand(
                             args=app.args_for(nodes),
                             timeout_s=app.timeout_for(nodes) or profile.cell_timeout_s,
                             cfg=config_for(entry.kind, configs[nodes]),
+                            cpu_width=profile.threads_per_node,
                         )
                         if cell_cfg is not None and entry.kind is RuntimeKind.ARTS:
                             cell = replace(cell, cfg=cell_cfg(cell))

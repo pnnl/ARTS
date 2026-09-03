@@ -144,8 +144,10 @@ more than one iteration ahead of its neighbours, nor ahead of the root at all.
 
 ## Placement (base)
 
-This application carries no `OCR_APP_OPTIMIZED_PLACEMENT` layer and has no
-`_hinted` target. The affinity hints it does carry are genuinely base:
+This application carries an `OCR_APP_OPTIMIZED_PLACEMENT` layer (built as
+`nekbone_hinted`, `HINTED_PLACEMENT` in `benchmarks/apps/CMakeLists.txt`;
+catalog `hinted: true`), described in the next section. Outside that guard the
+affinity hints it carries are genuinely base:
 `ENABLE_EXTENSION_AFFINITY` is defined for the benchmark build, so
 `NEK_OCR_ENABLE_AFFINITIES` is on and the program places explicitly.
 `BtForkIF` computes `pdID = rankID % ocrAffinityCount(AFFINITY_PD)`, i.e.
@@ -163,6 +165,32 @@ climbing the tree. The algorithm's locality is expressed; the lattice is not.
 and 8 nodes the map degenerates to `rx` — an x-slab decomposition, y- and
 z-neighbours node-local, every x-neighbour remote. A good cut, but by
 arithmetic accident: change `Rx` against the node count and locality moves.
+
+## Placement (hinted)
+
+The layer changes exactly one function: the rank-to-place map. Base ships
+`calcPDid_S` = `rankID % places` (`neko_globals.c`), which puts a rank's
+x-neighbours on other places by construction — consecutive rank ids are
+x-neighbours, and consecutive ids land on consecutive places — so with more
+than one place most of the 26-neighbour halo is remote. Under the guard,
+`calcPDid_lattice` calls `nekbone_placeGrid`: it factors the place count into
+`nx·ny·nz` boxes that divide the rank lattice, ranks the candidates by volume
+per surface (the faces a place does not own are exactly the halo it exchanges),
+and maps each rank to the box its lattice coordinate falls in. Every place still
+holds the same number of ranks and every rank the same number of elements, so
+balance is untouched; only which ranks share a place changes. One guard was
+earned by measurement: a box one rank thick on an axis keeps none of that axis's
+neighbours — it narrows the same exchange onto fewer peers rather than making it
+local, and measured worse than spreading it (8 nodes, 120 ranks: 4.52 s against
+4.45 s, the only legal factorisation there being 2×1×4) — so such a split falls
+back to the shipped map. The restructured tier's participant numbering reuses
+`nekbone_placeGrid` so both agree about which ranks share a place.
+
+Measured (15w+1p per node, `18 16 12 2 2 2 12 100`): base 134.46 / 280.75 /
+209.76 / 127.14 s at 1/2/4/8 nodes, never beating its own one-node time; hinted
+133.15 / 108.05 / 71.37 / 56.49 s, monotone, 2.36× over one node. At the anchor
+the two tiers are identical (one place — the map is irrelevant), which is the
+check that the change is placement and nothing else.
 
 ## Sizing
 

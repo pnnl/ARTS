@@ -25,7 +25,7 @@ from pathlib import Path
 from artsrun import check, report
 from artsrun.build import (BuildError, BuildPlan, available_targets, build,
                            configure_counters, counter_mismatch,
-                           ensure_build_dir)
+                           ensure_build_dir, require_default_counters)
 from artsrun.model.catalog import Catalog, Version
 from artsrun.model.counters import Counterset
 from artsrun.model.profile import Launcher, Profile
@@ -113,6 +113,7 @@ class SweepCampaign:
                         timeout_s=app.timeout_for(nodes)
                         or self.profile.cell_timeout_s,
                         cfg=config_for(entry.kind, configs[nodes]),
+                        cpu_width=self.profile.threads_per_node,
                     )
                     if counters_on:
                         from dataclasses import replace
@@ -142,6 +143,8 @@ class SweepCampaign:
             if counter_mismatch(self.build_dir, self.counterset):
                 configure_counters(self.build_dir, wanted, on_line=on_line,
                                    prefix=prefix)
+        else:
+            require_default_counters(self.build_dir)
         row = self.catalog.apps[self.spec.app]
         targets = sorted({
             e.binary(row.binary, hinted=False) for e in self.entries()

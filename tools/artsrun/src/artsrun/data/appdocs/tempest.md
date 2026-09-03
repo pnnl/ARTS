@@ -56,7 +56,7 @@ has exactly one publisher and one learner.)
 | object | count | size / note |
 |--------|-------|-------------|
 | EDTs | `612k² + 9` | `600k²` `patchEdt` (`6k²` chains × 100 generations) + `6k²` `patchInit` + `6k²` `channelSetup` + 6 `panelInit` + `realmain` + `wrapup` + 1 `mainEdt` itself (the OCR shim creates it as an EDT — `arts_edt_create(mainEdtTrampoline, ...)` — before its body runs; not one of `mainEdt`'s own explicit `ocrEdtCreate` calls, so the earlier count missed it) |
-| DBs | `102k² − 18` | 6 panel (80 B) + `6k²` patch (224 B) + `E(k)` channel-handoff (8 B) + `48k²` halo seeds (8 B) |
+| DBs | `102k² − 18` | 6 panel (80 B) + `6k²` patch (232 B: `sizeof(patch_t)`, grown by a `u64 duration` field) + `E(k)` channel-handoff (8 B) + `48k²` halo seeds (8 B) |
 | Events created | `144k² − 70` | see accounting below |
 | Live event objects | `96k² − 46` | `E(k)` CHANNEL + `E(k)` labeled sticky + 2; nothing is ever destroyed |
 | EDT templates | `12k² + 9` | pure GUID encodings under ARTS, not runtime objects |
@@ -82,6 +82,24 @@ matches `144k² − 70` exactly with no offset; NUM_DB_CREATE matches
 the `mainEdt` correction above — it matches `612k² + 9` plus that same
 constant +1 EDT per run (formula values 9,801/39,177, +1 = measured).
 
+An HPX port (`benchmarks/hpx/tempest.cpp`) mirrors both tiers as `tempest_hpx`
+/ `tempest_hinted_hpx`. Values land at a patch's creating locality keyed by
+(patch, side, generation); the hinted tier keeps the state on the home and runs
+each generation as the continuation on its local inputs; the base tier runs
+each generation wherever the blind spawn put it, carrying the 96-byte state,
+and asks the creator for its ≤ 8 inputs, returned in one parcel — the mirror of
+the OCR base's three-party rendezvous (channel on the `patchInit` rank, satisfy
+from the producer, pull by the consumer). Because the creator of a patch is not
+a function of the patch under blind placement, the base tier publishes the
+patch→creator map once after init (`all_gather`, 6k² entries) — the analogue of
+the labeled-sticky handshake, inside the stamp on both sides. Structural
+references at the calibrated `48 1900`: `generations = 6k²·duration =
+26,265,600`, `deliveries = (48k²−24)·(duration−1) = 209,968,632`; base only:
+`interests = returns = state_posts = 26,265,600`, `state_bytes = 96 ×
+26,265,600 = 2,521,497,600`, `map_exchange = 1`; hinted gates these at zero.
+OCR's per-generation block is `sizeof(patch_t)` = 232 bytes (17 GUIDs of
+plumbing ride along), the port's 96; the accounting pass reports both.
+
 ## Wiring
 
 `mainEdt` (rank 0) creates 6 panel DBs and hands them RW to `realmainEdt`, the
@@ -90,7 +108,7 @@ run's single FINISH EDT, whose output event fires `wrapupEdt` (`DONE.` +
 `6k²` each — one per direction, used only for the one-time channel handshake —
 stamps them into every panel DB and forks 6 `panelInit`s.
 
-`panelInit` loops `k²` times: one 224 B patch DB and one `patchInit` per patch,
+`panelInit` loops `k²` times: one 232 B patch DB and one `patchInit` per patch,
 wired `panel DB → slot 0 (RW)`, `patch DB → slot 1 (RW)`. **No `patchInit`
 writes the panel block** — it only reads `patchRange` and the GUID ranges — yet
 all `k²` of them take it RW, i.e. exclusively.
@@ -147,7 +165,7 @@ round-robin, DB home = creating rank.** Hence:
 - A panel's `k²` patch blocks are all homed on that one `panelInit`'s rank (six
   ranks host every patch block), while the tasks that touch them are scattered.
   Each patch block is then RW-acquired by 102 successive EDTs (`patchInit`,
-  `channelSetup`, 100 generations), each placed independently at random — 224
+  `channelSetup`, 100 generations), each placed independently at random — 232
   bytes of per-patch state migrating once per timestep, remote with probability
   `(N−1)/N`.
 - Halo seeds are homed wherever `channelSetup` ran and move once per timestep

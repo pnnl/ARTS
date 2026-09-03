@@ -72,6 +72,17 @@ corrected DB formula — `bufferOutDBK = (p-1)·G+t` (not the earlier `+(t+1)`)
 `3p+2=8` gives app-side DB 22/27, exactly reproducing the measured totals
 (23/28) once the runtime's +1 DB baseline is added back.
 
+An HPX port (`benchmarks/hpx/p2p.cpp`) mirrors the base tier as `p2p_hpx`: one
+persistent rank object per logical rank on locality `i / ⌈p / L⌉` (the
+program's own BLOCK map), each generation a continuation on the left rank's
+pushed boundary (receiver-owned, keyed by the consumer's generation), the chain
+tail-posted to the same locality; rank `p−1`'s terminal generation delivers the
+checksum to locality 0.  Structural references at the calibrated
+`6912 1347840 6913 32`: `tasks = p·G = 1,576,599,552`,
+`sends = (p−1)·G + t = 1,576,371,488`,
+`bytes = 16·(p−1)·G + 8·t = 25,221,943,552` (every boundary carries
+`gf + 1 = 2` doubles; only the `t` wrap-around sends carry one).
+
 ## Wiring
 
 p2p's DB graph is almost entirely private per rank: `dataDBK` and
@@ -116,12 +127,12 @@ partition (`myPD = i / block`) and creates each rank's `initEdt` with an
 explicit `EDT_AFFINITY` hint pinning it there; `initEdt`/`initp2pEdt`
 propagate `ocrAffinityGetCurrent()` downward so each rank's *entire* chain
 (all `G` generations) stays pinned to the PD it was born on — real,
-load-bearing base locality, by design. The one genuinely
-`OCR_APP_OPTIMIZED_PLACEMENT`-gated piece is `p2pBufHint` (home the boundary
-DB at its consumer instead of its creator); base it returns `NULL_HINT`,
-so `bufferOutDBK` homes at the sender (creator/first-touch) and the receiving
-rank's acquire is always a one-hop remote fetch from its immediate left
-neighbor — exactly the point-to-point traffic the benchmark is named for.
+load-bearing base locality, by design. The source carries no
+`OCR_APP_OPTIMIZED_PLACEMENT` guard at all (the consumer-home layer that was
+tried is gone — see the next section), so `bufferOutDBK` homes at the
+sender (creator/first-touch) and the receiving rank's acquire is always a
+one-hop remote fetch from its immediate left neighbor — exactly the
+point-to-point traffic the benchmark is named for.
 
 ## Sizing
 

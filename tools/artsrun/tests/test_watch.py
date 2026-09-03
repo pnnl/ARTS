@@ -86,6 +86,22 @@ def test_the_manifest_round_trips_cells_and_their_invocations(tmp_path):
     assert manifest.skipped[0].reason == "why not"
 
 
+def test_the_manifest_round_trips_the_core_block_a_cell_was_granted(tmp_path):
+    from dataclasses import replace
+    _write(tmp_path, [replace(_cell("arts_val_wb"), cpu_width=16)])
+    manifest = Manifest.load(tmp_path)
+    assert manifest is not None and manifest.cells[0].cpu_width == 16
+    # A manifest written before the field existed carries no width, and a
+    # cell with no recorded width is not judged against one.
+    path = tmp_path / "manifest.json"
+    payload = json.loads(path.read_text())
+    for row in payload["cells"]:
+        row.pop("cpu_width")
+    path.write_text(json.dumps(payload))
+    legacy = Manifest.load(tmp_path)
+    assert legacy is not None and legacy.cells[0].cpu_width is None
+
+
 def test_the_manifest_names_the_configurations_behind_a_cell(tmp_path):
     cfg = tmp_path / "cfg" / "arts_1n.cfg"
     counters = tmp_path / "cfg" / "counters_perf.cfg"
@@ -185,7 +201,23 @@ def test_a_failure_is_a_failed_verdict_not_a_vote(tmp_path):
     state.refresh()
     assert state.views[bad.key].status is Status.TIMEOUT
     assert state.views[bad.key].verdict is Verdict.FAIL
-    assert state.views[ok.key].verdict is Verdict.OK
+    # The other entry never completed, so the sole survivor is uncorroborated.
+    assert state.views[ok.key].verdict is Verdict.LONE
+
+
+def test_the_live_verdict_agrees_with_the_vote_on_a_lone_survivor(tmp_path):
+    alone = _cell("arts_val_wb")
+    dead = _cell("arts_excl_retain")
+    _write(tmp_path, [alone, dead])
+    state = RunState(tmp_path)
+    _track(tmp_path, [_finished(alone, "1.0"),
+                      {"t": 2.0, "event": "finished", "cell": dead.key,
+                       "status": "timeout", "rc": 124, "wall_s": 60.0,
+                       "note": ""}])
+    state.refresh()
+    assert state.views[alone.key].verdict is Verdict.LONE
+    assert state.views[dead.key].verdict is Verdict.FAIL
+    assert len(state.broken_groups) == 1
 
 
 def test_a_partial_track_line_waits_for_its_newline(tmp_path):

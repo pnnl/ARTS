@@ -40,6 +40,7 @@ _VERDICT_STYLE = {
     Verdict.FAIL: ("FAIL", "red"),
     Verdict.EXPECT_FAIL: ("EXP!", "bold yellow"),
     Verdict.NA: ("--", "dim"),
+    Verdict.LONE: ("LONE", "magenta"),
 }
 
 # Width None auto-sizes to content (identity columns never shrink back).

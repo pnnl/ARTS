@@ -161,16 +161,18 @@ def consensus_table(groups: list[Group], plane: Plane, entries: list[str]) -> Ta
         Verdict.FAIL: "[red]FAIL[/red]",
         Verdict.NA: "[dim]--[/dim]",
         Verdict.EXPECT_FAIL: "[yellow]EXP![/yellow]",
+        Verdict.LONE: "[magenta]LONE[/magenta]",
     }
     for g in groups:
         cells = []
         for k in entries:
             verdict = g.verdicts.get(k, Verdict.NA)
             text = style.get(verdict, "?")
-            # A dagger, not a new verdict: the cell voted OK, only the way
-            # it got there is worth a reader's second look.
-            if verdict is Verdict.OK and g.teardown_hang.get(k):
-                text = "[green]OK†[/green]"
+            # A dagger, not a new verdict: the cell voted OK (or is the sole
+            # survivor of its group), only the way it got there is worth a
+            # reader's second look.
+            if verdict in (Verdict.OK, Verdict.LONE) and g.teardown_hang.get(k):
+                text = text.replace("[/", "†[/", 1)
             cells.append(text)
         table.add_row(g.app_key, str(g.nodes), g.consensus or "-", *cells)
     return table
@@ -219,7 +221,7 @@ def write_summary(
     console.print(consensus_table(groups, plane, selection.entries))
     if any(any(g.teardown_hang.values()) for g in groups):
         console.print(
-            "[dim]† OK: reaped by timeout after a completed, measured run "
+            "[dim]† on a verdict: reaped by timeout after a completed, measured run "
             "(teardown hang)[/dim]"
         )
     console.print()
@@ -232,11 +234,11 @@ def write_summary(
         for g in minority:
             dissent = ", ".join(
                 f"{k}={v.value}" for k, v in g.verdicts.items()
-                if v in (Verdict.DISAGREE, Verdict.EXPECT_FAIL, Verdict.FAIL)
+                if v in (Verdict.DISAGREE, Verdict.EXPECT_FAIL, Verdict.FAIL, Verdict.LONE)
             )
             console.print(f"  {g.app_key} @ {g.nodes}n consensus={g.consensus} -> {dissent}")
     else:
-        console.print("[bold]No disagreement.[/bold]")
+        console.print("[bold]No disagreement; every completed cell was corroborated.[/bold]")
 
     if skipped:
         console.print()

@@ -47,6 +47,9 @@ class Cell:
     timeout_s: int
     cfg: Path | None = None
     env: dict[str, str] = field(default_factory=dict)
+    # The core block one rank was granted; a reference's realised geometry is
+    # judged against it.
+    cpu_width: int | None = None
 
     @property
     def key(self) -> str:

@@ -22,6 +22,13 @@ bitmask instructions (no floating point), so — like the cutoff frontier is
 made coarser or finer — the program shifts between measuring pure
 task/event/DB churn and measuring real backtracking compute.
 
+An HPX port (`benchmarks/hpx/nqueens.cpp`) mirrors the base and hinted tiers
+as `nqueens_hpx` / `nqueens_hinted_hpx`.  Both tiers mirror `sumSolutionsEdt`
+as a spawn of its own rather than a continuation of the spawning task — the
+hinted tier keeps it on the locality that created the subtree, as the OCR
+hinted version pins its summer to the creating rank, and the base tier places
+it blindly.
+
 ## Parameters
 
 | arg | meaning | default | CLI reachability |
@@ -75,6 +82,9 @@ Counter cross-check: verified (1 node, `6 2` vs `8 3`): NUM_EDT_CREATE
 251 → 2591, NUM_DB_CREATE 150 → 1654, NUM_EVENT_CREATE 149 → 1653 —
 exactly `T+S+2` / `T` / `T` (app values 250/2590, 149/1653, 149/1653)
 plus the runtime's constant +1 EDT/+1 DB/+0 EVT baseline.
+
+At the calibrated `19 15 1 6`: `T = 516550`, `S = 52202` (counted run,
+2026-09-02) — the HPX port's structural references.
 
 ## Wiring
 
