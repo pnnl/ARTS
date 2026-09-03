@@ -479,6 +479,26 @@ if(ARTS_BUILD_BENCHMARKS AND ARTS_BUILD_HPX)
                 -DCMAKE_CXX_COMPILER=${MPI_CXX_COMPILER}
                 -DCMAKE_INSTALL_PREFIX=${ARTS_HPX_INSTALL_DIR}
                 -DCMAKE_INSTALL_LIBDIR=lib
+                # 128-bit atomics: what the LIFO and ABP thread-queue
+                # backends are compiled from.  The macro travels on the
+                # command line because this version's
+                # hpx_check_for_cxx11_std_atomic_128bit() takes no
+                # parameters and never forwards ${ARGN}: the DEFINITIONS
+                # its caller passes are dropped, so the feature test can
+                # never define the macro on any toolchain and the installed
+                # defines.hpp cannot carry it — every consumer of these
+                # headers must repeat it, or it compiles a different set of
+                # queue backends than the archives hold.  The forced option
+                # skips a runtime probe demanding
+                # std::atomic<16 bytes>::is_lock_free(), which GCC reports
+                # false whatever the hardware (a lock-free 16-byte load
+                # would have to write); the 16-byte operations therefore
+                # stay calls into libatomic, which selects cmpxchg16b
+                # itself, and -mcx16 only permits inlining them.
+                "-DCMAKE_CXX_FLAGS=-mcx16 -DHPX_HAVE_CXX11_STD_ATOMIC_128BIT"
+                -DCMAKE_C_FLAGS=-mcx16
+                -DHPX_WITH_CXX11_ATOMIC_128BIT=ON
+                -DHPX_CXX11_STD_ATOMIC_LIBRARIES=atomic
                 -DHPX_WITH_DISTRIBUTED_RUNTIME=ON
                 -DHPX_WITH_NETWORKING=ON
                 -DHPX_WITH_PARCELPORT_MPI=ON
@@ -505,6 +525,10 @@ if(ARTS_BUILD_BENCHMARKS AND ARTS_BUILD_HPX)
                 -DHPX_WITH_TOOLS=OFF
                 -DHPX_WITH_DOCUMENTATION=OFF
                 -DHPX_WITH_IO_COUNTERS=OFF
+                # Parcel and message counts per parcelport: the accounting
+                # the cross-model comparison reads.  A module, not a plugin,
+                # so it survives static linking.
+                -DHPX_WITH_PARCELPORT_COUNTERS=ON
             BUILD_COMMAND
                 ${CMAKE_COMMAND} --build <BINARY_DIR>
                 --parallel ${CMAKE_BUILD_PARALLEL_LEVEL}
