@@ -1,0 +1,30 @@
+# Gate roster for the HPX port work: the consensus/structure gates at a small
+# size, so a gate run takes minutes, not hours.  Timing from this roster is
+# never reported; the calibrated paper-main arguments remain the measurement.
+name: hpx-gate
+description: small-size consensus gate for HPX ports (six apps, both tiers where ported)
+apps:
+  nqueens:
+    enabled: true
+    versions: [base, hinted]
+    args: ['17', '13', '1', '6']
+  p2p:
+    enabled: true
+    versions: [base]
+    args: ['8', '256', '100', '10']
+  Stencil2D_intel_channelEVTs:
+    enabled: true
+    versions: [base]
+    args: ['1000', '16', '10']
+  smithwaterman:
+    enabled: true
+    versions: [base, hinted]
+    args: ['10', '10', '{repo}/datasets/smithwaterman/string1-gate.txt', '{repo}/datasets/smithwaterman/string2-gate.txt', '{repo}/datasets/smithwaterman/score-gate.txt']
+  triangle:
+    enabled: true
+    versions: [base, hinted]
+    args: ['13', '1', '5']
+  tempest:
+    enabled: true
+    versions: [base, hinted]
+    args: ['4', '20']
