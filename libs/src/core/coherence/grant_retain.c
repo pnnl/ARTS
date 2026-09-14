@@ -151,11 +151,11 @@ void arts_db_grant_home_idle_transition(struct arts_db_s *db) {
 /* A grant is never handed back unasked here, so there is no obligation to
  * arm, to carry, or to settle: every release takes the ordinary
  * count-dropping edge, and a home-bound publish carries payload alone. */
-bool arts_db_grant_release_claim(struct arts_db_cache_s *cache,
-                                 bool will_publish) {
+uint64_t arts_db_grant_release_claim(struct arts_db_cache_s *cache,
+                                     bool will_publish) {
   (void)cache;
   (void)will_publish;
-  return false;
+  return 0u;
 }
 
 bool arts_db_grant_return_claim_leg(struct arts_db_cache_s *cache) {
@@ -163,7 +163,13 @@ bool arts_db_grant_return_claim_leg(struct arts_db_cache_s *cache) {
   return false;
 }
 
-void arts_db_grant_release_settle(struct arts_db_cache_s *cache) {
+void arts_db_grant_release_settle(struct arts_db_cache_s *cache,
+                                  uint64_t token) {
+  (void)cache;
+  (void)token;
+}
+
+void arts_db_grant_return_flight_abandoned(struct arts_db_cache_s *cache) {
   (void)cache;
 }
 

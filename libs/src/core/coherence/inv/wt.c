@@ -218,7 +218,7 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
    * instead of behind it — and the round is also what orders it, since the
    * home may not hand the block on until every stale copy is retired.  A won
    * claim replaces the count-dropping edge. */
-  bool handed_back = arts_db_grant_release_claim(cache, will_publish);
+  uint64_t hand_back = arts_db_grant_release_claim(cache, will_publish);
   if (will_publish) {
     TIME_INVALIDATE_ROUND_START();
     arts_db_publish_sync(cache, new_version);
@@ -234,8 +234,8 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
    * the round above either way, so no stale copy outlives the hand-over.  A
    * claim taken above already dropped the count, and only has to settle which
    * vehicle carried it. */
-  if (handed_back) {
-    arts_db_grant_release_settle(cache);
+  if (hand_back != 0u) {
+    arts_db_grant_release_settle(cache, hand_back);
   } else {
     arts_db_grant_release_commit(cache);
   }

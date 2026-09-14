@@ -394,15 +394,25 @@ void arts_db_grant_home_idle_transition(struct arts_db_s *db);
  * take_leg: the publish sender, immediately before a payload COMMIT leg,
  *         asks whether to carry the obligation.  Whoever wins the word sends
  *         it; there is no second winner.
- * settle: after the publish returns, the armer re-checks.  Still armed means
- *         the leg it meant to ride had already gone out, so it converts to
- *         the standalone message.  Two CAS sites on one word: exactly one
- *         hand-back, never none, never two.
+ * settle: after the publish returns, the armer re-checks ITS OWN token.
+ *         Still armed means the leg it meant to ride had already gone out,
+ *         so it converts to the standalone message.  The token names the
+ *         grant generation it was armed under: by the time the armer wakes,
+ *         its leg may have carried the right home and the home may have
+ *         granted it back here, and a settle that could take that later
+ *         token would send the new round's hand-back before the new round's
+ *         publish had stamped the home.  Two CAS sites on one word, each
+ *         naming what it discharges: exactly one hand-back, never none,
+ *         never two.
+ * abandoned: the flight owner's discharge when no further leg will leave —
+ *         whatever is armed converts to the standalone message.
  * arrived: the home side of a hand-back, however it travelled. */
-bool arts_db_grant_release_claim(struct arts_db_cache_s *cache,
-                                 bool will_publish);
+uint64_t arts_db_grant_release_claim(struct arts_db_cache_s *cache,
+                                     bool will_publish);
 bool arts_db_grant_return_claim_leg(struct arts_db_cache_s *cache);
-void arts_db_grant_release_settle(struct arts_db_cache_s *cache);
+void arts_db_grant_release_settle(struct arts_db_cache_s *cache,
+                                  uint64_t token);
+void arts_db_grant_return_flight_abandoned(struct arts_db_cache_s *cache);
 void arts_db_grant_return_arrived(struct arts_db_s *db, unsigned int returner);
 /* The install's possession-setting transition (sentinel + drain guard under
  * RETAIN; the possession bit and that same guard under PURGE).  Possession is

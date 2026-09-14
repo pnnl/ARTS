@@ -188,10 +188,17 @@ struct arts_db_cache_s {
   volatile uint64_t home_pub_txid;
 #endif
 #ifdef ARTS_RELEASE_PURGE
-  /* Armed by a release that gave the write right up while its payload was
+  /* The hand-back obligation: (grant_generation << 1) | armed, or zero.
+   * Armed by a release that gave the write right up while its payload was
    * still in flight; discharged by whichever of the publish sender and the
-   * release itself CASes it back to zero, so exactly one return goes out. */
-  volatile unsigned int pending_grant_return;
+   * release itself CASes it back to zero, so exactly one return goes out.
+   * The generation is what makes the release's discharge its own: a settle
+   * that wakes after the right has come back and been re-granted here finds
+   * a token of a later generation and must not touch it. */
+  volatile uint64_t pending_grant_return;
+  /* Count of write rights installed on this rank; the token above names the
+   * one it belongs to. */
+  volatile uint64_t grant_generation;
 #endif
   /* Kept at the tail so either setting of the combining knob leaves the
    * offsets of the fields (and the inlined home directory beyond them) that

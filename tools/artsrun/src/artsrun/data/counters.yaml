@@ -345,6 +345,11 @@ counters:
     unit: count
     help: 'Hand-backs parked for an inbound round close instead of accepted on arrival'
 
+  NUM_GRANT_PURGE_STALE_SETTLE:
+    group: 'Write grant'
+    unit: count
+    help: 'Settles that found the hand-back token armed under a later grant generation and left it alone'
+
   NUM_GRANT_REGRANT_DEDUP:
     group: 'Write grant'
     unit: count

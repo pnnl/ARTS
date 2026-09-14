@@ -196,6 +196,7 @@ extern "C" {
   X(NUM_GRANT_PURGE_FLAG)                                                      \
   X(NUM_GRANT_PURGE_ACCEPT)                                                    \
   X(NUM_GRANT_PURGE_LATCHED)                                                   \
+  X(NUM_GRANT_PURGE_STALE_SETTLE)                                              \
   X(NUM_GRANT_REGRANT_DEDUP)                                                   \
   /* Object counters — per arts_id tracking */                                 \
   X(OBJ_NUM_EDT)                                                               \

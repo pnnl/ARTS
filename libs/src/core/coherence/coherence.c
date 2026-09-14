@@ -747,9 +747,8 @@ void arts_db_pub_flight_abandon(struct arts_db_cache_s *cache) {
   INCREMENT_NUM_PUB_FLIGHT_ABANDON_BY(1);
 #if defined(ARTS_PROTOCOL_VAL) || defined(ARTS_PROTOCOL_INV)
   /* No further leg will leave this cache, so a hand-back still riding on one
-   * would never arrive.  Convert it to its own message here — the same two-CAS
-   * discharge, just the other winner. */
-  arts_db_grant_release_settle(cache);
+   * would never arrive.  Convert whatever is armed to its own message. */
+  arts_db_grant_return_flight_abandoned(cache);
 #endif
   arts_lf_link_t *n =
       (arts_lf_link_t *)__atomic_exchange_n(&cache->pub_parked, NULL,
@@ -1103,7 +1102,7 @@ void arts_db_debug_quiescence_check(void) {
           }
         }
 #ifdef ARTS_RELEASE_PURGE
-        if (arts_atomic_read(&c->pending_grant_return) != 0u) {
+        if (arts_atomic_read_u64(&c->pending_grant_return) != 0u) {
           ARTS_DEBUG("QUIESCENCE-DEBUG: guid %lu rests owing a return of the "
                      "write right",
                      (unsigned long)c->db_guid);

@@ -46,6 +46,7 @@ set(TEST_PROGRAMS
     coherence_rw_chain
     grant_purge_no_acquire_creator
     grant_purge_churn
+    grant_purge_handback_regrant
     grant_purge_return
     coherence_rwro_phase
     coherence_rw_ordering
@@ -871,6 +872,13 @@ if(NOT ARTS_COHERENCE_ARM STREQUAL "WRF_VAL")
     register_single_node_test(grant_purge_churn TIMEOUT 60)
     register_multinode_test(grant_purge_churn TIMEOUT 90)
 endif()
+# Independent writer chains can re-request a handed-back grant while the
+# previous release is settling. Atomic increments cover concurrent same-rank
+# RW holders; the exact-sum oracle has the churn test's memory-model exclusion.
+if(NOT ARTS_COHERENCE_ARM STREQUAL "WRF_VAL")
+    register_single_node_test(grant_purge_handback_regrant TIMEOUT 60)
+    register_multinode_test(grant_purge_handback_regrant TIMEOUT 120)
+endif()
 register_multinode_test(coherence_rwro_phase TIMEOUT 30)
 # RO-side coherence is a MULTINODE-only code path: on one rank home, owner and
 # self coincide, so a read acquire never emits a REQUEST/FORWARD/DELIVER at all.
@@ -1252,7 +1260,10 @@ foreach(_t grant_purge_no_acquire_creator_2n grant_purge_no_acquire_creator_3n
 endforeach()
 if(NOT ARTS_COHERENCE_ARM STREQUAL "WRF_VAL")
     foreach(_t grant_purge_churn grant_purge_churn_2n grant_purge_churn_3n
-              grant_purge_churn_4n grant_purge_churn_2n_io)
+              grant_purge_churn_4n grant_purge_churn_2n_io
+              grant_purge_handback_regrant grant_purge_handback_regrant_2n
+              grant_purge_handback_regrant_3n grant_purge_handback_regrant_4n
+              grant_purge_handback_regrant_2n_io)
         set_tests_properties(${_t} PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL")
     endforeach()
 endif()

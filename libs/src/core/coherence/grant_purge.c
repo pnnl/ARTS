@@ -434,8 +434,8 @@ void arts_db_grant_release_commit(struct arts_db_cache_s *cache) {
 
 /* ===== The hand-back as a rider on this release's own publish =========== */
 
-bool arts_db_grant_release_claim(struct arts_db_cache_s *cache,
-                                 bool will_publish) {
+uint64_t arts_db_grant_release_claim(struct arts_db_cache_s *cache,
+                                     bool will_publish) {
   bool is_home = (arts_guid_get_rank(cache->db_guid) == arts_global_rank_id);
   if (!will_publish || is_home || arts_global_rank_count <= 1) {
     /* Nothing to ride, or nothing to hand back.  The home is excluded on
@@ -443,7 +443,7 @@ bool arts_db_grant_release_claim(struct arts_db_cache_s *cache,
      * idle edge SERVES, and serving before the publish has stamped the
      * canonical axis would hand the next owner a version this release has
      * already moved past. */
-    return false;
+    return 0u;
   }
   /* ONE attempt, on the exact word that says "this rank holds it and I am its
    * only writer".  A retry loop would be wrong rather than merely slow: any
@@ -452,20 +452,29 @@ bool arts_db_grant_release_claim(struct arts_db_cache_s *cache,
    * be followed by a second one after the publish. */
   if (arts_atomic_cswap(&cache->writer_count, ARTS_GRANT_SEED_HOLDING, 0u) !=
       ARTS_GRANT_SEED_HOLDING) {
-    return false;
+    return 0u;
   }
   /* Armed, and idle for as long as it stays armed: the local fast path
    * refuses a word with no possession, and a new grant is only ever issued
    * from a directory naming the home — which this hand-back is what changes.
-   * So nothing can raise the count under an armed obligation. */
+   * So nothing can raise the count under an armed obligation, and the
+   * generation read here is the one the right was installed under: the next
+   * install needs the home to have received this very hand-back first. */
   assert(ARTS_GRANT_COUNT_OF(arts_atomic_read(&cache->writer_count)) == 0u &&
          "an armed hand-back rests on a word with no holds");
-  (void)arts_atomic_swap(&cache->pending_grant_return, 1u);
-  return true;
+  uint64_t token = (arts_atomic_read_u64(&cache->grant_generation) << 1) | 1u;
+  (void)arts_atomic_swap_u64(&cache->pending_grant_return, token);
+  return token;
 }
 
+/* The leg carries whatever is armed: it ships the current version, and the
+ * obligation armed now belongs to the round that version closes.  One attempt
+ * — a lost CAS means the token was discharged or re-armed meanwhile, and the
+ * armer of what is there now has its own discharger. */
 bool arts_db_grant_return_claim_leg(struct arts_db_cache_s *cache) {
-  if (arts_atomic_cswap(&cache->pending_grant_return, 1u, 0u) != 1u) {
+  uint64_t armed = arts_atomic_read_u64(&cache->pending_grant_return);
+  if ((armed & 1u) == 0u ||
+      arts_atomic_cswap_u64(&cache->pending_grant_return, armed, 0u) != armed) {
     return false;
   }
   assert(ARTS_GRANT_COUNT_OF(arts_atomic_read(&cache->writer_count)) == 0u &&
@@ -474,16 +483,33 @@ bool arts_db_grant_return_claim_leg(struct arts_db_cache_s *cache) {
   return true;
 }
 
-void arts_db_grant_release_settle(struct arts_db_cache_s *cache) {
+void arts_db_grant_release_settle(struct arts_db_cache_s *cache,
+                                  uint64_t token) {
   /* Still armed after the publish returned: the commit leg this obligation
    * meant to ride had already been sent when it was armed — the release
    * joined a flight instead of driving one — so no leg will carry it and it
-   * converts to the message of its own.  A lost CAS means a leg took it. */
-  if (arts_atomic_cswap(&cache->pending_grant_return, 1u, 0u) != 1u) {
+   * converts to the message of its own.  Only the armer's own token counts:
+   * a lost CAS means a leg took it, or the right has since come back, been
+   * re-granted here and armed again under a later generation — that token
+   * belongs to the round that armed it and is discharged by that round. */
+  arts_sched_fuzz_point(); /* widen the leg-take<->settle window */
+  if (arts_atomic_cswap_u64(&cache->pending_grant_return, token, 0u) != token) {
+    if ((arts_atomic_read_u64(&cache->pending_grant_return) & 1u) != 0u) {
+      INCREMENT_NUM_GRANT_PURGE_STALE_SETTLE_BY(1);
+    }
     return;
   }
   assert(ARTS_GRANT_COUNT_OF(arts_atomic_read(&cache->writer_count)) == 0u &&
          "a hand-back is discharged from a word with no holds");
+  send_grant_return(cache);
+}
+
+void arts_db_grant_return_flight_abandoned(struct arts_db_cache_s *cache) {
+  uint64_t armed = arts_atomic_read_u64(&cache->pending_grant_return);
+  if ((armed & 1u) == 0u ||
+      arts_atomic_cswap_u64(&cache->pending_grant_return, armed, 0u) != armed) {
+    return;
+  }
   send_grant_return(cache);
 }
 
@@ -542,6 +568,9 @@ void arts_db_grant_commit_finish(struct arts_db_cache_s *cache,
 }
 
 void arts_db_grant_install(struct arts_db_cache_s *cache) {
+  /* A new generation before the possession it names becomes visible: anyone
+   * who sees this right held reads the generation it was installed under. */
+  arts_atomic_add_u64(&cache->grant_generation, 1u);
   /* Possession plus the drain guard, in one transition from "holds nothing".
    * An add cannot state that precondition, and possession carried by an add
    * would leave the bit's meaning depending on what the word happened to

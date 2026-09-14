@@ -158,7 +158,7 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
   /* Where the write right goes back unasked it can travel with these bytes
    * instead of behind them, which is the whole saving — so the claim is taken
    * BEFORE the publish, and a won claim replaces the count-dropping edge. */
-  bool handed_back = arts_db_grant_release_claim(cache, will_publish);
+  uint64_t hand_back = arts_db_grant_release_claim(cache, will_publish);
   if (will_publish) {
     /* The flight pins its own source ref; this caller's ref only covers the
      * version bump above. */
@@ -175,8 +175,8 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
    * the publish above either way: the bytes must be at the home before the
    * write right can move.  A claim taken above already dropped the count, and
    * only has to settle which vehicle carried it. */
-  if (handed_back) {
-    arts_db_grant_release_settle(cache);
+  if (hand_back != 0u) {
+    arts_db_grant_release_settle(cache, hand_back);
   } else {
     arts_db_grant_release_commit(cache);
   }
@@ -205,6 +205,7 @@ void arts_db_cache_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
   c->cached_version = NULL;
 #ifdef ARTS_RELEASE_PURGE
   c->pending_grant_return = 0u;
+  c->grant_generation = 0u;
 #endif
   arts_db_cache_common_init(c, db_guid, db_size, kind, creator_rank);
 }

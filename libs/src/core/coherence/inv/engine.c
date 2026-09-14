@@ -218,6 +218,7 @@ void arts_db_cache_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
   c->writer_count = creator ? ARTS_GRANT_SEED_HOLDING : 0u;
 #ifdef ARTS_RELEASE_PURGE
   c->pending_grant_return = 0u;
+  c->grant_generation = 0u;
 #endif
   arts_pending_rw_queue_init(&c->pending_rw);
   c->grant_req_in_flight = 0u;
