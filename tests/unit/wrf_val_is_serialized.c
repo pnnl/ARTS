@@ -5,7 +5,7 @@
  * WRF_VAL (DB-WRF) has no ownership round, so nothing is GUID-serialized by the
  * acquire-all engine.  Unlike the ownership protocols (VAL serialize RW,
  * EXCL serializes both RW and RO), the WRF_VAL predicate must answer false for ALL
- * dep modes — including the placeholder DB_MODE_NULL / raw-value DB_MODE_VAL.
+ * dep modes — including the non-acquiring DB_MODE_NULL.
  *
  * This is the WRF_VAL-focused sibling of T068 (acquire_is_serialized.c, which
  * checks the answer across every protocol).  It is compiled once per build but
@@ -34,11 +34,8 @@ int main(void) {
 }
 #else
 int main(void) {
-  /* WRF_VAL: nothing is serialized — false for every mode, including the
-   * placeholder / raw-value modes. */
-  const arts_db_access_mode_t modes[] = {DB_MODE_NULL, DB_MODE_RO, DB_MODE_RW,
-                                         DB_MODE_VAL};
-  const char *names[] = {"NULL", "RO", "RW", "VAL"};
+  const arts_db_access_mode_t modes[] = {DB_MODE_NULL, DB_MODE_RO, DB_MODE_RW};
+  const char *names[] = {"NULL", "RO", "RW"};
   int rc = 0;
   for (unsigned i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
     bool s = arts_db_acquire_is_serialized(modes[i]);

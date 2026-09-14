@@ -55,7 +55,7 @@ void chain_stage(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   uint64_t value = (uint64_t)depv[0].guid;
 
   arts_printf("  Stage %lu: received value %lu\n", stage, value);
-  arts_add_dependence((arts_guid_t)(value + 1), next_guid, 0, DB_MODE_VAL);
+  arts_edt_satisfy_slot(next_guid, 0, (arts_guid_t)(value + 1), DB_MODE_NULL);
 }
 
 /// Final stage verifies the accumulated value.
@@ -98,7 +98,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 
   // Kick off chain with value 0.
-  arts_add_dependence((arts_guid_t)(0), next, 0, DB_MODE_VAL);
+  arts_edt_satisfy_slot(next, 0, (arts_guid_t)(0), DB_MODE_NULL);
 }
 
 int main(int argc, char **argv) {

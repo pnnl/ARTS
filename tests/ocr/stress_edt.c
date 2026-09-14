@@ -52,7 +52,7 @@ void stress_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramc;
   arts_guid_t collector = (arts_guid_t)paramv[0];
   uint32_t slot = (uint32_t)paramv[1];
-  arts_add_dependence((arts_guid_t)(1), collector, slot, DB_MODE_VAL);
+  arts_edt_satisfy_slot(collector, slot, (arts_guid_t)(1), DB_MODE_NULL);
 }
 
 /// Collector: depc = NUM_EDTS, each slot holds value 1.
@@ -83,7 +83,7 @@ void chain_stage(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramc;
   uint64_t stage = (uint64_t)depv[0].guid;
   arts_guid_t next = (arts_guid_t)paramv[0];
-  arts_add_dependence((arts_guid_t)(stage + 1), next, 0, DB_MODE_VAL);
+  arts_edt_satisfy_slot(next, 0, (arts_guid_t)(stage + 1), DB_MODE_NULL);
 }
 
 void chain_final(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -137,7 +137,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                            &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   }
   // Seed first stage.
-  arts_add_dependence((arts_guid_t)(0), prev, 0, DB_MODE_VAL);
+  arts_edt_satisfy_slot(prev, 0, (arts_guid_t)(0), DB_MODE_NULL);
 
   arts_event_wait(fe);
   arts_shutdown();

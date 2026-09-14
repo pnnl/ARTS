@@ -185,6 +185,7 @@ static struct arts_event_s *event_alloc(const arts_event_hint_t *h) {
                           memory_order_relaxed);
     e->simple.counted = ct ? 1u : 0u;
     e->simple.auto_destroy = ad ? 1u : 0u;
+    e->simple.discard_data = h->discard_data ? 1u : 0u;
     e->simple.data = NULL_GUID;
     arts_lf_stack_init(&e->simple.deps_stack);
   }
@@ -506,9 +507,7 @@ static void event_simple_step(struct arts_event_s *e, arts_guid_t guid, int op,
     /* We claimed FIRING.  Publish the payload, then commit the second phase;
      * its DRAIN action serves everyone parked, including anyone who parked
      * while we were between the two. */
-    if (data_guid != NULL_GUID) {
-      e->simple.data = data_guid;
-    }
+    e->simple.data = e->simple.discard_data ? NULL_GUID : data_guid;
     event_simple_step(e, guid, EV_OP_PUBLISH, NULL_GUID);
     return; /* the PUBLISH step owns the drain and any destroy that follows */
   case EV_ACT_DRAIN:
@@ -648,17 +647,6 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
                          uint32_t slot, arts_db_access_mode_t access_mode) {
   ARTS_INFO("Add Dependence from %lu to %lu at %u mode=%u", source, destination,
             slot, access_mode);
-
-  /* DB_MODE_VAL: source is a raw 64-bit value. */
-  if (access_mode == DB_MODE_VAL) {
-    arts_guid_kind_t dest_type = arts_guid_get_kind(destination);
-    if (dest_type == ARTS_GUID_EDT) {
-      arts_edt_satisfy_slot(destination, slot, source, DB_MODE_VAL);
-    } else if (dest_type == ARTS_GUID_EVENT) {
-      arts_event_satisfy_slot(destination, source, slot);
-    }
-    return;
-  }
 
   /* NULL source: signal immediately with no data. */
   if (source == NULL_GUID) {

@@ -771,7 +771,7 @@ arts_guid_t arts_db_copy_to_new_type(arts_guid_t old_guid,
  * entry / remote-home stub install / home==self-but-not-created → OoO push)
  * lives here, inlined from the old single-DB arts_db_acquire API.  The caller
  * (arts_db_acquire_all / rw_fire_from_cursor) has already filtered NULL_GUID /
- * DB_MODE_VAL / pre-filled slots, so depv[i] is a real, not-yet-acquired DB
+ * DB_MODE_NULL / pre-filled slots, so depv[i] is a real, not-yet-acquired DB
  * dependency. */
 static void acquire_one_dep(struct arts_edt_s *edt, arts_edt_dep_t *depv,
                             uint32_t i) {
@@ -997,7 +997,7 @@ static void sort_dep_indices(arts_edt_dep_t *depv, uint32_t depc,
 /* A real DB dep still needing acquisition (not NULL / not a raw value / not
  * pre-filled / actually a DB GUID). */
 static bool dep_needs_acquire(arts_edt_dep_t *depv, uint32_t i) {
-  return depv[i].guid != NULL_GUID && depv[i].mode != DB_MODE_VAL &&
+  return depv[i].guid != NULL_GUID && depv[i].mode != DB_MODE_NULL &&
          depv[i].ptr == NULL &&
          arts_guid_get_kind(depv[i].guid) == ARTS_GUID_DB;
 }
@@ -1381,6 +1381,9 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
  */
 static void release_one_dep(arts_edt_dep_t *dep, bool gpu) {
   arts_db_access_mode_t access_mode = dep->mode;
+  if (access_mode == DB_MODE_NULL) {
+    return;
+  }
 
   /* Coherent release path for ARTS_DB.  Routed by dep->subtype (recorded at
    * acquire), NOT by recovering the subtype from dep->ptr: for a coherent DB
@@ -1466,7 +1469,7 @@ static void release_one_dep(arts_edt_dep_t *dep, bool gpu) {
    *
    * Reaching this point means the dep is for a non-coherent pinned subtype
    * (ARTS_DB_PIN, ARTS_DB_GPU_PIN, ARTS_DB_GPU, ARTS_DB_CXL) or a special
-   * access mode (VALUE, LC_*, MEMSET) — none of which carry DB-level
+   * access mode (LC_*, MEMSET) — none of which carry DB-level
    * coherence. */
   arts_db_types_t db_subtype = ARTS_DB;
   if (dep->guid != NULL_GUID && dep->ptr) {
@@ -1588,7 +1591,7 @@ void arts_db_release(arts_guid_t guid, arts_db_access_mode_t mode) {
   }
   arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(current_edt);
   for (uint32_t i = 0; i < current_edt->depc; i++) {
-    if (depv[i].guid != guid) {
+    if (depv[i].guid != guid || depv[i].mode == DB_MODE_NULL) {
       continue;
     }
     release_one_dep(&depv[i], false);

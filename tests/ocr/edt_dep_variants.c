@@ -114,7 +114,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t v3 =
       arts_edt_create(val_receiver, 0, NULL, 1,
                       &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
-  arts_add_dependence((arts_guid_t)(0x42ULL), v3, 0, DB_MODE_VAL);
+  arts_edt_satisfy_slot(v3, 0, (arts_guid_t)(0x42ULL), DB_MODE_NULL);
 }
 
 int main(int argc, char **argv) {

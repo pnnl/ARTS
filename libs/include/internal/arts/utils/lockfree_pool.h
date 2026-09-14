@@ -22,10 +22,12 @@
 #include "arts/utils/lockfree_lifo.h" /* arts_lf_link_t */
 #include "arts/utils/malloc.h"        /* arts_calloc / arts_free */
 
-#include <stdalign.h>
-#include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
+#ifndef __cplusplus
+#include <stdalign.h>
+#include <stdatomic.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -42,15 +44,26 @@ typedef struct {
   arts_lf_link_t *ptr;
   uintptr_t tag;
 } __attribute__((aligned(16))) arts_lf_pool_head_t;
+#ifdef __cplusplus
+static_assert(sizeof(arts_lf_pool_head_t) == 16, "DWCAS layout");
+static_assert(alignof(arts_lf_pool_head_t) == 16, "DWCAS alignment");
+#else
 _Static_assert(sizeof(arts_lf_pool_head_t) == 16, "DWCAS layout");
 _Static_assert(alignof(arts_lf_pool_head_t) == 16, "DWCAS alignment");
+#endif
 
 typedef struct {
+#ifdef __cplusplus
+  arts_lf_pool_head_t head;
+  uint32_t count; /* layout view — real fields are _Atomic under C */
+#else
   _Atomic(arts_lf_pool_head_t) head;
   _Atomic(uint32_t) count; /* approx — best-effort */
+#endif
   size_t node_size;        /* fallback alloc size */
 } arts_lockfree_pool_t;
 
+#ifndef __cplusplus
 /* ── Initialization / teardown ─────────────────────────────────────────── */
 
 static inline void arts_lf_pool_init(arts_lockfree_pool_t *p,
@@ -271,6 +284,7 @@ static inline void arts_lf_pool_batch_drain(arts_lockfree_pool_t *p,
     }
   }
 }
+#endif /* !__cplusplus */
 
 #ifdef __cplusplus
 }

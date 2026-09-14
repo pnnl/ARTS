@@ -54,8 +54,7 @@ void fan_child(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // paramv[0] = index, paramv[1] = collector GUID.
   uint32_t index = (uint32_t)paramv[0];
   arts_guid_t collector = (arts_guid_t)paramv[1];
-  arts_add_dependence((arts_guid_t)((uint64_t)index + 1), collector, index,
-                      DB_MODE_VAL);
+  arts_edt_satisfy_slot(collector, index, (arts_guid_t)((uint64_t)index + 1), DB_MODE_NULL);
 }
 
 /// Collector: receives FAN_WIDTH value-mode deps.

@@ -112,8 +112,7 @@ void check_worker_id(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   uint32_t expected_slot = (uint32_t)paramv[0];
   arts_guid_t collector = (arts_guid_t)paramv[1];
   unsigned int worker = arts_get_current_worker();
-  arts_add_dependence((arts_guid_t)((uint64_t)worker), collector, expected_slot,
-                      DB_MODE_VAL);
+  arts_edt_satisfy_slot(collector, expected_slot, (arts_guid_t)((uint64_t)worker), DB_MODE_NULL);
 }
 
 void collect_worker_ids(uint32_t paramc, const uint64_t *paramv, uint32_t depc,

@@ -528,14 +528,12 @@ static void edt_apply_satisfy(struct arts_edt_s *edt, uint32_t slot,
 #ifdef ARTS_USE_CXL
     /* CXL GUID encodes the pointer directly — surface it on the dep slot so
      * that the prep_dbs/release_dbs flush helpers see the right pointer. */
-    if (mode != DB_MODE_VAL && arts_guid_is_cxl(data_guid)) {
+    if (mode != DB_MODE_NULL && arts_guid_is_cxl(data_guid)) {
       ptr = (void *)((struct arts_db_s *)arts_cxl_get_ptr(data_guid) + 1);
     }
 #endif
     edt_dep[slot].ptr = ptr;
-    if (mode != DB_MODE_NULL) {
-      edt_dep[slot].mode = mode;
-    }
+    edt_dep[slot].mode = mode;
   }
   /* Decrement readiness for both a real in-range slot and the no-slot
    * sentinel; only a genuine out-of-range slot (rejected above) is skipped. */

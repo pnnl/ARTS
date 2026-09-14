@@ -13,7 +13,7 @@
  * Scenario
  * --------
  * Create a 2-dep EDT.  Satisfy slot 0 with a DB (RO) via arts_signal_edt, and
- * slot 1 with a DB_MODE_VAL via arts_signal_edt.  The EDT verifies it received
+ * slot 1 with a DB_MODE_NULL via arts_signal_edt.  The EDT verifies it received
  * the DB pointer/guid on slot 0 and the value on slot 1, then passes.  A
  * finish-event collector confirms a single fire and shuts down.
  *
@@ -109,7 +109,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* Route both deps THROUGH the deprecated alias to prove equivalence. */
   arts_signal_edt(e, 0, ddb, DB_MODE_RO);
-  arts_signal_edt(e, 1, (arts_guid_t)VAL_MAGIC, DB_MODE_VAL);
+  arts_signal_edt(e, 1, (arts_guid_t)VAL_MAGIC, DB_MODE_NULL);
 
   arts_guid_t coll =
       arts_edt_create(collector, 2, pv, 1, &(arts_edt_hint_t){.rank = 0});

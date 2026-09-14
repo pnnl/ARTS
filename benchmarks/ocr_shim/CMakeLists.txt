@@ -53,3 +53,19 @@ target_include_directories(ocr_arts_objects PRIVATE
     ${CMAKE_SOURCE_DIR}/libs/include/internal
 )
 
+add_executable(ocr_shim_event_payload EXCLUDE_FROM_ALL
+    ${CMAKE_SOURCE_DIR}/tests/shim/event_payload.c
+    $<TARGET_OBJECTS:ocr_arts_objects>)
+target_include_directories(ocr_shim_event_payload PRIVATE
+    ${OCR_ROOT}/inc ${BENCH_OCR_OPTIONS_DIR})
+target_compile_definitions(ocr_shim_event_payload PRIVATE
+    ENABLE_EXTENSION_AFFINITY ENABLE_EXTENSION_PARAMS_EVT ${BENCH_OCR_TYPE_DEFINE})
+set_property(TARGET ocr_shim_event_payload PROPERTY POSITION_INDEPENDENT_CODE OFF)
+target_compile_options(ocr_shim_event_payload PRIVATE -fno-pie -fno-PIE)
+target_link_options(ocr_shim_event_payload PRIVATE -no-pie -fno-pie -fno-PIE)
+target_link_libraries(ocr_shim_event_payload PRIVATE arts_static)
+if(ARTS_BUILD_TESTS)
+    set_target_properties(ocr_shim_event_payload PROPERTIES EXCLUDE_FROM_ALL FALSE)
+    register_single_node_test(ocr_shim_event_payload TIMEOUT 15)
+    register_multinode_test(ocr_shim_event_payload TIMEOUT 30)
+endif()

@@ -76,8 +76,7 @@ void chain_reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                 data ? (int)data[0] : -1);
   }
   /* Signal chain completion to the shared counting shutdown EDT. */
-  arts_add_dependence((arts_guid_t)(0), (arts_guid_t)paramv[0], -1,
-                      DB_MODE_VAL);
+  arts_edt_satisfy_slot((arts_guid_t)paramv[0], -1, (arts_guid_t)(0), DB_MODE_NULL);
 }
 
 void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -104,7 +103,7 @@ void read_test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       arts_printf("BAD VALUE i: %u %u\n", i, array[i]);
     }
   }
-  arts_add_dependence((arts_guid_t)(0), shutdown_guid, -1, DB_MODE_VAL);
+  arts_edt_satisfy_slot(shutdown_guid, -1, (arts_guid_t)(0), DB_MODE_NULL);
 }
 
 void write_test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -135,7 +134,7 @@ void write_test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   if (!index) {
     arts_add_dependence(db_guid, shutdown_guid, 0, DB_MODE_RW);
   } else {
-    arts_add_dependence((arts_guid_t)(0), shutdown_guid, -1, DB_MODE_VAL);
+    arts_edt_satisfy_slot(shutdown_guid, -1, (arts_guid_t)(0), DB_MODE_NULL);
   }
 }
 

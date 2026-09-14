@@ -95,7 +95,7 @@ static void chain_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
    * release drives; the explicit wake makes the serialization order the test
    * asserts independent of acquire-registration order. */
   if (next != NULL_GUID) {
-    arts_add_dependence((arts_guid_t)0, next, (uint32_t)-1, DB_MODE_VAL);
+    arts_edt_satisfy_slot(next, (uint32_t)-1, (arts_guid_t)0, DB_MODE_NULL);
   }
 }
 
@@ -214,7 +214,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_add_dependence(state_db, link[i], 1, DB_MODE_RW);
   }
   /* Kick the head of the chain. */
-  arts_add_dependence((arts_guid_t)0, link[0], (uint32_t)-1, DB_MODE_VAL);
+  arts_edt_satisfy_slot(link[0], (uint32_t)-1, (arts_guid_t)0, DB_MODE_NULL);
 
   /* Independent fan: each acquirer indexed CHAIN_LEN..TOTAL-1. */
   for (int j = 0; j < FAN_WIDTH; j++) {

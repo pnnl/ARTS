@@ -117,8 +117,9 @@ ARTS deliberately provides only the minimal mode algebra:
   acquire happens to receive a copy — a snapshot — but that is a distribution
   artifact, not a contract.)
 * ``DB_MODE_RW`` — "this EDT may write". The runtime manages ownership.
-* ``DB_MODE_NULL`` — control dependence only. ``DB_MODE_VAL`` (raw value) is
-  an ARTS extension outside the OCR mode set.
+* ``DB_MODE_NULL`` — opaque value or control dependence, with no DB access.
+  The payload may carry a scalar or an uninterpreted DB GUID. Scalar delivery
+  through this mode extends OCR's control-dependence contract.
 
 A mode describes a *sharing pattern* the runtime needs for replica management;
 it never carries synchronization semantics. Synchronization is the exclusive

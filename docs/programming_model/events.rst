@@ -36,6 +36,11 @@ selects between the two event kinds and their parameters:
      - Initial latch counter (default 1).  Latch events only.
    * - ``channel``
      - ``true`` selects a CHANNEL event (multi-fire FIFO, see below).
+   * - ``discard_data``
+     - ``true`` makes a latch publish ``NULL_GUID`` when it fires;
+       otherwise it preserves the firing satisfy's payload (the default).
+       Ignored for CHANNEL events.  The OCR shim sets this for OCR latch
+       events, whose output carries no data.
    * - ``guid``
      - Pre-reserved GUID from :c:func:`arts_guid_reserve`
        (``NULL_GUID`` = auto-allocate).  The GUID's rank field then
@@ -105,7 +110,7 @@ Wiring Dependencies
 event as ``source``, it registers ``destination`` (an EDT or another
 event) as a dependent; when the event fires, its data lands in
 ``destination``'s ``slot`` with the given access mode (``DB_MODE_RO``,
-``DB_MODE_RW``, or ``DB_MODE_NULL`` for pure control dependencies).
+``DB_MODE_RW``, or ``DB_MODE_NULL`` for opaque values and control dependencies).
 The entity-specific form :c:func:`arts_event_add_dependence` takes the
 same arguments and is what the dispatcher calls for an event source.
 

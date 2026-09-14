@@ -294,7 +294,7 @@ static void start_case(unsigned int idx, unsigned int home) {
   eh.rank = away(home, 1);
   uint64_t pv[3] = {0, home, idx};
   arts_guid_t e = arts_edt_create(c5_value_dep, 3, pv, 1, &eh);
-  arts_add_dependence((arts_guid_t)VALUE_PAYLOAD, e, 0, DB_MODE_VAL);
+  arts_edt_satisfy_slot(e, 0, (arts_guid_t)VALUE_PAYLOAD, DB_MODE_NULL);
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,

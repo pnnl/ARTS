@@ -95,6 +95,11 @@ set(TEST_PROGRAMS
     db_create_with_data
     db_dependence
     db_destroy
+    db_null_control
+    db_null_alias_release
+    event_value_control
+    event_scalar_return
+    event_payload_policy
     db_local
     db_local_create
     event_basic
@@ -418,6 +423,11 @@ register_single_node_test(termination_detection ARGS 3)
 
 # Event tests
 register_single_node_test(event_basic)
+register_single_node_test(db_null_control TIMEOUT 15)
+register_single_node_test(db_null_alias_release TIMEOUT 15)
+register_single_node_test(event_value_control TIMEOUT 15)
+register_single_node_test(event_scalar_return TIMEOUT 30)
+register_single_node_test(event_payload_policy TIMEOUT 15)
 register_single_node_test(event_chain)
 register_single_node_test(event_create_destroy_basic)
 register_single_node_test(event_satisfy_once)
@@ -818,6 +828,11 @@ set_tests_properties(finish_event_stress_2n PROPERTIES
 # --- Multi-node tests ---
 
 register_multinode_test(multinode_edt)
+register_multinode_test(db_null_control TIMEOUT 15)
+register_multinode_test(db_null_alias_release TIMEOUT 15)
+register_multinode_test(event_value_control TIMEOUT 15)
+register_multinode_test(event_scalar_return TIMEOUT 30)
+register_multinode_test(event_payload_policy TIMEOUT 15)
 register_multinode_test(db_no_acquire_remote_first_touch TIMEOUT 60)
 register_multinode_test(db_first_touch_matrix TIMEOUT 120)
 register_multinode_test(db_acquire_release_semantics TIMEOUT 120)
@@ -1158,6 +1173,41 @@ if(BUILD_CUDA_LIBRARY)
 endif()
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/generated_tests.cmake)
+
+# runtime_types.h has separate C11-atomic and C++/nvcc declarations for the
+# event descriptor.  The generated census owns the C probe; compile the exact
+# same source through a C++ wrapper and compare their complete fingerprints.
+add_executable(runtime_edt_event_layout_cpp
+    unit/runtime_edt_event_layout_cpp.cpp)
+target_include_directories(runtime_edt_event_layout_cpp PRIVATE
+    ${ARTS_PUBLIC_INCLUDE_DIR}
+    ${ARTS_INTERNAL_INCLUDE_DIR}
+    ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
+arts_apply_protocol(runtime_edt_event_layout_cpp
+    ${ARTS_COHERENCE_ARM} ${ARTS_WRITE_POLICY} ${ARTS_RELEASE_POLICY})
+set_property(TARGET runtime_edt_event_layout_cpp
+    PROPERTY POSITION_INDEPENDENT_CODE OFF)
+target_compile_options(runtime_edt_event_layout_cpp PRIVATE -fno-pie -fno-PIE)
+target_link_options(runtime_edt_event_layout_cpp PRIVATE
+    -no-pie -fno-pie -fno-PIE)
+target_link_libraries(runtime_edt_event_layout_cpp PRIVATE Threads::Threads)
+
+register_pure_unit_test(runtime_edt_event_layout_cpp TIMEOUT 60)
+set_tests_properties(runtime_edt_event_layout_cpp PROPERTIES
+    PASS_REGULAR_EXPRESSION "PASS runtime_edt_event_layout \\[cpp\\]")
+
+add_test(
+    NAME runtime_edt_event_layout_compare
+    COMMAND ${CMAKE_COMMAND}
+        "-DC_EXECUTABLE=$<TARGET_FILE:runtime_edt_event_layout>"
+        "-DCPP_EXECUTABLE=$<TARGET_FILE:runtime_edt_event_layout_cpp>"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/compare_runtime_edt_event_layout.cmake)
+set_tests_properties(runtime_edt_event_layout_compare PROPERTIES
+    LABELS "single_node"
+    TIMEOUT 60
+    RESOURCE_LOCK "pure_unit_test"
+    PASS_REGULAR_EXPRESSION
+        "PASS runtime_edt_event_layout_compare: C/C\\+\\+ fingerprints match")
 
 # ============================================================================
 # Cross-rank failure channel.

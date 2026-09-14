@@ -55,8 +55,7 @@ void remote_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramc;
   arts_guid_t collector = (arts_guid_t)paramv[0];
   unsigned int my_rank = arts_get_current_rank();
-  arts_add_dependence((arts_guid_t)((uint64_t)my_rank), collector, 0,
-                      DB_MODE_VAL);
+  arts_edt_satisfy_slot(collector, 0, (arts_guid_t)((uint64_t)my_rank), DB_MODE_NULL);
 }
 
 void check_remote_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -87,8 +86,7 @@ void all_nodes_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t collector = (arts_guid_t)paramv[0];
   uint32_t slot = (uint32_t)paramv[1];
   unsigned int my_rank = arts_get_current_rank();
-  arts_add_dependence((arts_guid_t)((uint64_t)my_rank), collector, slot,
-                      DB_MODE_VAL);
+  arts_edt_satisfy_slot(collector, slot, (arts_guid_t)((uint64_t)my_rank), DB_MODE_NULL);
 }
 
 void check_all_nodes(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -120,7 +118,7 @@ void chain_hop(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramc;
   arts_guid_t next = (arts_guid_t)paramv[0];
   uint64_t value = (uint64_t)depv[0].guid;
-  arts_add_dependence((arts_guid_t)(value + 10), next, 0, DB_MODE_VAL);
+  arts_edt_satisfy_slot(next, 0, (arts_guid_t)(value + 10), DB_MODE_NULL);
 }
 
 /// Final hop: assert accumulated value.
@@ -227,7 +225,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_guid_t a =
         arts_edt_create(chain_hop, 1, &b_param, 1,
                         &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
-    arts_add_dependence((arts_guid_t)(100), a, 0, DB_MODE_VAL);
+    arts_edt_satisfy_slot(a, 0, (arts_guid_t)(100), DB_MODE_NULL);
   }
 
   // Test 4: Paramv delivery to remote node.

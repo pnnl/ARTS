@@ -38,9 +38,7 @@
 ******************************************************************************/
 
 /// @file edt_signal.c
-/// @brief Tests all EDT signaling variants now expressed via
-///        arts_add_dependence: DB source (RO/RW), raw value (DB_MODE_VAL),
-///        and NULL_GUID source (DB_MODE_NULL).
+/// @brief Tests object-source dependencies and immediate opaque values.
 
 #include "arts.h"
 #include <string.h>
@@ -60,7 +58,7 @@ void signal_db_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-/// 2) arts_add_dependence(value, ..., DB_MODE_VAL): deliver raw uint64.
+/// 2) arts_edt_satisfy_slot(..., value, DB_MODE_NULL): deliver raw uint64.
 void signal_value_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                       arts_edt_dep_t depv[]) {
   (void)paramc;
@@ -126,15 +124,15 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t e2 =
       arts_edt_create(signal_value_edt, 0, NULL, 2,
                       &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
-  arts_add_dependence((arts_guid_t)(42), e2, 0, DB_MODE_VAL);
-  arts_add_dependence((arts_guid_t)(0xDEADULL), e2, 1, DB_MODE_VAL);
+  arts_edt_satisfy_slot(e2, 0, (arts_guid_t)(42), DB_MODE_NULL);
+  arts_edt_satisfy_slot(e2, 1, (arts_guid_t)(0xDEADULL), DB_MODE_NULL);
 
   // 3) NULL source + raw value via arts_add_dependence.
   arts_guid_t e5 =
       arts_edt_create(signal_null_edt, 0, NULL, 2,
                       &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(NULL_GUID, e5, 0, DB_MODE_NULL);
-  arts_add_dependence((arts_guid_t)(77), e5, 1, DB_MODE_VAL);
+  arts_edt_satisfy_slot(e5, 1, (arts_guid_t)(77), DB_MODE_NULL);
 
   arts_event_wait(fe);
   arts_printf("=== edt_signal complete ===\n");

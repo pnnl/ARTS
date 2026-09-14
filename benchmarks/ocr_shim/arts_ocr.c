@@ -44,7 +44,6 @@
 #define DB_MODE_NULL ARTS_DB_MODE_NULL_
 #define DB_MODE_RO ARTS_DB_MODE_RO_
 #define DB_MODE_RW ARTS_DB_MODE_RW_
-#define DB_MODE_VAL ARTS_DB_MODE_VAL_
 
 /* OCR defined NULL_GUID as ocrGuid_t struct; save and undef for ARTS */
 #undef NULL_GUID
@@ -65,14 +64,11 @@
 #undef DB_MODE_NULL
 #undef DB_MODE_RO
 #undef DB_MODE_RW
-#undef DB_MODE_VAL
 
-/* ARTS DB_MODE values used by the shim (sequential: NULL=0, RO=1, RW=2,
- * VAL=3). */
+/* Keep native mode names distinct from the OCR enum. */
 #define ARTS_MODE_NULL ((arts_db_access_mode_t)ARTS_DB_MODE_NULL_)
 #define ARTS_MODE_RO ((arts_db_access_mode_t)ARTS_DB_MODE_RO_)
 #define ARTS_MODE_RW ((arts_db_access_mode_t)ARTS_DB_MODE_RW_)
-#define ARTS_MODE_VAL ((arts_db_access_mode_t)ARTS_DB_MODE_VAL_)
 
 /* NULL GUID helpers */
 #define ARTS_NULL_GUID ((arts_guid_t)0x0)
@@ -1170,7 +1166,7 @@ u8 ocrEdtCreate(ocrGuid_t *guid, ocrGuid_t templateGuid, u32 paramc,
       if (ocrGuidIsNull(depv[i])) {
         /* NULL_GUID = pre-satisfied slot (OCR spec §2.4.3).
          * Signal immediately so the EDT doesn't wait forever. */
-        arts_add_dependence((arts_guid_t)(0), edtGuid, i, ARTS_MODE_VAL);
+        arts_edt_satisfy_slot(edtGuid, i, NULL_GUID, ARTS_MODE_NULL);
       } else if (!ocrGuidIsUninitialized(depv[i])) {
         /* Valid GUID — signal now.  UNINITIALIZED_GUID slots are
          * left open for later ocrAddDependence calls. */
@@ -1237,6 +1233,7 @@ static arts_event_hint_t ocr_event_kind_to_hint(ocrEventTypes_t kind,
   case OCR_EVENT_LATCH_T:
     /* Counter event; init 0 (caller may override via params). */
     h.latch = 0;
+    h.discard_data = true;
     break;
   case OCR_EVENT_CHANNEL_T:
     h = ARTS_EVENT_HINT_CHANNEL;
@@ -1677,8 +1674,7 @@ u8 ocrAddDependence(ocrGuid_t source, ocrGuid_t destination, u32 slot,
   if (ocrGuidIsNull(source)) {
     arts_guid_kind_t dstType = arts_guid_get_kind(destination.guid);
     if (dstType == ARTS_GUID_EDT) {
-      arts_add_dependence((arts_guid_t)(0), destination.guid, slot,
-                          ARTS_MODE_VAL);
+      arts_edt_satisfy_slot(destination.guid, slot, NULL_GUID, ARTS_MODE_NULL);
     } else if (dstType == ARTS_GUID_EVENT) {
       arts_event_satisfy_slot(destination.guid, NULL_GUID,
                               ARTS_EVENT_LATCH_DECR_SLOT);

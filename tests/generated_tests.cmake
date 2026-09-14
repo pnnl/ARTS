@@ -1101,11 +1101,11 @@ register_single_node_test(edt_register_cb_deleter TIMEOUT 30)
 set_tests_properties(edt_register_cb_deleter PROPERTIES
     PASS_REGULAR_EXPRESSION "PASS edt_register_cb_deleter|SKIP")
 
-# T143 — DB_MODE_VAL raw-uint64 dep delivered to depv[slot].
-add_arts_test(edt_db_mode_val)
-register_single_node_test(edt_db_mode_val TIMEOUT 30)
-set_tests_properties(edt_db_mode_val PROPERTIES
-    PASS_REGULAR_EXPRESSION "PASS edt_db_mode_val|SKIP")
+# T143 — DB_MODE_NULL raw-uint64 dep delivered to depv[slot].
+add_arts_test(edt_value)
+register_single_node_test(edt_value TIMEOUT 30)
+set_tests_properties(edt_value PROPERTIES
+    PASS_REGULAR_EXPRESSION "PASS edt_value|SKIP")
 
 # T141 — cross-rank arts_edt_destroy + destroy-vs-satisfy (multinode; self-skips
 # at node_count<2).

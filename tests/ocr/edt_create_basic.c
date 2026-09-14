@@ -61,7 +61,7 @@ typedef struct {
 #define PV_CTR  1
 
 /// Increment the appropriate counter in the counter DB (via DB_MODE_RW dep in
-/// depv[0]), print the result, then signal the collector via DB_MODE_VAL.
+/// depv[0]), print the result, then signal the collector via DB_MODE_NULL.
 /// Each subtest EDT acquires counter_db as depv[0] with DB_MODE_RW.
 static void report(arts_edt_dep_t depv[], const uint64_t *paramv,
                    const char *name, bool ok, unsigned int slot) {
@@ -74,7 +74,7 @@ static void report(arts_edt_dep_t depv[], const uint64_t *paramv,
     arts_printf("  FAIL: %s\n", name);
   }
   arts_guid_t coll_guid = (arts_guid_t)paramv[PV_COLL];
-  arts_add_dependence((arts_guid_t)(1), coll_guid, slot, DB_MODE_VAL);
+  arts_edt_satisfy_slot(coll_guid, slot, (arts_guid_t)(1), DB_MODE_NULL);
 }
 
 /// 1) EDT with zero params and zero deps fires immediately.
@@ -132,7 +132,7 @@ void dep_true_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 /// Collector EDT: once all sub-tests have signaled, print summary and shutdown.
 /// paramv[0] = counter_db guid
-/// depv[0..NUM_SUBTESTS-1] = DB_MODE_VAL slots from each subtest
+/// depv[0..NUM_SUBTESTS-1] = DB_MODE_NULL slots from each subtest
 /// depv[NUM_SUBTESTS] = counter_db (RO) to read totals
 void collector_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
@@ -170,7 +170,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   atomic_init(&ctr->failed, 0u);
   arts_db_release(ctr_db, DB_MODE_RW);
 
-  /* Collector: NUM_SUBTESTS DB_MODE_VAL slots + 1 RO dep for the counter DB. */
+  /* Collector: NUM_SUBTESTS DB_MODE_NULL slots + 1 RO dep for the counter DB. */
   arts_guid_t coll_guid =
       arts_edt_create(collector_edt, 0, NULL, NUM_SUBTESTS + 1,
                       &(arts_edt_hint_t){.rank = 0});

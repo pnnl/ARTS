@@ -27,7 +27,7 @@
  *   - sizeof(arts_event_s) is a multiple of its alignment and >= the union;
  *   - arts_edt_total_size(edt) == sizeof(struct) + paramc*8 + depc*sizeof(dep)
  *     for a matrix of (paramc, depc) including 0/0 and large values;
- *   - both structs honor ARTS_ALIGNED_MAX (alignof == alignof(max_align_t)).
+ *   - both structs honor ARTS_ALIGNED_MAX (cache-line alignment).
  */
 
 #include "arts/runtime_types.h"
@@ -152,13 +152,60 @@ int main(void) {
   check_event_layout();
   check_edt_total_size();
 
-  /* Print the layout fingerprint so a sibling-language build can be diffed by
-   * ctest.  These four numbers fully characterize the cross-language ABI. */
-  printf("T219_LAYOUT %s edt_size=%zu edt_align=%zu event_size=%zu "
-         "event_align=%zu dep_size=%zu\n",
+  /* Print every load-bearing offset so the sibling-language build can be
+   * compared byte-for-byte by ctest.  Size/alignment alone cannot detect two
+   * fields moving within unchanged padding. */
+  printf("T219_LAYOUT %s edt_size=%zu edt_align=%zu dep_size=%zu "
+         "edt_guid=%zu edt_output_data=%zu edt_depc_needed=%zu edt_self_cb=%zu "
+         "event_size=%zu event_align=%zu event_is_channel=%zu "
+         "simple_size=%zu simple_state=%zu/%zu simple_counted=%zu/%zu "
+         "simple_auto_destroy=%zu/%zu simple_discard_data=%zu/%zu "
+         "simple_data=%zu/%zu simple_deps_stack=%zu/%zu "
+         "channel_size=%zu channel_nb_sat=%zu/%zu channel_nb_deps=%zu/%zu "
+         "channel_data_queue=%zu/%zu channel_dep_queue=%zu/%zu "
+         "channel_draining=%zu/%zu "
+         "pool_head_size=%zu pool_head_align=%zu pool_size=%zu pool_align=%zu "
+         "pool_head=%zu/%zu pool_count=%zu/%zu pool_node_size=%zu/%zu\n",
          LAYOUT_LANG, sizeof(struct arts_edt_s),
-         (size_t)alignof(struct arts_edt_s), sizeof(struct arts_event_s),
-         (size_t)alignof(struct arts_event_s), sizeof(arts_edt_dep_t));
+         (size_t)alignof(struct arts_edt_s), sizeof(arts_edt_dep_t),
+         offsetof(struct arts_edt_s, guid),
+         offsetof(struct arts_edt_s, output_data),
+         offsetof(struct arts_edt_s, depc_needed),
+         offsetof(struct arts_edt_s, self_cb), sizeof(struct arts_event_s),
+         (size_t)alignof(struct arts_event_s),
+         offsetof(struct arts_event_s, is_channel),
+         sizeof(((struct arts_event_s *)0)->simple),
+         offsetof(struct arts_event_s, simple.state),
+         sizeof(((struct arts_event_s *)0)->simple.state),
+         offsetof(struct arts_event_s, simple.counted),
+         sizeof(((struct arts_event_s *)0)->simple.counted),
+         offsetof(struct arts_event_s, simple.auto_destroy),
+         sizeof(((struct arts_event_s *)0)->simple.auto_destroy),
+         offsetof(struct arts_event_s, simple.discard_data),
+         sizeof(((struct arts_event_s *)0)->simple.discard_data),
+         offsetof(struct arts_event_s, simple.data),
+         sizeof(((struct arts_event_s *)0)->simple.data),
+         offsetof(struct arts_event_s, simple.deps_stack),
+         sizeof(((struct arts_event_s *)0)->simple.deps_stack),
+         sizeof(((struct arts_event_s *)0)->channel),
+         offsetof(struct arts_event_s, channel.nb_sat),
+         sizeof(((struct arts_event_s *)0)->channel.nb_sat),
+         offsetof(struct arts_event_s, channel.nb_deps),
+         sizeof(((struct arts_event_s *)0)->channel.nb_deps),
+         offsetof(struct arts_event_s, channel.data_queue),
+         sizeof(((struct arts_event_s *)0)->channel.data_queue),
+         offsetof(struct arts_event_s, channel.dep_queue),
+         sizeof(((struct arts_event_s *)0)->channel.dep_queue),
+         offsetof(struct arts_event_s, channel.draining),
+         sizeof(((struct arts_event_s *)0)->channel.draining),
+         sizeof(arts_lf_pool_head_t), (size_t)alignof(arts_lf_pool_head_t),
+         sizeof(arts_lockfree_pool_t), (size_t)alignof(arts_lockfree_pool_t),
+         offsetof(arts_lockfree_pool_t, head),
+         sizeof(((arts_lockfree_pool_t *)0)->head),
+         offsetof(arts_lockfree_pool_t, count),
+         sizeof(((arts_lockfree_pool_t *)0)->count),
+         offsetof(arts_lockfree_pool_t, node_size),
+         sizeof(((arts_lockfree_pool_t *)0)->node_size));
 
   printf("PASS runtime_edt_event_layout [%s]: edt/event layout + total_size "
          "arithmetic verified\n",

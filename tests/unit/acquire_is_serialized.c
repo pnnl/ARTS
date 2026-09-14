@@ -18,8 +18,7 @@
  * rather than #including a heavyweight TU — it never starts the runtime, it
  * only calls the pure query function.
  *
- * DB_MODE_NULL / DB_MODE_VAL are placeholder/raw-value modes (never a real DB
- * acquire); the predicate must return false for them under every protocol.
+ * DB_MODE_NULL never acquires a DB and is never serialized.
  */
 
 #include "arts.h" /* arts_db_access_mode_t, DB_MODE_* */
@@ -35,7 +34,6 @@ int main(void) {
   bool rw = arts_db_acquire_is_serialized(DB_MODE_RW);
   bool ro = arts_db_acquire_is_serialized(DB_MODE_RO);
   bool null_mode = arts_db_acquire_is_serialized(DB_MODE_NULL);
-  bool val_mode = arts_db_acquire_is_serialized(DB_MODE_VAL);
 
   bool exp_rw, exp_ro;
   const char *proto;
@@ -70,22 +68,16 @@ int main(void) {
                   proto, ro, exp_ro);
     rc = 1;
   }
-  /* Placeholder / raw-value modes are never serialized under any protocol. */
   if (null_mode) {
     (void)fprintf(stderr,
                   "FAIL acquire_is_serialized[%s]: NULL mode serialized\n",
                   proto);
     rc = 1;
   }
-  if (val_mode) {
-    (void)fprintf(
-        stderr, "FAIL acquire_is_serialized[%s]: VAL mode serialized\n", proto);
-    rc = 1;
-  }
   if (rc != 0) {
     return 1;
   }
-  printf("PASS acquire_is_serialized[%s]: RW=%d RO=%d (NULL/VAL=false)\n",
+  printf("PASS acquire_is_serialized[%s]: RW=%d RO=%d (NULL=false)\n",
          proto, rw, ro);
   return 0;
 }

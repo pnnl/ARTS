@@ -435,7 +435,7 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
         if (successful_add) // We won, so allocate and move data
         {
           ARTS_DEBUG("Adding %lu %u id: %d mode: %s\n", depv[i].guid,
-                     alloc_size, arts_gpu->device, db_mode_name[depv[i].mode]);
+                     alloc_size, arts_gpu->device, GET_DB_MODE_NAME(depv[i].mode));
           data_ptr = arts_cuda_malloc(alloc_size);
           void *src = (void *)db;
           if (db_subtype == ARTS_DB_GPU) {

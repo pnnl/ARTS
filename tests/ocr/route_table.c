@@ -62,7 +62,7 @@ void acquire_test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     printf("%u %u i: %u %u\n", arts_get_current_rank(),
            arts_get_current_worker(), i, *num);
   }
-  arts_add_dependence((arts_guid_t)(0), shutdown_guid, 0, DB_MODE_VAL);
+  arts_edt_satisfy_slot(shutdown_guid, 0, (arts_guid_t)(0), DB_MODE_NULL);
 }
 
 void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,

@@ -80,11 +80,11 @@ accesses is exclusively the job of events (see :doc:`events`).
        events may still interleave per the memory model — RW grants
        exclusivity of the replica, not a happens-before edge.
    * - ``DB_MODE_NULL``
-     - Placeholder / pure control dependency.  No data is delivered.
-   * - ``DB_MODE_VAL``
-     - The dependency carries a raw ``uint64`` value, not a GUID.
+     - Opaque value or control dependency. The payload bits are preserved,
+       the pointer is NULL, and no DB is acquired or released. A scalar or
+       an uninterpreted DB GUID can be carried this way.
 
-These four are the complete public set.  (Values at or above
+These three are the complete public set.  (Values at or above
 ``DB_MODE_INTERNAL_BASE`` are runtime-internal and never appear in
 user-facing :c:func:`arts_add_dependence` calls.)
 

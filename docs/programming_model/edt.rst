@@ -69,12 +69,17 @@ Wire a DataBlock or value into a dependency slot:
    arts_add_dependence(db_guid, edt_guid, 0, DB_MODE_RW);
 
    /* Wire a raw 64-bit value into slot 1 */
-   arts_add_dependence((arts_guid_t)42, edt_guid, 1, DB_MODE_VAL);
+   arts_edt_satisfy_slot(edt_guid, 1, 42, DB_MODE_NULL);
 
    /* Satisfy a slot without data (pure control dependency) */
    arts_add_dependence(NULL_GUID, edt_guid, 2, DB_MODE_NULL);
 
 If ``depc == 0``, the EDT fires immediately after creation.
+
+For a value computed after the consumer is created, connect an event to its
+slot with ``DB_MODE_NULL`` and later satisfy that event with the value.
+``arts_add_dependence`` interprets its source as an object; direct value
+delivery uses ``arts_edt_satisfy_slot`` or ``arts_event_satisfy``.
 
 Creation Hint Fields
 --------------------

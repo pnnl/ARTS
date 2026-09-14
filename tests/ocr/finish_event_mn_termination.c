@@ -57,8 +57,7 @@ void node_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t collector = (arts_guid_t)paramv[0];
   uint32_t slot = (uint32_t)paramv[1];
   unsigned int my_rank = arts_get_current_rank();
-  arts_add_dependence((arts_guid_t)((uint64_t)my_rank), collector, slot,
-                      DB_MODE_VAL);
+  arts_edt_satisfy_slot(collector, slot, (arts_guid_t)((uint64_t)my_rank), DB_MODE_NULL);
 }
 
 /// Collector: verify that each rank appears TASKS_PER_NODE times.

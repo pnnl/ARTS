@@ -105,10 +105,9 @@ typedef enum {
  * @c arts_add_dependence(), not at DB creation.
  */
 typedef enum {
-  DB_MODE_NULL = 0, /**< Unset / placeholder. */
+  DB_MODE_NULL = 0, /**< Opaque value or control payload; no DB access. */
   DB_MODE_RO = 1,   /**< Read-Only (shared readers, no publish). */
-  DB_MODE_RW = 2,   /**< Read-Write (per-node exclusive, OCR RW semantics). */
-  DB_MODE_VAL = 3,  /**< Dependency carries a raw uint64 value (not a GUID). */
+  DB_MODE_RW = 2,   /**< Read-Write (one writer node, concurrent local writers). */
   /** Values >= this are reserved for runtime-internal dispatch (GPU LC
    * sync/alloc, GPU memset).  They never appear in user-facing
    * arts_add_dependence() arguments.  The enumerator itself only anchors
@@ -473,6 +472,9 @@ typedef struct {
    *  creation — there is no runtime setter.  Default false (fire-and-linger).
    */
   bool auto_destroy;
+  /** Discard incoming payloads and publish NULL_GUID when a simple event fires.
+   *  Default false; ignored for channels. Immutable after creation. */
+  bool discard_data;
   /** Number of dependences this event expects, for the single-fire flavours
    *  that declare one.  0 = undeclared, and the event then lingers after it
    *  fires: with no count the runtime cannot tell "no more consumers" from
@@ -694,15 +696,17 @@ arts_guid_t arts_edt_create(arts_edt_t func_ptr, uint32_t paramc,
                             const arts_edt_hint_t *hint);
 
 /**
- * @brief Register the calling EDT's result GUID (output-event payload).
+ * @brief Register the calling EDT's output-event payload.
  *
- * Call from inside an EDT body.  The runtime delivers the registered GUID
+ * Call from inside an EDT body.  The runtime delivers the registered payload
  * by satisfying the EDT's output event (@c arts_edt_hint_t.output_event) —
  * strictly after the EDT's data blocks have been released, so a consumer
  * woken by the output event can never acquire one of this EDT's data
  * blocks before the writes are published.  A later call replaces the
  * value; without a call the output event fires with NULL_GUID.  No-op for
  * EDTs created without an output event, or outside a running EDT.
+ * A DB_MODE_NULL consumer receives opaque bits; RO/RW consumers acquire the
+ * payload as a DB GUID.
  */
 void arts_edt_set_result(arts_guid_t result_guid);
 
@@ -782,12 +786,14 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
                              uint32_t slot);
 
 /**
- * @brief Supply a dependency slot on an EDT directly (OCR-standard).
+ * @brief Supply a dependency slot on an EDT directly.
  *
  * Writes @p data_guid / @p mode into @p edt_guid's @p slot and decrements its
  * pending-dependency count, scheduling the EDT once the last dependency
  * lands.  Home-routed: the home rank's handler does the work (forwarded via
  * MSG_EDT_SATISFY_SLOT when @p edt_guid is remote).
+ * With DB_MODE_NULL, @p data_guid is an opaque uint64 value: it is preserved
+ * without DB lookup or acquisition, and the slot pointer remains NULL.
  */
 void arts_edt_satisfy_slot(arts_guid_t edt_guid, uint32_t slot,
                            arts_guid_t data_guid, arts_db_access_mode_t mode);
@@ -846,12 +852,14 @@ arts_guid_t arts_current_finish_event(void);
  * OCR-standard convenience: a pure dispatcher over the entity-specific APIs,
  * branching on source/destination kind — no own wire or handler:
  *   - @c source is an event  → @c arts_event_add_dependence;
- *   - @c source is NULL / DB / a raw value, @c destination is an EDT
+ *   - @c source is NULL / DB, @c destination is an EDT
  *                            → @c arts_edt_satisfy_slot;
- *   - @c source is NULL / DB / a raw value, @c destination is an event
+ *   - @c source is NULL / DB, @c destination is an event
  *                            → @c arts_event_satisfy_slot.
  * The dep mode rides on the satisfy at fire time (stored in the event's
  * waiter metadata), so there is no separate up-front mode-set message.
+ * To deliver a raw value directly, use arts_edt_satisfy_slot or
+ * arts_event_satisfy_slot; @p source here always denotes an object or NULL.
  *
  * @param source      Source event or DB GUID (or @c NULL_GUID).
  * @param destination Destination EDT or event GUID.

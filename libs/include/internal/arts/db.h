@@ -71,7 +71,7 @@ extern const char *const arts_type_name[];
 
 #define DB_MODE_NAME                                                           \
   const char *const db_mode_name[] = {"DB_MODE_NULL", "DB_MODE_RO",            \
-                                      "DB_MODE_RW", "DB_MODE_VAL"};            \
+                                      "DB_MODE_RW"};                           \
   const char *const db_mode_internal_name[] = {                                \
       "DB_MODE_LC_SYNC", "DB_MODE_LC_NO_COPY", "DB_MODE_MEMSET"}
 
