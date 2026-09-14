@@ -84,6 +84,19 @@
  * overread.  Copy byte-by-byte for the last partial word to keep
  * ASAN clean while matching original OCR runtime behavior.
  * ========================================================================= */
+/* Every labeled create is first-wins and reports nothing.  The standard's
+ * CHECK (tell the loser) and BLOCK (wait until the label can be re-created)
+ * both presuppose that "already exists" is a fact the creator can be told
+ * at the moment it asks; here a remote creator's install is fire-and-forget,
+ * and the only ordering between a destroy and a create of one label is the
+ * order they happen to land at the label's home, so a report would reach
+ * some creators, miss others, and sometimes name a generation the program
+ * had already retired.  So the two properties are accepted and ignored: the
+ * first install stands, every creator's label names that object, and a
+ * label reused across a lifetime boundary is unsupported -- what follows is
+ * the engine's, an operation parked on a slot no install will fill, or a
+ * destroy landing on the wrong generation. */
+
 static inline void ocr_copy_paramv(uint64_t *dst, const u64 *src, u32 paramc) {
   if (paramc > 0 && src != NULL) {
     memcpy(dst, src, paramc * sizeof(uint64_t));
@@ -990,16 +1003,18 @@ static void warn_oversized_affinity_once(const char *what, u64 val) {
 
 /* Route extraction for OCR EDT/DB creation.
  *
- * The shim is a thin wrapper: distribution decisions belong to ARTS
+ * The shim is a thin wrapper: distribution decisions belong to the
  * runtime, not here.  These helpers only translate an explicit
- * OCR_HINT_*_AFFINITY value into an ARTS rank.  When no affinity hint
- * is set, callers fall back to ARTS's own defaults:
- *   - arts_edt_create: hint=NULL → self-rank (caller-local EDT)
- *   - arts_db_create:  hint=NULL → round-robin starting at self-rank
- *                                  (atomic counter, see db.c)
+ * OCR_HINT_*_AFFINITY value into a rank.  When no affinity hint is set the
+ * caller applies the shim's no-hint policies (ARTS_SHIM_NOHINT_EDT_PLACE,
+ * ARTS_SHIM_NOHINT_DB_HOME), whose defaults are: an EDT with no hint is
+ * placed round-robin across ranks, a datablock with no hint is homed on
+ * the creating rank.  The two defaults differ on purpose: a task chain
+ * cannot bootstrap distribution from its creator, while a datablock
+ * inherits the placement of the task that creates it.
  *
  * Both helpers return -1 when no affinity hint is set, signaling to the
- * caller "no override; let ARTS decide". */
+ * caller "no override; apply the no-hint policy". */
 static int extract_edt_affinity(ocrHint_t *hint) {
   if (hint == NULL || hint->type != OCR_HINT_EDT_T) {
     return -1;
@@ -1248,15 +1263,10 @@ u8 ocrEventCreate(ocrGuid_t *guid, ocrEventTypes_t eventType, u16 properties) {
   arts_event_hint_t h = ocr_event_kind_to_hint(eventType, properties);
   if (properties & GUID_PROP_IS_LABELED) {
     h.guid = guid->guid;
-    /* GUID_PROP_CHECK → fail-if-exists install so the first creator wins and a
-     * later rendezvous create observes the collision (arts_event_create
-     * returns NULL_GUID).  Without CHECK the install replaces unconditionally.
-     */
-    h.check = (properties & GUID_PROP_CHECK) != 0;
-    arts_guid_t result = arts_event_create(&h);
-    if (result == NULL_GUID && (properties & GUID_PROP_CHECK)) {
-      return OCR_EGUIDEXISTS;
-    }
+    /* First-wins: a losing create leaves the winner's object under the label
+     * and is not told (arts_event_create returns NULL_GUID to the loser). */
+    h.check = true;
+    (void)arts_event_create(&h);
     return 0;
   }
   arts_guid_t g = arts_event_create(&h);
@@ -1313,7 +1323,7 @@ u8 ocrEventCreateParams(ocrGuid_t *guid, ocrEventTypes_t eventType,
     if ((properties & GUID_PROP_IS_LABELED) && labeledGuid != NULL_GUID) {
       arts_guid_t existingMeta = lookupCollectiveMeta(labeledGuid);
       if (existingMeta != NULL_GUID) {
-        return (properties & GUID_PROP_CHECK) ? OCR_EGUIDEXISTS : 0;
+        return 0;
       }
     }
 
@@ -1373,7 +1383,7 @@ u8 ocrEventCreateParams(ocrGuid_t *guid, ocrEventTypes_t eventType,
     }
     if (reg == COLLECTIVE_REGISTER_EXISTS) {
       arts_db_destroy(metaDb);
-      return (properties & GUID_PROP_CHECK) ? OCR_EGUIDEXISTS : 0;
+      return 0;
     }
 
     /* For unlabeled collective events the OCR-visible event GUID is
@@ -1423,12 +1433,9 @@ u8 ocrEventCreateParams(ocrGuid_t *guid, ocrEventTypes_t eventType,
 
   if (properties & GUID_PROP_IS_LABELED) {
     h.guid = guid->guid;
-    /* GUID_PROP_CHECK → fail-if-exists (first creator wins); else replace. */
-    h.check = (properties & GUID_PROP_CHECK) != 0;
-    arts_guid_t result = arts_event_create(&h);
-    if (result == NULL_GUID && (properties & GUID_PROP_CHECK)) {
-      return OCR_EGUIDEXISTS;
-    }
+    /* First-wins, the loser not told (see ocrEventCreate). */
+    h.check = true;
+    (void)arts_event_create(&h);
     return 0;
   }
   arts_guid_t g = arts_event_create(&h);
@@ -1500,11 +1507,9 @@ u8 ocrDbCreate(ocrGuid_t *db, void **addr, u64 len, u16 flags, ocrHint_t *hint,
   if (flags & GUID_PROP_IS_LABELED) {
     arts_guid_t labeledGuid = db->guid;
 
-    /* GUID_PROP_CHECK → fail-if-exists install (first creator wins; a later
-     * one is told via EGUIDEXISTS, returning NULL here).  Without CHECK the
-     * install replaces unconditionally. */
+    /* First-wins install; a loser gets the winner's block below. */
     arts_db_hint_t lh = ARTS_DB_HINT_DEFAULTS;
-    lh.check = (flags & GUID_PROP_CHECK) != 0;
+    lh.check = true;
     /* DB_PROP_NO_ACQUIRE: same translation as the non-labeled branch below --
      * the creator does not acquire; home stays the sole idle owner. */
     unsigned int arts_flags = (flags & DB_PROP_NO_ACQUIRE)
@@ -1531,9 +1536,7 @@ u8 ocrDbCreate(ocrGuid_t *db, void **addr, u64 len, u16 flags, ocrHint_t *hint,
       if (db_existing != NULL) {
         *addr = arts_db_user_ptr(db_existing);
         arts_shared_release(&ex_h);
-        /* Match ocrEventCreate's labeling convention: only surface
-         * EGUIDEXISTS when the caller asked to be told via GUID_PROP_CHECK. */
-        return (flags & GUID_PROP_CHECK) ? OCR_EGUIDEXISTS : 0;
+        return 0;
       }
       return OCR_ENOMEM;
     }
