@@ -227,8 +227,9 @@ arts_cxl_deque_create_with_arenas(const uint64_t *dev_ids,
   }
   arts_cxl_arena_init(&dq->consts.mem_arena, 5000000000); /* ~5 GB */
 
+  (void)dev_ids; /* WORKAROUND: GLOBAL_CXL_MALLOC_DEV returns stack ptr on twosisters2; revert once fixed */
   for (unsigned int i = 0; i < dev_count; i++) {
-    arts_cxl_arena_init_dev(&dq->consts.db_arenas[i], 5000000000, dev_ids[i]);
+    arts_cxl_arena_init(&dq->consts.db_arenas[i], 5000000000);
   }
   for (unsigned int i = dev_count; i < ARTS_CXL_MAX_DEVICES; i++) {
     dq->consts.db_arenas[i] = NULL;

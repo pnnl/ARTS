@@ -295,10 +295,24 @@ void arts_runtime_node_init(struct arts_config_s *config) {
   arts_printf("CXL FAM region device ID: %lu\n", GET_CXL_REGION_DEV_ID());
   pthread_mutex_init(&arts_node_info.cxl_local_lock, NULL);
   arts_node_info.cxl_db_rr_idx = 0;
-  assert(arts_cxl_deque_get_db_arena_range(arts_node_info.cxl_deque,
-                                           &arts_node_info.cxl_db_arena_start,
-                                           &arts_node_info.cxl_db_arena_end) &&
-         "CXL DB arena pointers must be valid");
+  if (!arts_cxl_deque_get_db_arena_range(arts_node_info.cxl_deque,
+                                         &arts_node_info.cxl_db_arena_start,
+                                         &arts_node_info.cxl_db_arena_end)) {
+    ARTS_ERROR("CXL DB arena is missing or uninitialized");
+  }
+  {
+    unsigned long long window = 1ULL << ARTS_GUID_KEY_BITS;
+    unsigned long long start =
+        (unsigned long long)(uintptr_t)arts_node_info.cxl_db_arena_start;
+    unsigned long long end =
+        (unsigned long long)(uintptr_t)arts_node_info.cxl_db_arena_end;
+    if (start < ARTS_CXL_BASE_ADDR || end - ARTS_CXL_BASE_ADDR > window) {
+      ARTS_ERROR("CXL DB arena [%#llx, %#llx) is outside the GUID-encodable "
+                 "window [%#llx, +%#llx): the FAM allocator returned non-FAM "
+                 "memory",
+                 start, end, (unsigned long long)ARTS_CXL_BASE_ADDR, window);
+    }
+  }
 #endif
 
   /* GUID generation */
