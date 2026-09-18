@@ -25,6 +25,13 @@ extern unsigned int arts_global_rank_id;
 #define ARTS_CXL_CHUNK_SIZE 1024
 #define ARTS_CXL_NUM_NODES arts_global_rank_count
 
+/* Default DB arena size per device.  Sized for real CXL hardware (Crete /
+ * twosisters).  Override at compile time for test environments:
+ *   -DARTS_CXL_DB_ARENA_SIZE_BYTES=536870912  (512 MiB for fake-CXL tests) */
+#ifndef ARTS_CXL_DB_ARENA_SIZE_BYTES
+#define ARTS_CXL_DB_ARENA_SIZE_BYTES 5000000000ULL
+#endif
+
 /* ── Arena allocator (bump pointer on CXL global memory) ────────────────────
  */
 
@@ -179,10 +186,10 @@ static inline arts_cxl_deque_t *arts_cxl_deque_create(void) {
     dq->data[i].base.ptr = NULL;
     dq->data[i].base.size = 0;
   }
-  arts_cxl_arena_init(&dq->consts.mem_arena, 5000000000); /* ~5 GB */
+  arts_cxl_arena_init(&dq->consts.mem_arena, ARTS_CXL_DB_ARENA_SIZE_BYTES);
 
   /* Single DB arena on device 0 (default / static strategy). */
-  arts_cxl_arena_init_dev(&dq->consts.db_arenas[0], 5000000000, 0);
+  arts_cxl_arena_init_dev(&dq->consts.db_arenas[0], ARTS_CXL_DB_ARENA_SIZE_BYTES, 0);
   for (unsigned int i = 1; i < ARTS_CXL_MAX_DEVICES; i++) {
     dq->consts.db_arenas[i] = NULL;
   }
@@ -226,11 +233,11 @@ arts_cxl_deque_create_with_arenas(const uint64_t *dev_ids,
     dq->data[i].base.ptr = NULL;
     dq->data[i].base.size = 0;
   }
-  arts_cxl_arena_init(&dq->consts.mem_arena, 5000000000); /* ~5 GB */
+  arts_cxl_arena_init(&dq->consts.mem_arena, ARTS_CXL_DB_ARENA_SIZE_BYTES);
 
   (void)dev_ids; /* WORKAROUND: GLOBAL_CXL_MALLOC_DEV returns stack ptr on twosisters2; revert once fixed */
   for (unsigned int i = 0; i < dev_count; i++) {
-    arts_cxl_arena_init(&dq->consts.db_arenas[i], 5000000000);
+    arts_cxl_arena_init(&dq->consts.db_arenas[i], ARTS_CXL_DB_ARENA_SIZE_BYTES);
   }
   for (unsigned int i = dev_count; i < ARTS_CXL_MAX_DEVICES; i++) {
     dq->consts.db_arenas[i] = NULL;
