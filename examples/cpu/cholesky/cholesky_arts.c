@@ -45,7 +45,7 @@
 
 static inline unsigned tile_owner(int i, int j) {
   int linear = i * (i + 1) / 2 + j;
-  return (unsigned)((linear / CHUNK_SIZE) % arts_get_total_nodes());
+  return (unsigned)((linear / CHUNK_SIZE) % arts_get_total_ranks());
 }
 
 /* ========================================================================= */
@@ -70,7 +70,7 @@ void sequential_cholesky_edt(uint32_t paramc, const uint64_t *paramv,
 #else
   arts_guid_t l_guid = arts_db_create(
       (void **)&lBlock, sizeof(double) * tileSize * tileSize, ARTS_DB_DEFAULT,
-      0, &(arts_db_hint_t){.rank = arts_get_current_node()});
+      0, &(arts_db_hint_t){.rank = arts_get_current_rank()});
 #endif
   memset(lBlock, 0, sizeof(double) * (size_t)tileSize * (size_t)tileSize);
 
@@ -94,7 +94,7 @@ void sequential_cholesky_edt(uint32_t paramc, const uint64_t *paramv,
     }
   }
 
-  arts_db_release(l_guid); // Pattern A
+  arts_db_release(l_guid, DB_MODE_RW); // Pattern A
   arts_event_satisfy_slot(out_event, l_guid, ARTS_EVENT_LATCH_DECR_SLOT);
 }
 
@@ -119,7 +119,7 @@ void trisolve_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 #else
   arts_guid_t lo_guid = arts_db_create(
       (void **)&loBlock, sizeof(double) * tileSize * tileSize, ARTS_DB_DEFAULT,
-      0, &(arts_db_hint_t){.rank = arts_get_current_node()});
+      0, &(arts_db_hint_t){.rank = arts_get_current_rank()});
 #endif
   memset(loBlock, 0, sizeof(double) * (size_t)tileSize * (size_t)tileSize);
 
@@ -136,7 +136,7 @@ void trisolve_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
   }
 
-  arts_db_release(lo_guid); // Pattern A
+  arts_db_release(lo_guid, DB_MODE_RW); // Pattern A
   arts_event_satisfy_slot(out_event, lo_guid, ARTS_EVENT_LATCH_DECR_SLOT);
 }
 
@@ -166,7 +166,7 @@ void update_diagonal_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   /* In-place modify + forward depv[0].guid (same as OCR cholesky.c).
    * Save the guid before arts_db_release, which nullifies the depv slot. */
   arts_guid_t out_db = depv[0].guid;
-  arts_db_release(out_db); // Pattern A
+  arts_db_release(out_db, DB_MODE_RW); // Pattern A
   arts_event_satisfy_slot(out_event, out_db, ARTS_EVENT_LATCH_DECR_SLOT);
 }
 
@@ -199,7 +199,7 @@ void update_nondiagonal_edt(uint32_t paramc, const uint64_t *paramv,
   /* In-place modify + forward depv[0].guid (same as OCR cholesky.c).
    * Save the guid before arts_db_release, which nullifies the depv slot. */
   arts_guid_t out_db = depv[0].guid;
-  arts_db_release(out_db); // Pattern A
+  arts_db_release(out_db, DB_MODE_RW); // Pattern A
   arts_event_satisfy_slot(out_event, out_db, ARTS_EVENT_LATCH_DECR_SLOT);
 }
 
@@ -321,7 +321,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     expect_trace += matrix[d * matrixSize + d];
 
   arts_printf("Cholesky-ARTS: N=%d tile=%d numTiles=%d nodes=%u\n", matrixSize,
-              tileSize, numTiles, arts_get_total_nodes());
+              tileSize, numTiles, arts_get_total_ranks());
 
   int lowerN = numTiles * (numTiles + 1) / 2;
   arts_guid_t *lkji = (arts_guid_t *)malloc(
@@ -330,7 +330,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     for (int j = 0; j <= i; ++j)
       for (int k = 0; k <= numTiles; ++k) {
         int idx = (i * (i + 1) / 2 + j) * (numTiles + 1) + k;
-        lkji[idx] = arts_event_create(0, ARTS_EVENT_ONCE, 1, NULL_GUID);
+        lkji[idx] = arts_event_create(&ARTS_EVENT_HINT_ONCE);
       }
 
 #define EV(ii, jj, kk)                                                         \
@@ -427,7 +427,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
           int A_j = j * tileSize + tj;
           tile[ti * tileSize + tj] = matrix[A_i * matrixSize + A_j];
         }
-      arts_db_release(g); // Pattern A
+      arts_db_release(g, DB_MODE_RW); // Pattern A
       arts_event_satisfy_slot(EV(i, j, 0), g, ARTS_EVENT_LATCH_DECR_SLOT);
     }
   }

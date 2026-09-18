@@ -57,6 +57,7 @@
  */
 
 #include "arts.h"
+#include "arts/db.h"
 #include "arts/gas/guid.h"
 #include "arts/runtime_types.h"
 #include <math.h>
@@ -1344,12 +1345,12 @@ void init_tile_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* Pattern A: release all 6 created DBs so CXL producer_flush fires
    * before the LATCH decrement that dispatches downstream consumers. */
-  arts_db_release(cg);
-  arts_db_release(pg);
-  arts_db_release(es_guid);
-  arts_db_release(gg);
-  arts_db_release(fg);
-  arts_db_release(dt_guid);
+  arts_db_release(cg, DB_MODE_RW);
+  arts_db_release(pg, DB_MODE_RW);
+  arts_db_release(es_guid, DB_MODE_RW);
+  arts_db_release(gg, DB_MODE_RW);
+  arts_db_release(fg, DB_MODE_RW);
+  arts_db_release(dt_guid, DB_MODE_RW);
 
 #if ARTS_USE_CXL
   /* Flush this tile's registry slot so post_init sees it. */
@@ -1484,16 +1485,16 @@ static void launch_iteration(int iter, double dt, double elapsed) {
   arts_guid_t rr_guids[MAX_TILES], er_guids[MAX_TILES], vr_guids[MAX_TILES];
   for (int t = 0; t < nt; t++) {
     int na = g_init.num_all_nbrs[t], nf = g_init.num_face_nbrs[t];
-    fd_guids[t] = arts_event_create(0, ARTS_EVENT_LATCH, 1, NULL_GUID);
-    rd_guids[t] = arts_event_create(0, ARTS_EVENT_LATCH, 1, NULL_GUID);
-    ed_guids[t] = arts_event_create(0, ARTS_EVENT_LATCH, 1, NULL_GUID);
-    vd_guids[t] = arts_event_create(0, ARTS_EVENT_LATCH, 1, NULL_GUID);
+    fd_guids[t] = arts_event_create(&ARTS_EVENT_HINT_ONCE);
+    rd_guids[t] = arts_event_create(&ARTS_EVENT_HINT_ONCE);
+    ed_guids[t] = arts_event_create(&ARTS_EVENT_HINT_ONCE);
+    vd_guids[t] = arts_event_create(&ARTS_EVENT_HINT_ONCE);
     rr_guids[t] =
-        arts_event_create(0, ARTS_EVENT_LATCH, (unsigned)(1 + na), NULL_GUID);
+        arts_event_create(&ARTS_EVENT_HINT_LATCH(1 + na));
     er_guids[t] =
-        arts_event_create(0, ARTS_EVENT_LATCH, (unsigned)(1 + nf), NULL_GUID);
+        arts_event_create(&ARTS_EVENT_HINT_LATCH(1 + nf));
     vr_guids[t] =
-        arts_event_create(0, ARTS_EVENT_LATCH, (unsigned)(1 + nf), NULL_GUID);
+        arts_event_create(&ARTS_EVENT_HINT_LATCH(1 + nf));
   }
 
   /* Step 2: Wire event-to-event deps (fd->rr, rd->er, ed->vr) */
@@ -1520,9 +1521,9 @@ static void launch_iteration(int iter, double dt, double elapsed) {
   }
 
   /* Step 3: Create setup_done + dr latch */
-  arts_guid_t setup_done = arts_event_create(0, ARTS_EVENT_LATCH, 1, NULL_GUID);
+  arts_guid_t setup_done = arts_event_create(&ARTS_EVENT_HINT_ONCE);
   arts_guid_t dr =
-      arts_event_create(0, ARTS_EVENT_LATCH, (unsigned)nt, NULL_GUID);
+      arts_event_create(&ARTS_EVENT_HINT_LATCH(nt));
 
   /* Step 4: Wire vd -> dr deps */
   for (int t = 0; t < nt; t++)
@@ -1676,7 +1677,7 @@ void forces_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
   }
   /* Pattern A: flush force_db before the LATCH-DECR dispatches consumers. */
-  arts_db_release(depv[3].guid);
+  arts_db_release(depv[3].guid, DB_MODE_RW);
   arts_event_satisfy_slot(done, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
 }
 
@@ -1842,7 +1843,7 @@ void reduce_kin_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     pz[ni] += vzp[ni] * dt;
   }
   /* Pattern A: flush pos_vel_db before LATCH-DECR dispatches consumers. */
-  arts_db_release(depv[3 + na].guid);
+  arts_db_release(depv[3 + na].guid, DB_MODE_RW);
   arts_event_satisfy_slot(done, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
 }
 
@@ -1907,7 +1908,7 @@ void elem_props_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
   calc_monoq_gradients(ch, pvh, gh);
   /* Pattern A: flush grad_db before LATCH-DECR dispatches consumers. */
-  arts_db_release(depv[3].guid);
+  arts_db_release(depv[3].guid, DB_MODE_RW);
   arts_event_satisfy_slot(done, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
 }
 
@@ -1990,9 +1991,9 @@ void visc_eos_time_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* Pattern A: flush the three EW-modified DBs before LATCH-DECR
    * dispatches downstream consumers. */
-  arts_db_release(depv[3 + nf].guid); // elem_state_db
-  arts_db_release(depv[4 + nf].guid); // dt_result_db
-  arts_db_release(depv[5 + nf].guid); // force_db
+  arts_db_release(depv[3 + nf].guid, DB_MODE_RW); // elem_state_db
+  arts_db_release(depv[4 + nf].guid, DB_MODE_RW); // dt_result_db
+  arts_db_release(depv[5 + nf].guid, DB_MODE_RW); // force_db
   arts_event_satisfy_slot(done, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
 }
 
@@ -2142,7 +2143,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     else if (!strcmp(argv[i], "-t") && i + 1 < argc)
       T = atoi(argv[++i]);
   }
-  unsigned nn = arts_get_total_nodes();
+  unsigned nn = arts_get_total_ranks();
   if (T <= 0)
     T = compute_tile_elems(N, (int)nn);
   if (N % T) {
@@ -2176,7 +2177,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   //   return;
   // }
   // memset(registry, 0, (size_t)nt * sizeof(lulesh_tile_guids_t));
-  // arts_db_release(registry_guid); /* Pattern A: producer_flush before readers */
+  // arts_db_release(registry_guid, DB_MODE_RW); /* Pattern A: producer_flush before readers */
   
   // With padding
   size_t reg_leading_pad =
@@ -2193,7 +2194,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   memset(registry, 0, reg_payload_sz); 
 
   arts_guid_t init_done =
-      arts_event_create(0, ARTS_EVENT_LATCH, (unsigned)nt, NULL_GUID);
+      arts_event_create(&ARTS_EVENT_HINT_LATCH(nt));
 
   uint64_t pi_paramv[1] = {(uint64_t)registry_guid};
   arts_guid_t post_init = arts_edt_create(post_init_edt, 1, pi_paramv, 1,
@@ -2222,7 +2223,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* Create init_done latch (count=nt) and post_init_edt */
   arts_guid_t init_done =
-      arts_event_create(0, ARTS_EVENT_LATCH, (unsigned)nt, NULL_GUID);
+      arts_event_create(&ARTS_EVENT_HINT_LATCH(nt));
   arts_guid_t post_init =
       arts_edt_create(post_init_edt, 0, NULL, 3, &(arts_edt_hint_t){.rank = 0});
   arts_add_dependence(init_done, post_init, 0, DB_MODE_NULL);
@@ -2260,7 +2261,7 @@ void init_per_node(unsigned int node_id, int argc, char **argv) {
     else if (!strcmp(argv[i], "-t") && i + 1 < argc)
       T = atoi(argv[++i]);
   }
-  unsigned nn = arts_get_total_nodes();
+  unsigned nn = arts_get_total_ranks();
   if (T <= 0)
     T = compute_tile_elems(N, (int)nn);
   if (N % T)

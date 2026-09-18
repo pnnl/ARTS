@@ -59,7 +59,7 @@
 #include <sys/time.h>
 
 #include "arts.h"
-#include "arts/memory/db.h"
+#include "arts/db.h"
 
 /* =====================================================================
  * Configuration (overridable via -D at compile time)
@@ -480,7 +480,7 @@ void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         memcpy(cTileAll[i], depv[(2 * numTiles) + i].ptr,   sizeof(double) * tileSize);
     }
 
-    if (!arts_get_current_node()) {
+    if (!arts_get_current_rank()) {
         checkSTREAMresults(tileSize, N, aTileAll, bTileAll, cTileAll);
         arts_printf(HLINE);
     }
@@ -551,7 +551,7 @@ void launch2KernelEdt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         args[3] = i;
         edtGuids[i] = arts_edt_create(funPtr, (uint32_t)numArgs, args, 2,
                                       &(arts_edt_hint_t){.rank = next});
-        next = (next + 1) % arts_get_total_nodes();
+        next = (next + 1) % arts_get_total_ranks();
         arts_signal_edt(edtGuids[i], 0, aGuid[i], DB_MODE_RO);
     }
     for (unsigned int i = 0; i < tiles; ++i) {
@@ -607,7 +607,7 @@ void launch3KernelEdt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         args[3] = i;
         edtGuids[i] = arts_edt_create(funPtr, (uint32_t)numArgs, args, 3,
                                       &(arts_edt_hint_t){.rank = next});
-        next = (next + 1) % arts_get_total_nodes();
+        next = (next + 1) % arts_get_total_ranks();
         arts_signal_edt(edtGuids[i], 0, aGuid[i], DB_MODE_RO);
         arts_signal_edt(edtGuids[i], 1, bGuid[i], DB_MODE_RO);
     }
@@ -687,7 +687,7 @@ void streamDriver(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     if (N % tileSize)
         tiles++;
 
-    unsigned int currentNode = arts_get_current_node();
+    unsigned int currentNode = arts_get_current_rank();
     unsigned int numDeps     = tiles;
 
     arts_guid_t prevEdt = doneGuid;
@@ -737,9 +737,7 @@ void streamDriver(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         };
         if (k == 0) {
             /* First copy launcher is the firstKernel; signaled by workers */
-            arts_edt_create_with_guid(timerLaunch2KernelEdt, firstKernel,
-                                      9, argsCopy,
-                                      arts_get_total_workers());
+            arts_edt_create(timerLaunch2KernelEdt, 9, argsCopy, arts_get_total_workers(), &(arts_edt_hint_t){.guid = firstKernel});
         } else {
             prevEdt = arts_edt_create(timerLaunch2KernelEdt, 9, argsCopy,
                                       numDeps,
@@ -764,7 +762,7 @@ void init_per_node(unsigned int nodeId, int argc, char **argv) {
         numTiles++;
 
     /* Reserve the done EDT GUID on node 0 */
-    doneGuid = arts_guid_reserve(ARTS_EDT, 0);
+    doneGuid = arts_guid_reserve(ARTS_GUID_EDT, 0);
 
     if (!nodeId)
         arts_printf("N: %u tileSize: %u numTiles: %u\n", N, tileSize, numTiles);
@@ -780,7 +778,7 @@ void init_per_node(unsigned int nodeId, int argc, char **argv) {
         aTileGuids[i] = arts_guid_reserve(ARTS_DB, owner);
         bTileGuids[i] = arts_guid_reserve(ARTS_DB, owner);
         cTileGuids[i] = arts_guid_reserve(ARTS_DB, owner);
-        owner = (owner + 1) % arts_get_total_nodes();
+        owner = (owner + 1) % arts_get_total_ranks();
     }
 #endif
 
@@ -837,7 +835,7 @@ void init_per_node(unsigned int nodeId, int argc, char **argv) {
                     cTile[i][j] = 0.0;
                 }
             }
-            owner = (owner + 1) % arts_get_total_nodes();
+            owner = (owner + 1) % arts_get_total_ranks();
 #endif
         }
 
@@ -862,7 +860,7 @@ void init_per_node(unsigned int nodeId, int argc, char **argv) {
                 "Your clock granularity appears to be less than one microsecond.\n");
 
         /* Reserve firstKernel GUID on this node */
-        firstKernel = arts_guid_reserve(ARTS_EDT, nodeId);
+        firstKernel = arts_guid_reserve(ARTS_GUID_EDT, nodeId);
 #if CXL_DB
     }
 #endif
@@ -901,7 +899,7 @@ void init_per_worker(unsigned int nodeId, unsigned int workerId,
                 }
 #if !CXL_DB
             }
-            owner = (owner + 1) % arts_get_total_nodes();
+            owner = (owner + 1) % arts_get_total_ranks();
 #endif
         }
 
@@ -932,8 +930,7 @@ void init_per_worker(unsigned int nodeId, unsigned int workerId,
 
             if (!nodeId) {
                 /* done EDT has 3*numTiles deps in both CXL and non-CXL modes */
-                arts_edt_create_with_guid(done, doneGuid, 0, NULL,
-                                          numTiles * 3);
+                arts_edt_create(done, 0, NULL, numTiles * 3, &(arts_edt_hint_t){.guid = doneGuid});
                 arts_edt_create(streamDriver, 0, NULL, 0,
                                 &(arts_edt_hint_t){.rank = 0});
             }

@@ -84,7 +84,7 @@
 #include "random_access_defs.h"
 
 #include "arts.h"
-#include "arts/memory/db.h"
+#include "arts/db.h"
 
 arts_guid_t *update_frontier_guids = NULL;
 arts_guid_t update_frontier_guid;
@@ -225,7 +225,7 @@ void hpcc_starts_tiled(uint32_t paramc, uint64_t *paramv, uint32_t depc,
   }
   uint64_cu_t part_index = index;
   arts_cxl_producer_flush(tile_guid);
-  arts_signal_edt(update_guid, (index+1), tile_guid, DB_MODE_EW);
+  arts_signal_edt(update_guid, (index+1), tile_guid, DB_MODE_RW);
 }
 
 /* Utility routine to start random number generator at Nth step */
@@ -233,15 +233,15 @@ void hpcc_starts(int64_cu_t N, uint64_cu_t num_updates,
                            uint64_cu_t num_tiles, uint64_cu_t tile_size,
                            uint64_cu_t table_size, uint64_cu_t *r_array,
                            arts_guid_t next_guid) {
-  uint64_t next = arts_get_current_node();
+  uint64_t next = arts_get_current_rank();
   for (uint64_cu_t index = 0; index < num_tiles; index++) {
     uint64_t args[8] = {N, index, num_updates, num_tiles,
                        table_size, tile_size, (uint64_t) r_array, next_guid};
     arts_guid_t hpcc_tiled_guid = arts_edt_create(hpcc_starts_tiled, 8, args, 2,
-                                                   &(arts_hint_t){.route = next});
-    arts_signal_edt(hpcc_tiled_guid, 0, tile_guids[index], DB_MODE_EW);
+                                                   &(arts_edt_hint_t){.rank = next});
+    arts_signal_edt(hpcc_tiled_guid, 0, tile_guids[index], DB_MODE_RW);
     arts_signal_edt(hpcc_tiled_guid, 1, update_frontier_guid, DB_MODE_RO);
-    next = (next+1)%arts_get_total_nodes();
+    next = (next+1)%arts_get_total_ranks();
   }
 }
 
@@ -270,7 +270,7 @@ void update_edt(uint32_t paramc, uint64_t *paramv, uint32_t depc,
         __atomic_fetch_xor(&table[local_ran_index], local_ran, __ATOMIC_SEQ_CST);
     }
   }
-  arts_signal_edt_null(next_guid, slot);
+  arts_edt_satisfy_slot(next_guid, slot, NULL_GUID, DB_MODE_NULL);
   arts_cxl_producer_flush(depv[0].guid);
 }
 
@@ -289,16 +289,16 @@ void update_driver(uint32_t paramc, uint64_t *paramv, uint32_t depc,
 
   arts_guid_t read_only = depv[0].guid;
   uint64_t update_args[] = {tile_size, num_tiles, table_size, num_random, 0, next_random_guid, 0};
-  uint64_t next = arts_get_current_node();
+  uint64_t next = arts_get_current_rank();
   for (uint64_t i = 0; i < num_tiles; i++) {
     update_args[4] = i;
     update_args[6] = i+1;
     arts_guid_t update_guid = arts_edt_create(update_edt,
                                 7, update_args, 2,
-                                &(arts_hint_t){.route = next});
-    arts_signal_edt(update_guid, 0, depv[i+1].guid, DB_MODE_EW); // tile_guid
+                                &(arts_edt_hint_t){.rank = next});
+    arts_signal_edt(update_guid, 0, depv[i+1].guid, DB_MODE_RW); // tile_guid
     arts_signal_edt(update_guid, 1, read_only, DB_MODE_RO);
-    next = (next+1)%arts_get_total_nodes();
+    next = (next+1)%arts_get_total_ranks();
   }
 }
 
@@ -322,23 +322,23 @@ void random_driver(uint32_t paramc, uint64_t *paramv, uint32_t depc,
   // EDTs to finish before running update
 
   if (num_rem_updates) {
-    // arts_guid_t next_guid = arts_guid_reserve(ARTS_EDT, 0);
+    // arts_guid_t next_guid = arts_guid_reserve(ARTS_GUID_EDT, 0);
     uint64_t next_random = num_rem_updates - num_random;
     uint64_t args[4] = {next_random, step+1, index, num_tiles};
-    // arts_edt_create_with_guid(random_driver, next_guid, 4, args, num_tiles+1);
+    // arts_edt_create(random_driver, 4, args, num_tiles+1, &(arts_edt_hint_t){.guid = next_guid});
     arts_guid_t next_guid = arts_edt_create(random_driver, 4, args, num_tiles+1,
-                                            &(arts_hint_t){.route = 0});
+                                            &(arts_edt_hint_t){.rank = 0});
     arts_signal_edt(next_guid, 0, update_frontier_guid, DB_MODE_RO);
 
     uint64_t update_args[5] = {tile_size, num_tiles, table_size, num_random, next_guid};
     arts_guid_t update_guid = arts_edt_create(update_driver, 5, update_args, num_tiles+1,
-                                              &(arts_hint_t){.route = 0});
+                                              &(arts_edt_hint_t){.rank = 0});
     hpcc_starts(start_index, num_random, num_tiles,
                 tile_size, table_size, (uint64_cu_t*) r_array, update_guid);
     arts_signal_edt(update_guid, 0, depv[0].guid, DB_MODE_RO);
   }
   else {
-    arts_signal_edt_null(done_guid, num_tiles);
+    arts_edt_satisfy_slot(done_guid, num_tiles, NULL_GUID, DB_MODE_NULL);
   }
 }
 
@@ -410,7 +410,7 @@ void init_per_node(unsigned int node_id, int argc, char **argv) {
     for (unsigned int i = 0; i < num_tiles; i++) {
 
       tile_guids[i] = arts_db_create((void**)&(tile[i]), (tile_size + 1)*sizeof(uint64_t),
-                                 ARTS_DB_CXL, NULL);
+                                 ARTS_DB_CXL, 0, NULL);
 
       for (unsigned int j = 0; j < tile_size; j++)
         tile[i][j] = counter++;
@@ -422,14 +422,14 @@ void init_per_node(unsigned int node_id, int argc, char **argv) {
     // per thread
     unsigned int elems_per_frontier = num_tiles + MAX_TOTAL_PENDING_UPDATES;
     uint64_t *update_frontier;
-    update_frontier_guid = arts_db_create((void**)&update_frontier, elems_per_frontier*sizeof(uint64_t), ARTS_DB_CXL, NULL);
+    update_frontier_guid = arts_db_create((void**)&update_frontier, elems_per_frontier*sizeof(uint64_t), ARTS_DB_CXL, 0, NULL);
     for (unsigned int j = 0; j < elems_per_frontier; j++)
       update_frontier[j] = 0;
     arts_cxl_producer_flush(update_frontier_guid);
 
     // Create a LC sync edt for all partitions
-    done_guid = arts_guid_reserve(ARTS_EDT, 0);
-    update_guid = arts_guid_reserve(ARTS_EDT, 0);
+    done_guid = arts_guid_reserve(ARTS_GUID_EDT, 0);
+    update_guid = arts_guid_reserve(ARTS_GUID_EDT, 0);
   }
 }
 
@@ -438,12 +438,12 @@ void init_per_worker(unsigned int node_id, unsigned int worker_id,
   if (!node_id && !worker_id) {
     arts_printf("Num updates: %lu\n", NUPDATE);
     uint64_t args[] = {NUPDATE, 0, 0, num_tiles};
-    arts_edt_create_with_guid(random_driver, update_guid, 4, args, 1);
+    arts_edt_create(random_driver, 4, args, 1, &(arts_edt_hint_t){.guid = update_guid});
     arts_signal_edt(update_guid, 0, update_frontier_guid, DB_MODE_RO);
 
-    arts_edt_create_with_guid(sync_edt, done_guid, 0, NULL, 1 + num_tiles);
+    arts_edt_create(sync_edt, 0, NULL, 1 + num_tiles, &(arts_edt_hint_t){.guid = done_guid});
     for (unsigned int i = 0; i < num_tiles; i++) {
-      arts_signal_edt(done_guid, i, tile_guids[i], DB_MODE_EW);
+      arts_signal_edt(done_guid, i, tile_guids[i], DB_MODE_RW);
     }
   }
   start = arts_get_time_stamp();

@@ -802,7 +802,10 @@ set(COUNTER_CONFIG_FILE "${ARTS_COUNTER_CONFIG}")
 add_subdirectory(libs)
 
 # Optional components
-if(ARTS_BUILD_EXAMPLES)
+# CXL examples (cholesky/lulesh/smithwaterman/cxl_stream) have been modernized
+# to the current API; include examples/ whenever CXL is enabled even though the
+# general ARTS_BUILD_EXAMPLES flag is deprecated.
+if(ARTS_BUILD_EXAMPLES OR ARTS_USE_CXL)
     add_subdirectory(examples)
 endif()
 

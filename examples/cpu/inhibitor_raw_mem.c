@@ -43,7 +43,7 @@
 #include <string.h>
 #include <time.h>
 #include "arts.h"
-#include "arts/memory/db.h"
+#include "arts/db.h"
 #include "arts/cxl/wrapper.h"
 
 // #define MEM_SIZE 2000000000ULL // ~2GB
@@ -110,7 +110,7 @@ void init_cxl_memory()
   for (uint64_t d = 0; d < num_dbs; d++)
   {
     db_alloc_size[d] = db_logical_size;
-    db_guids[d] = arts_db_create((void **)&db_mems[d], db_logical_size, ARTS_DB_CXL, NULL);
+    db_guids[d] = arts_db_create((void **)&db_mems[d], db_logical_size, ARTS_DB_CXL, 0, NULL);
   }
 }
 
@@ -136,7 +136,7 @@ void init_cxl_memory_strided()
   for (uint64_t d = 0; d < num_dbs; d++)
   {
     db_alloc_size[d] = db_physical_size;
-    db_guids[d] = arts_db_create((void **)&db_mems[d], db_physical_size, ARTS_DB_CXL, NULL);
+    db_guids[d] = arts_db_create((void **)&db_mems[d], db_physical_size, ARTS_DB_CXL, 0, NULL);
   }
 }
 
@@ -217,7 +217,7 @@ void run_sequential(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   elapsed_microseconds += (end.tv_nsec - start.tv_nsec) / 1000;
   free(temp);
   double *bandwidth;
-  arts_guid_t bandwidth_guid = arts_db_create((void **)&bandwidth, sizeof(double), ARTS_DB_DEFAULT, NULL);
+  arts_guid_t bandwidth_guid = arts_db_create((void **)&bandwidth, sizeof(double), ARTS_DB_DEFAULT, 0, NULL);
   *bandwidth = (((double)area_size * ITERATIONS)) / (elapsed_microseconds / 1e6);
   arts_signal_edt(done_guid, slot, bandwidth_guid, DB_MODE_RO);
 }
@@ -274,7 +274,7 @@ void run_linear(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   elapsed_microseconds += (end.tv_nsec - start.tv_nsec) / 1000;
   free(temp);
   double *bandwidth;
-  arts_guid_t bandwidth_guid = arts_db_create((void **)&bandwidth, sizeof(double), ARTS_DB_DEFAULT, NULL);
+  arts_guid_t bandwidth_guid = arts_db_create((void **)&bandwidth, sizeof(double), ARTS_DB_DEFAULT, 0, NULL);
   *bandwidth = (((double)area_size * ITERATIONS)) / (elapsed_microseconds / 1e6);
   arts_signal_edt(done_guid, slot, bandwidth_guid, DB_MODE_RO);
 }
@@ -370,7 +370,7 @@ void run_random(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   double *bandwidth;
   arts_guid_t bandwidth_guid = arts_db_create((void **)&bandwidth,
   sizeof(double),
-  ARTS_DB_DEFAULT, NULL);
+  ARTS_DB_DEFAULT, 0, NULL);
   *bandwidth = (((double)area_size * ITERATIONS)) / (elapsed_microseconds / 1e6);
   arts_signal_edt(done_guid, slot, bandwidth_guid, DB_MODE_RO);
 }
@@ -501,7 +501,7 @@ void init_per_node(unsigned int node_id, int argc, char **argv)
     case 's':
     {
       printf("Sequential access\n");
-      unsigned int next = arts_get_current_node();
+      unsigned int next = arts_get_current_rank();
       arts_guid_t done_guid = arts_edt_create(done, 0, NULL, num_procs, NULL);
       clock_gettime(CLOCK_MONOTONIC, &global_start);
       for (uint32_t i = 0; i < num_procs; i++)
@@ -511,15 +511,15 @@ void init_per_node(unsigned int node_id, int argc, char **argv)
         uint64_t args[] = {access_size, (uint64_t)db_mems[db_idx], wait_time,
                            done_guid, i, procs_per_db, local_slot,
                            db_alloc_size[db_idx]};
-        arts_guid_t edt = arts_edt_create(run_sequential, 8, args, 0, &(arts_hint_t){.route = next});
-        next = (next + 1) % arts_get_total_nodes();
+        arts_guid_t edt = arts_edt_create(run_sequential, 8, args, 0, &(arts_edt_hint_t){.rank = next});
+        next = (next + 1) % arts_get_total_ranks();
       }
       break;
     }
     case 'l':
     {
       printf("Linear access\n");
-      unsigned int next = arts_get_current_node();
+      unsigned int next = arts_get_current_rank();
       arts_guid_t done_guid = arts_edt_create(done, 0, NULL, num_procs, NULL);
       clock_gettime(CLOCK_MONOTONIC, &global_start);
       for (uint32_t i = 0; i < num_procs; i++)
@@ -529,15 +529,15 @@ void init_per_node(unsigned int node_id, int argc, char **argv)
         uint64_t args[] = {access_size, (uint64_t)db_mems[db_idx], wait_time,
                            done_guid, i, procs_per_db, local_slot,
                            db_alloc_size[db_idx], stride};
-        arts_guid_t edt = arts_edt_create(run_linear, 9, args, 0, &(arts_hint_t){.route = next});
-        next = (next + 1) % arts_get_total_nodes();
+        arts_guid_t edt = arts_edt_create(run_linear, 9, args, 0, &(arts_edt_hint_t){.rank = next});
+        next = (next + 1) % arts_get_total_ranks();
       }
       break;
     }
     case 'r':
     {
       printf("Random access\n");
-      unsigned int next = arts_get_current_node();
+      unsigned int next = arts_get_current_rank();
       arts_guid_t done_guid = arts_edt_create(done, 0, NULL, num_procs, NULL);
       clock_gettime(CLOCK_MONOTONIC, &global_start);
       for (uint32_t i = 0; i < num_procs; i++)
@@ -547,8 +547,8 @@ void init_per_node(unsigned int node_id, int argc, char **argv)
         uint64_t args[] = {access_size, (uint64_t)db_mems[db_idx], wait_time,
                            done_guid, i, procs_per_db, local_slot,
                            db_alloc_size[db_idx]};
-        arts_guid_t edt = arts_edt_create(run_random, 8, args, 0, &(arts_hint_t){.route = next});
-        next = (next + 1) % arts_get_total_nodes();
+        arts_guid_t edt = arts_edt_create(run_random, 8, args, 0, &(arts_edt_hint_t){.rank = next});
+        next = (next + 1) % arts_get_total_ranks();
       }
       break;
     }

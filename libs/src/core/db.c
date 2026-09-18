@@ -1336,7 +1336,7 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
     {
       struct arts_db_s *db_cxl = ((struct arts_db_s *)depv[i].ptr) - 1;
       if (db_cxl->db_type == ARTS_DB_CXL) {
-        arts_cxl_consumer_flush(db_cxl->guid);
+        arts_cxl_consumer_flush(db_cxl->cache.db_guid);
       }
     }
 #endif
@@ -1483,7 +1483,11 @@ static void release_one_dep(arts_edt_dep_t *dep, bool gpu) {
 #ifdef ARTS_USE_CXL
   if (db_subtype == ARTS_DB_CXL) {
     if (dep->guid != NULL_GUID && dep->ptr &&
-        (access_mode == DB_MODE_RW || access_mode == DB_MODE_MEMSET)) {
+        (access_mode == DB_MODE_RW
+#ifdef ARTS_USE_GPU
+         || access_mode == DB_MODE_MEMSET
+#endif
+        )) {
       arts_cxl_producer_flush(dep->guid);
     }
     return; /* CXL: no route table, HW MESI handles intra-node coherence */

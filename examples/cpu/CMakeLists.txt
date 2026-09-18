@@ -79,9 +79,7 @@ function(add_cpu_example example_name)
     # Set include directories
     target_include_directories(${example_name} PRIVATE ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
 
-    # Protocol-sensitive internal headers need the compile-time coherence
-    # selection applied per-target (see tests/ add_arts_test).
-    arts_apply_protocol(${example_name} ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
+    arts_apply_protocol(${example_name} ${ARTS_COHERENCE_ARM} ${ARTS_WRITE_POLICY} ${ARTS_RELEASE_POLICY})
 
     # Use the appropriate ARTS library based on availability
     if(TARGET arts_shared)
@@ -105,9 +103,7 @@ function(add_cpu_cxx_example example_name)
     # Set include directories
     target_include_directories(${example_name} PRIVATE ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
 
-    # Protocol-sensitive internal headers need the compile-time coherence
-    # selection applied per-target (see tests/ add_arts_test).
-    arts_apply_protocol(${example_name} ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
+    arts_apply_protocol(${example_name} ${ARTS_COHERENCE_ARM} ${ARTS_WRITE_POLICY} ${ARTS_RELEASE_POLICY})
 
     if(ARTS_USE_CXL AND TARGET arts_cxl_lib)
         target_link_libraries(${example_name} PRIVATE arts_cxl_lib)
@@ -127,12 +123,24 @@ function(add_cpu_cxx_example example_name)
     target_link_options(${example_name} PRIVATE -no-pie -fno-pie -fno-PIE)
 endfunction()
 
-# Create CPU example executables (excluding targets that need special CXL handling)
-foreach(example ${CPU_EXAMPLES})
-    if(NOT example STREQUAL "cxl_stream" AND NOT example STREQUAL "inhibitor_raw_mem")
-        add_cpu_example(${example})
-    endif()
-endforeach()
+# Create CPU example executables (excluding targets that need special CXL handling).
+# When ARTS_BUILD_EXAMPLES is OFF (the default), only the CXL-specific examples
+# below are built; the generic list contains non-modernized sources that will not
+# compile against the current API.
+if(ARTS_BUILD_EXAMPLES)
+    foreach(example ${CPU_EXAMPLES})
+        if(NOT example STREQUAL "cxl_stream" AND NOT example STREQUAL "inhibitor_raw_mem")
+            add_cpu_example(${example})
+        endif()
+    endforeach()
+
+    # C++ examples are also non-modernized; skip when CXL-only.
+    foreach(example ${CPU_CXX_EXAMPLES})
+        add_cpu_cxx_example(${example})
+    endforeach()
+
+    add_subdirectory(stream)
+endif()
 
 # cxl_stream: needs arts_cxl_lib + ARTS_USE_CXL definition
 if (ARTS_USE_CXL)
@@ -180,21 +188,17 @@ if (ARTS_USE_CXL)
   target_link_options(inhibitor_raw_mem PRIVATE -no-pie -fno-pie -fno-PIE)
 endif()
 
-# Create C++ CPU example executables
-foreach(example ${CPU_CXX_EXAMPLES})
-    add_cpu_cxx_example(${example})
-endforeach()
-
-add_subdirectory(stream)
 # random_access: needs internal include dir for arts/memory/db.h (CXL flush APIs)
 if (ARTS_USE_CXL)
   add_subdirectory(random_access)
 endif()
 
-# Subdirectory-based examples
+# Subdirectory-based examples (only those present in this branch)
 add_subdirectory(lulesh)
 add_subdirectory(cholesky)
-add_subdirectory(fft)
-add_subdirectory(miniAMR)
-add_subdirectory(sar)
 add_subdirectory(smithwaterman)
+foreach(_subdir fft miniAMR sar)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${_subdir}/CMakeLists.txt")
+        add_subdirectory(${_subdir})
+    endif()
+endforeach()
